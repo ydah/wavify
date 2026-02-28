@@ -1,0 +1,48 @@
+fixtures:
+  - name: mono_8bit_44100.wav
+    kind: valid
+    format:
+      channels: 1
+      sample_rate: 44100
+      bit_depth: 8
+      sample_format: pcm
+    samples: [-128, -64, 0, 64, 127, 0]
+
+  - name: stereo_16bit_44100.wav
+    kind: valid
+    format:
+      channels: 2
+      sample_rate: 44100
+      bit_depth: 16
+      sample_format: pcm
+    samples: [1000, -1000, 2000, -2000, 0, 0]
+
+  - name: mono_24bit_48000.wav
+    kind: valid
+    format:
+      channels: 1
+      sample_rate: 48000
+      bit_depth: 24
+      sample_format: pcm
+    samples: [0, 100000, -100000, 500000, -500000, 0]
+
+  - name: stereo_32bit_float_44100.wav
+    kind: valid
+    format:
+      channels: 2
+      sample_rate: 44100
+      bit_depth: 32
+      sample_format: float
+    samples: [0.1, -0.1, 0.4, -0.4, 0.7, -0.7]
+
+  - name: invalid_no_riff.wav
+    kind: invalid_no_riff
+
+  - name: invalid_truncated.wav
+    kind: invalid_truncated
+    format:
+      channels: 2
+      sample_rate: 44100
+      bit_depth: 16
+      sample_format: pcm
+    samples: [1000, -1000, 2000, -2000, 3000, -3000, 4000, -4000]
