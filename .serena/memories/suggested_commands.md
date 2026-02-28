@@ -1,0 +1,11 @@
+# Suggested commands (Darwin shell)
+- `git status --short`
+- `git log --oneline -10`
+- `bundle exec rspec`
+- `bundle exec rspec spec/codecs/ogg_vorbis_spec.rb`
+- `bundle exec rubocop`
+- `bundle exec rake spec:coverage COVERAGE_MINIMUM=90`
+- `bundle exec rake docs:examples`
+- `bundle exec rake docs:yard`
+- `bundle exec rake docs:check YARD_MINIMUM=85`
+- `rake bench:flac` / `rake bench:all`
