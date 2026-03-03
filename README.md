@@ -141,6 +141,7 @@ Scripts in `examples/`:
 - `examples/audio_processing.rb`
 - `examples/synth_pad.rb`
 - `examples/drum_machine.rb`
+- `examples/chill_vibes.rb`
 - `examples/hybrid_arrangement.rb`
 - `examples/streaming_master_chain.rb`
 - `examples/cinematic_transition.rb`
