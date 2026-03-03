@@ -1,4 +1,4 @@
-# Wavify
+# Wavify [![Gem Version](https://badge.fury.io/rb/wavify.svg)](https://badge.fury.io/rb/wavify) [![Ruby](https://github.com/ydah/wavify/actions/workflows/ci.yml/badge.svg)](https://github.com/ydah/wavify/actions/workflows/ci.yml)
 
 Wavify is a Ruby audio processing toolkit with immutable transforms, codec I/O, streaming pipelines, DSP effects, and a sequencing DSL.
 
