@@ -66,6 +66,9 @@ namespace :docs do
       examples/drum_machine.rb
       examples/synth_pad.rb
       examples/audio_processing.rb
+      examples/hybrid_arrangement.rb
+      examples/streaming_master_chain.rb
+      examples/cinematic_transition.rb
     ].freeze
   end
 
