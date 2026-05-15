@@ -14,6 +14,20 @@ RSpec.describe Wavify::Core::Duration do
     end
   end
 
+  describe ".parse" do
+    it "parses clock-style durations" do
+      expect(described_class.parse("1:23.456").total_seconds).to eq(83.456)
+      expect(described_class.parse("01:02:03.004").total_seconds).to eq(3723.004)
+      expect(described_class.parse("12.5").total_seconds).to eq(12.5)
+    end
+
+    it "raises on invalid text" do
+      expect do
+        described_class.parse("1:99")
+      end.to raise_error(Wavify::InvalidParameterError)
+    end
+  end
+
   describe "#to_s" do
     it "renders HH:MM:SS.mmm format" do
       duration = described_class.new(3_726.045)

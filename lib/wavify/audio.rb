@@ -167,12 +167,72 @@ module Wavify
       @buffer.sample_frame_count
     end
 
+    # @return [Integer]
+    def channels
+      format.channels
+    end
+
+    # @return [Integer]
+    def sample_rate
+      format.sample_rate
+    end
+
+    # @param value [Integer, nil] optional target bit depth
+    # @return [Integer, Audio]
+    def bit_depth(value = nil)
+      return format.bit_depth if value.nil?
+
+      convert(format.with(bit_depth: value))
+    end
+
+    # @return [Array<Array<Numeric>>] sample frames
+    def frames
+      @buffer.samples.each_slice(format.channels).map(&:dup)
+    end
+
+    # Enumerates sample frames.
+    #
+    # @yield [frame, frame_index]
+    # @yieldparam frame [Array<Numeric>]
+    # @yieldparam frame_index [Integer]
+    # @return [Enumerator, Audio]
+    def each_frame
+      return enum_for(:each_frame) unless block_given?
+
+      @buffer.samples.each_slice(format.channels).with_index do |frame, frame_index|
+        yield frame.dup, frame_index
+      end
+      self
+    end
+
     # Converts to a new format/channels.
     #
     # @param new_format [Core::Format]
     # @return [Audio]
     def convert(new_format)
       self.class.new(@buffer.convert(new_format))
+    end
+
+    # Converts to another sample rate.
+    #
+    # @param sample_rate [Integer]
+    # @return [Audio]
+    def resample(sample_rate:)
+      convert(format.with(sample_rate: sample_rate))
+    end
+
+    # Converts to mono by downmixing channels.
+    #
+    # @return [Audio]
+    def to_mono
+      convert(format.with(channels: 1))
+    end
+
+    # Converts to stereo by upmixing/downmixing channels.
+    #
+    # @return [Audio]
+    def to_stereo
+      convert(format.with(channels: 2))
     end
 
     # Splits the audio into two clips at a time offset.
@@ -187,6 +247,122 @@ module Wavify
       [self.class.new(left), self.class.new(right)]
     end
 
+    # Slices audio between two time offsets.
+    #
+    # @param from [Numeric, Core::Duration]
+    # @param to [Numeric, Core::Duration]
+    # @return [Audio]
+    def slice(from:, to:)
+      start_frame = coerce_time_to_frame(from, upper_bound: @buffer.sample_frame_count)
+      end_frame = coerce_time_to_frame(to, upper_bound: @buffer.sample_frame_count)
+      raise InvalidParameterError, "to must be greater than or equal to from" if end_frame < start_frame
+
+      self.class.new(@buffer.slice(start_frame, end_frame - start_frame))
+    end
+
+    # Crops audio from a start time for a duration.
+    #
+    # @param start [Numeric, Core::Duration]
+    # @param duration [Numeric, Core::Duration]
+    # @return [Audio]
+    def crop(start:, duration:)
+      start_frame = coerce_time_to_frame(start, upper_bound: @buffer.sample_frame_count)
+      frame_length = coerce_duration_to_frame(duration)
+      self.class.new(@buffer.slice(start_frame, [frame_length, @buffer.sample_frame_count - start_frame].min))
+    end
+
+    # Concatenates another audio clip after this one.
+    #
+    # @param other [Audio]
+    # @return [Audio]
+    def concat(other)
+      validate_audio!(other, :other)
+      self.class.new(@buffer.concat(other.buffer))
+    end
+
+    alias append concat
+    alias + concat
+
+    # Prepends another audio clip before this one.
+    #
+    # @param other [Audio]
+    # @return [Audio]
+    def prepend(other)
+      validate_audio!(other, :other)
+      other.concat(self)
+    end
+
+    # Overlays another audio clip at a time offset.
+    #
+    # @param other [Audio]
+    # @param at [Numeric, Core::Duration]
+    # @param strategy [Symbol] mix clipping policy
+    # @return [Audio]
+    def overlay(other, at:, strategy: :clip)
+      validate_audio!(other, :other)
+      start_frame = coerce_time_to_frame(at, upper_bound: nil)
+      work_format = float_work_format(format)
+      base = @buffer.convert(work_format)
+      overlay_buffer = other.buffer.convert(work_format)
+      channels = work_format.channels
+      mixed_length = [base.samples.length, (start_frame * channels) + overlay_buffer.samples.length].max
+      mixed = Array.new(mixed_length, 0.0)
+      base.samples.each_with_index { |sample, index| mixed[index] += sample }
+      offset = start_frame * channels
+      overlay_buffer.samples.each_with_index { |sample, index| mixed[offset + index] += sample }
+
+      self.class.send(:apply_mix_strategy!, mixed, self.class.send(:normalize_mix_strategy!, strategy), 2)
+      self.class.new(Core::SampleBuffer.new(mixed, work_format).convert(format))
+    end
+
+    # Crossfades this audio into another clip.
+    #
+    # @param other [Audio]
+    # @param duration [Numeric, Core::Duration]
+    # @return [Audio]
+    def crossfade(other, duration:)
+      validate_audio!(other, :other)
+      rhs = other.convert(format)
+      overlap_frames = coerce_duration_to_frame(duration)
+      max_overlap = [sample_frame_count, rhs.sample_frame_count].min
+      raise InvalidParameterError, "duration is longer than one of the clips" if overlap_frames > max_overlap
+
+      seconds = overlap_frames.to_f / sample_rate
+      left_head = self.class.new(@buffer.slice(0, sample_frame_count - overlap_frames))
+      left_tail = self.class.new(@buffer.slice(sample_frame_count - overlap_frames, overlap_frames)).fade_out(seconds)
+      right_head = self.class.new(rhs.buffer.slice(0, overlap_frames)).fade_in(seconds)
+      right_tail = self.class.new(rhs.buffer.slice(overlap_frames, rhs.sample_frame_count - overlap_frames))
+      middle = self.class.mix(left_tail, right_head, strategy: :clip)
+
+      left_head.concat(middle).concat(right_tail)
+    end
+
+    # Adds silence before the audio.
+    #
+    # @param seconds [Numeric, Core::Duration]
+    # @return [Audio]
+    def pad_start(seconds)
+      self.class.silence(coerce_seconds(seconds), format: format).concat(self)
+    end
+
+    # Adds silence after the audio.
+    #
+    # @param seconds [Numeric, Core::Duration]
+    # @return [Audio]
+    def pad_end(seconds)
+      concat(self.class.silence(coerce_seconds(seconds), format: format))
+    end
+
+    # Inserts silence at a time offset.
+    #
+    # @param at [Numeric, Core::Duration]
+    # @param duration [Numeric, Core::Duration]
+    # @return [Audio]
+    def insert_silence(at:, duration:)
+      left, right = split(at: at)
+      left.concat(self.class.silence(coerce_seconds(duration), format: format)).concat(right)
+    end
+
     # Repeats the audio content.
     #
     # @param times [Integer] repetition count
@@ -196,9 +372,7 @@ module Wavify
 
       return self.class.new(Core::SampleBuffer.new([], @buffer.format)) if times.zero?
 
-      result = @buffer
-      (times - 1).times { result += @buffer }
-      self.class.new(result)
+      self.class.new(Core::SampleBuffer.new(@buffer.samples * times, @buffer.format))
     end
 
     # In-place variant of {#loop}.
@@ -278,13 +452,18 @@ module Wavify
 
       float_buffer = @buffer.convert(float_work_format(@buffer.format))
       channels = float_buffer.format.channels
-      frames = float_buffer.samples.each_slice(channels).to_a
-      first = frames.index { |frame| frame.any? { |sample| sample.abs >= threshold } }
+      first = nil
+      last = nil
+      float_buffer.samples.each_slice(channels).with_index do |frame, frame_index|
+        next unless frame.any? { |sample| sample.abs >= threshold }
+
+        first ||= frame_index
+        last = frame_index
+      end
       return self.class.new(Core::SampleBuffer.new([], @buffer.format)) unless first
 
-      last = frames.rindex { |frame| frame.any? { |sample| sample.abs >= threshold } }
-      trimmed = frames[first..last].flatten
-      self.class.new(Core::SampleBuffer.new(trimmed, float_buffer.format).convert(@buffer.format))
+      float_trimmed = float_buffer.slice(first, last - first + 1)
+      self.class.new(float_trimmed.convert(@buffer.format))
     end
 
     # In-place variant of {#trim}.
@@ -400,6 +579,45 @@ module Wavify
       self
     end
 
+    # Maps normalized float samples and returns a new audio object in the original format.
+    #
+    # @yield [sample, sample_index]
+    # @yieldparam sample [Float]
+    # @yieldparam sample_index [Integer]
+    # @return [Enumerator, Audio]
+    def map_samples
+      return enum_for(:map_samples) unless block_given?
+
+      transform_samples do |samples, _format|
+        samples.map.with_index do |sample, sample_index|
+          yield(sample, sample_index).to_f.clamp(-1.0, 1.0)
+        end
+      end
+    end
+
+    # Maps normalized float frames and returns a new audio object in the original format.
+    #
+    # @yield [frame, frame_index]
+    # @yieldparam frame [Array<Float>]
+    # @yieldparam frame_index [Integer]
+    # @return [Enumerator, Audio]
+    def map_frames
+      return enum_for(:map_frames) unless block_given?
+
+      transform_samples do |samples, work_format|
+        mapped = []
+        samples.each_slice(work_format.channels).with_index do |frame, frame_index|
+          output = yield(frame.dup, frame_index)
+          unless output.is_a?(Array) && output.length == work_format.channels
+            raise InvalidParameterError, "map_frames block must return an Array with #{work_format.channels} samples"
+          end
+
+          mapped.concat(output.map { |sample| sample.to_f.clamp(-1.0, 1.0) })
+        end
+        mapped
+      end
+    end
+
     # Returns the absolute peak amplitude in float working space.
     #
     # @return [Float] 0.0..1.0
@@ -419,6 +637,88 @@ module Wavify
       Math.sqrt(square_sum / float_buffer.samples.length)
     end
 
+    # @return [Float] peak amplitude in dBFS
+    def peak_dbfs
+      amplitude_to_dbfs(peak_amplitude)
+    end
+
+    # @return [Float] RMS amplitude in dBFS
+    def rms_dbfs
+      amplitude_to_dbfs(rms_amplitude)
+    end
+
+    # @return [Hash] basic audio statistics
+    def stats
+      {
+        format: format,
+        duration: duration,
+        sample_frame_count: sample_frame_count,
+        peak_amplitude: peak_amplitude,
+        rms_amplitude: rms_amplitude,
+        peak_dbfs: peak_dbfs,
+        rms_dbfs: rms_dbfs,
+        clipped: clipped?,
+        silent: silent?
+      }
+    end
+
+    # @param threshold [Numeric]
+    # @return [Boolean]
+    def silent?(threshold: 0.0)
+      raise InvalidParameterError, "threshold must be Numeric in 0.0..1.0" unless threshold.is_a?(Numeric) && threshold.between?(0.0, 1.0)
+
+      peak_amplitude <= threshold
+    end
+
+    # @return [Boolean]
+    def clipped?
+      float_buffer = @buffer.convert(float_work_format(@buffer.format))
+      float_buffer.samples.any? { |sample| sample <= -1.0 || sample >= 1.0 }
+    end
+
+    # @return [Float] average sample offset in normalized float space
+    def dc_offset
+      float_buffer = @buffer.convert(float_work_format(@buffer.format))
+      return 0.0 if float_buffer.samples.empty?
+
+      float_buffer.samples.sum / float_buffer.samples.length.to_f
+    end
+
+    # @return [Audio]
+    def remove_dc_offset
+      offset = dc_offset
+      map_samples { |sample, _index| sample - offset }
+    end
+
+    # @return [Float] zero-crossing rate per channel stream
+    def zero_crossing_rate
+      float_buffer = @buffer.convert(float_work_format(@buffer.format))
+      channels = float_buffer.format.channels
+      return 0.0 if float_buffer.sample_frame_count <= 1
+
+      crossings = 0
+      comparisons = 0
+      channels.times do |channel|
+        previous = nil
+        float_buffer.samples.each_slice(channels) do |frame|
+          current = frame.fetch(channel)
+          if previous
+            crossings += 1 if (previous.negative? && current >= 0.0) || (previous >= 0.0 && current.negative?)
+            comparisons += 1
+          end
+          previous = current
+        end
+      end
+      return 0.0 if comparisons.zero?
+
+      crossings.to_f / comparisons
+    end
+
+    # @return [String]
+    def inspect
+      "#<#{self.class.name} #{human_sample_rate} #{human_channels} #{format.bit_depth}-bit #{format.sample_format} #{Kernel.format('%.3fs', duration.total_seconds)}>"
+    end
+
     private
 
     def self.normalize_codec_options!(codec_options)
@@ -436,6 +736,59 @@ module Wavify
 
     def normalize_codec_options!(codec_options)
       self.class.send(:normalize_codec_options!, codec_options)
+    end
+
+    def validate_audio!(audio, name)
+      raise InvalidParameterError, "#{name} must be Audio" unless audio.is_a?(self.class)
+    end
+
+    def coerce_seconds(value)
+      seconds = case value
+                when Core::Duration
+                  value.total_seconds
+                when Numeric
+                  value.to_f
+                else
+                  raise InvalidParameterError, "time value must be Numeric or Core::Duration"
+                end
+      raise InvalidParameterError, "time value must be non-negative" if seconds.negative?
+
+      seconds
+    end
+
+    def coerce_time_to_frame(value, upper_bound:)
+      frame = (coerce_seconds(value) * @buffer.format.sample_rate).round
+      if upper_bound && frame > upper_bound
+        raise InvalidParameterError, "time value is out of range: #{frame}"
+      end
+
+      frame
+    end
+
+    def coerce_duration_to_frame(value)
+      (coerce_seconds(value) * @buffer.format.sample_rate).round
+    end
+
+    def amplitude_to_dbfs(amplitude)
+      return -Float::INFINITY if amplitude <= 0.0
+
+      20.0 * Math.log10(amplitude)
+    end
+
+    def human_sample_rate
+      if sample_rate >= 1000
+        "#{(sample_rate / 1000.0).round(1)}kHz"
+      else
+        "#{sample_rate}Hz"
+      end
+    end
+
+    def human_channels
+      case channels
+      when 1 then "mono"
+      when 2 then "stereo"
+      else "#{channels}ch"
+      end
     end
 
     def apply_fade(seconds:, mode:)

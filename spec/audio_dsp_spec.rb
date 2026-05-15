@@ -85,6 +85,8 @@ RSpec.describe Wavify::Audio do
 
       expect(audio.peak_amplitude).to be_within(0.0001).of(0.5)
       expect(audio.rms_amplitude).to be_within(0.001).of(0.5)
+      expect(audio.peak_dbfs).to be_within(0.001).of(-6.0206)
+      expect(audio.rms_dbfs).to be_within(0.001).of(-6.0206)
     end
 
     it "creates tones via oscillator" do
@@ -97,6 +99,42 @@ RSpec.describe Wavify::Audio do
 
       expect(audio.sample_frame_count).to eq(4_410)
       expect(audio.format).to eq(float_stereo)
+    end
+
+    it "maps samples and frames in normalized float space" do
+      audio = audio_with([0.1, -0.1, 0.2, -0.2])
+
+      sample_mapped = audio.map_samples { |sample, _index| sample * 2.0 }
+      frame_mapped = audio.map_frames { |frame, _index| frame.reverse }
+
+      expect(sample_mapped.buffer.samples).to eq([0.2, -0.2, 0.4, -0.4])
+      expect(frame_mapped.buffer.samples).to eq([-0.1, 0.1, -0.2, 0.2])
+    end
+
+    it "reports stats, silence, clipping, dc offset, and zero crossings" do
+      audio = audio_with([0.5, 0.5, -0.5, -0.5])
+      silent = audio_with([0.0, 0.0])
+      clipped = audio_with([1.0, -1.0])
+
+      expect(audio.stats[:sample_frame_count]).to eq(2)
+      expect(silent.silent?).to eq(true)
+      expect(clipped.clipped?).to eq(true)
+      expect(audio.dc_offset).to eq(0.0)
+      expect(audio.zero_crossing_rate).to eq(1.0)
+    end
+
+    it "removes dc offset" do
+      audio = audio_with([0.25, 0.25, 0.5, 0.5])
+
+      corrected = audio.remove_dc_offset
+
+      expect(corrected.dc_offset).to be_within(0.0001).of(0.0)
+    end
+
+    it "inspects with human-readable audio details" do
+      audio = audio_with([0.0, 0.0])
+
+      expect(audio.inspect).to include("44.1kHz", "stereo", "32-bit", "0.000s")
     end
   end
 end

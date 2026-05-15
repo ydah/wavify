@@ -24,6 +24,28 @@ module Wavify
         new(sample_frames.to_f / sample_rate)
       end
 
+      # Parses `SS.sss`, `MM:SS.sss`, or `HH:MM:SS.sss` text.
+      #
+      # @param value [String]
+      # @return [Duration]
+      def self.parse(value)
+        raise InvalidParameterError, "duration must be a String" unless value.is_a?(String)
+
+        parts = value.strip.split(":")
+        raise InvalidParameterError, "invalid duration: #{value.inspect}" unless parts.length.between?(1, 3)
+
+        seconds = parse_seconds(parts.pop)
+        minutes = parts.empty? ? 0.0 : parse_component(parts.pop, :minutes)
+        hours = parts.empty? ? 0.0 : parse_component(parts.pop, :hours)
+        raise InvalidParameterError, "invalid duration: #{value.inspect}" unless parts.empty?
+        raise InvalidParameterError, "minutes must be less than 60" if hours.positive? && minutes >= 60.0
+        raise InvalidParameterError, "seconds must be less than 60" if (hours.positive? || minutes.positive?) && seconds >= 60.0
+
+        new((hours * 3600.0) + (minutes * 60.0) + seconds)
+      rescue ArgumentError
+        raise InvalidParameterError, "invalid duration: #{value.inspect}"
+      end
+
       # @param total_seconds [Numeric] non-negative duration in seconds
       def initialize(total_seconds)
         unless total_seconds.is_a?(Numeric) && total_seconds >= 0
@@ -90,6 +112,19 @@ module Wavify
       end
 
       private
+
+      def self.parse_seconds(value)
+        Float(value)
+      end
+      private_class_method :parse_seconds
+
+      def self.parse_component(value, name)
+        component = Float(value)
+        raise InvalidParameterError, "#{name} must be non-negative" if component.negative?
+
+        component
+      end
+      private_class_method :parse_component
 
       def total_milliseconds
         (@total_seconds * 1000).round

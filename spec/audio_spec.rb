@@ -197,6 +197,17 @@ RSpec.describe Wavify::Audio do
       expect(converted).not_to equal(source)
       expect(converted.format).to eq(target_format)
     end
+
+    it "offers shortcut format conversions and direct format readers" do
+      source = described_class.new(Wavify::Core::SampleBuffer.new([100, -100], format.with(channels: 1)))
+
+      expect(source.channels).to eq(1)
+      expect(source.sample_rate).to eq(44_100)
+      expect(source.bit_depth).to eq(16)
+      expect(source.to_stereo.channels).to eq(2)
+      expect(source.resample(sample_rate: 48_000).sample_rate).to eq(48_000)
+      expect(source.bit_depth(24).bit_depth).to eq(24)
+    end
   end
 
   describe "#split" do
@@ -210,6 +221,53 @@ RSpec.describe Wavify::Audio do
       expect(right.sample_frame_count).to eq(3)
       expect(left.buffer.samples).to eq([1, -1])
       expect(right.buffer.samples).to eq([2, -2, 3, -3, 4, -4])
+    end
+
+    it "slices and crops by time" do
+      source = described_class.new(
+        Wavify::Core::SampleBuffer.new([1, -1, 2, -2, 3, -3, 4, -4], format)
+      )
+
+      sliced = source.slice(from: (1.0 / 44_100), to: (3.0 / 44_100))
+      cropped = source.crop(start: (2.0 / 44_100), duration: (10.0 / 44_100))
+
+      expect(sliced.buffer.samples).to eq([2, -2, 3, -3])
+      expect(cropped.buffer.samples).to eq([3, -3, 4, -4])
+    end
+  end
+
+  describe "timeline editing" do
+    it "concats, prepends, and pads audio" do
+      a = described_class.new(Wavify::Core::SampleBuffer.new([1, -1], format))
+      b = described_class.new(Wavify::Core::SampleBuffer.new([2, -2], format))
+
+      expect(a.concat(b).buffer.samples).to eq([1, -1, 2, -2])
+      expect(a.prepend(b).buffer.samples).to eq([2, -2, 1, -1])
+      expect(a.pad_start(1.0 / 44_100).buffer.samples).to eq([0, 0, 1, -1])
+      expect(a.pad_end(1.0 / 44_100).buffer.samples).to eq([1, -1, 0, 0])
+    end
+
+    it "inserts silence and overlays clips" do
+      source = described_class.new(Wavify::Core::SampleBuffer.new([100, -100, 200, -200], format))
+      other = described_class.new(Wavify::Core::SampleBuffer.new([50, 50], format))
+
+      inserted = source.insert_silence(at: (1.0 / 44_100), duration: (1.0 / 44_100))
+      overlayed = source.overlay(other, at: (1.0 / 44_100))
+
+      expect(inserted.buffer.samples).to eq([100, -100, 0, 0, 200, -200])
+      expect(overlayed.buffer.samples).to eq([100, -100, 250, -150])
+    end
+
+    it "crossfades between clips" do
+      float_format = format.with(channels: 1, sample_format: :float, bit_depth: 32)
+      left = described_class.new(Wavify::Core::SampleBuffer.new([1.0, 1.0, 1.0, 1.0], float_format))
+      right = described_class.new(Wavify::Core::SampleBuffer.new([-1.0, -1.0, -1.0, -1.0], float_format))
+
+      faded = left.crossfade(right, duration: 2.0 / 44_100)
+
+      expect(faded.sample_frame_count).to eq(6)
+      expect(faded.buffer.samples.first).to eq(1.0)
+      expect(faded.buffer.samples.last).to eq(-1.0)
     end
   end
 

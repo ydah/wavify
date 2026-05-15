@@ -25,4 +25,15 @@ require_relative "wavify/dsl"
 # Wavify is a pure Ruby audio processing toolkit with immutable transforms,
 # multiple codecs, DSP primitives, and a small sequencing DSL.
 module Wavify
+  # @param value [Numeric]
+  # @return [Wavify::Core::Duration]
+  def self.seconds(value)
+    Core::Duration.new(value)
+  end
+
+  # @param value [Numeric] milliseconds
+  # @return [Wavify::Core::Duration]
+  def self.ms(value)
+    Core::Duration.new(value.to_f / 1000.0)
+  end
 end
