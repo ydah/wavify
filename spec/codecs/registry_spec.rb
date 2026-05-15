@@ -69,6 +69,21 @@ RSpec.describe Wavify::Codecs::Registry do
       expect(described_class.detect(io)).to eq(Wavify::Codecs::Aiff)
     end
 
+    it "uses a filename hint for IO inputs without magic bytes" do
+      io = StringIO.new("raw sample bytes")
+
+      expect(described_class.detect_for_read(io, filename: "clip.raw")).to eq(Wavify::Codecs::Raw)
+      expect(Wavify::Codecs.detect(io, filename: "clip.raw")).to eq(Wavify::Codecs::Raw)
+    end
+
+    it "checks filename hints against magic bytes in strict mode" do
+      io = StringIO.new("RIFF\x24\x00\x00\x00WAVE")
+
+      expect do
+        described_class.detect_for_read(io, filename: "clip.flac", strict: true)
+      end.to raise_error(Wavify::InvalidFormatError, /codec mismatch/)
+    end
+
     it "raises codec not found when unsupported" do
       io = StringIO.new("not-audio")
 

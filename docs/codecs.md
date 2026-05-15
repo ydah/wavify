@@ -19,6 +19,16 @@ Write detection prefers the output extension:
 ```ruby
 audio.write("master.flac")
 audio.write("preview.ogg", codec_options: { quality: 0.5 })
+audio.write("master.wav", overwrite: false)
+```
+
+For IO inputs without container magic bytes, pass a filename hint:
+
+```ruby
+io = StringIO.new(raw_bytes)
+audio = Wavify::Audio.read(io, filename: "input.raw", format: raw_format)
+io.rewind
+stream = Wavify::Audio.stream(io, filename: "input.raw", format: raw_format)
 ```
 
 Codec registration is intentionally small:

@@ -13,16 +13,17 @@ module Wavify
 
     # Reads audio from a file path using codec auto-detection.
     #
-    # @param path [String]
+    # @param path_or_io [String, IO]
     # @param format [Core::Format, nil] optional target format to convert into
     # @param codec_options [Hash] codec-specific options forwarded to `.read`
     # @param strict [Boolean] verify extension and magic-byte codec agreement
+    # @param filename [String, nil] optional filename hint for IO inputs
     # @return [Audio]
-    def self.read(path, format: nil, codec_options: nil, strict: false)
-      codec = Codecs::Registry.detect_for_read(path, strict: strict)
+    def self.read(path_or_io, format: nil, codec_options: nil, strict: false, filename: nil)
+      codec = Codecs::Registry.detect_for_read(path_or_io, strict: strict, filename: filename)
       options = normalize_codec_options!(codec_options)
 
-      new(codec.read(path, format: format, **options))
+      new(codec.read(path_or_io, format: format, **options))
     end
 
     # Reads audio metadata without decoding the full payload when the codec supports it.
@@ -31,9 +32,10 @@ module Wavify
     # @param format [Core::Format, nil] required for raw PCM/float input
     # @param codec_options [Hash] codec-specific options forwarded to `.metadata`
     # @param strict [Boolean] verify extension and magic-byte codec agreement
+    # @param filename [String, nil] optional filename hint for IO inputs
     # @return [Hash]
-    def self.metadata(path_or_io, format: nil, codec_options: nil, strict: false)
-      codec = Codecs::Registry.detect_for_read(path_or_io, strict: strict)
+    def self.metadata(path_or_io, format: nil, codec_options: nil, strict: false, filename: nil)
+      codec = Codecs::Registry.detect_for_read(path_or_io, strict: strict, filename: filename)
       options = normalize_codec_options!(codec_options)
       return codec.metadata(path_or_io, format: format, **options) if codec == Codecs::Raw
 
@@ -81,11 +83,13 @@ module Wavify
     # @param format [Core::Format, nil] optional source format override
     # @param codec_options [Hash] codec-specific options forwarded to `.stream_read`
     # @param strict [Boolean] verify extension and magic-byte codec agreement
+    # @param filename [String, nil] optional filename hint for IO inputs
     # @return [Core::Stream]
-    def self.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: nil, strict: false)
-      codec = Codecs::Registry.detect_for_read(path_or_io, strict: strict)
-      source_format = format || codec.metadata(path_or_io)[:format]
+    def self.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: nil, strict: false, filename: nil)
+      codec = Codecs::Registry.detect_for_read(path_or_io, strict: strict, filename: filename)
       options = normalize_codec_options!(codec_options)
+      source_format = resolve_stream_format!(path_or_io, codec: codec, format: format)
+      options = options.merge(format: source_format) if codec == Codecs::Raw
 
       stream = Core::Stream.new(
         path_or_io,
@@ -141,11 +145,13 @@ module Wavify
 
     # Writes the audio to a file path using codec auto-detection.
     #
-    # @param path [String]
+    # @param path [String, IO]
     # @param format [Core::Format, nil] optional output format
     # @param codec_options [Hash] codec-specific options forwarded to `.write`
+    # @param overwrite [Boolean] whether existing path output may be replaced
     # @return [Audio] self
-    def write(path, format: nil, codec_options: nil)
+    def write(path, format: nil, codec_options: nil, overwrite: true)
+      validate_overwrite!(path, overwrite)
       codec = Codecs::Registry.detect_for_write(path)
       options = normalize_codec_options!(codec_options)
       codec.write(path, @buffer, format: format || @buffer.format, **options)
@@ -734,8 +740,23 @@ module Wavify
     end
     private_class_method :normalize_codec_options!
 
+    def self.resolve_stream_format!(path_or_io, codec:, format:)
+      return format if format
+      return codec.metadata(path_or_io)[:format] unless codec == Codecs::Raw
+
+      raise InvalidFormatError, "format is required for raw stream input"
+    end
+    private_class_method :resolve_stream_format!
+
     def normalize_codec_options!(codec_options)
       self.class.send(:normalize_codec_options!, codec_options)
+    end
+
+    def validate_overwrite!(path, overwrite)
+      raise InvalidParameterError, "overwrite must be true or false" unless overwrite == true || overwrite == false
+      return if overwrite || !path.is_a?(String) || !File.exist?(path)
+
+      raise InvalidParameterError, "output file already exists: #{path}"
     end
 
     def validate_audio!(audio, name)

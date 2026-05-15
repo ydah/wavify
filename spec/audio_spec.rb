@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "stringio"
 require "tempfile"
 
 RSpec.describe Wavify::Audio do
@@ -96,6 +97,28 @@ RSpec.describe Wavify::Audio do
         end.to raise_error(Wavify::InvalidFormatError, /codec mismatch/)
       end
     end
+
+    it "reads raw IO using a filename hint and explicit format" do
+      raw_format = format.with(channels: 1)
+      source_buffer = Wavify::Core::SampleBuffer.new([100, -100, 200], raw_format)
+      io = StringIO.new
+      Wavify::Codecs::Raw.write(io, source_buffer, format: raw_format)
+
+      loaded = described_class.read(io, filename: "clip.raw", format: raw_format)
+
+      expect(loaded.buffer.samples).to eq(source_buffer.samples)
+      expect(loaded.format).to eq(raw_format)
+    end
+
+    it "refuses to overwrite existing path output when requested" do
+      source_audio = described_class.silence(0.001, format: format)
+
+      Tempfile.create(["wavify_audio_existing", ".wav"]) do |file|
+        expect do
+          source_audio.write(file.path, overwrite: false)
+        end.to raise_error(Wavify::InvalidParameterError, /already exists/)
+      end
+    end
   end
 
   describe ".stream" do
@@ -123,6 +146,17 @@ RSpec.describe Wavify::Audio do
       expect(chunks).not_to be_empty
       expect(chunks).to all(be_a(Wavify::Core::SampleBuffer))
       expect(chunks.sum(&:sample_frame_count)).to eq(metadata[:sample_frame_count])
+    end
+
+    it "streams raw IO using a filename hint and explicit format" do
+      raw_format = format.with(channels: 1)
+      source_buffer = Wavify::Core::SampleBuffer.new([100, -100, 200, -200], raw_format)
+      io = StringIO.new
+      Wavify::Codecs::Raw.write(io, source_buffer, format: raw_format)
+
+      stream = described_class.stream(io, filename: "clip.raw", format: raw_format, chunk_size: 2)
+
+      expect(stream.each_chunk.flat_map(&:samples)).to eq(source_buffer.samples)
     end
   end
 

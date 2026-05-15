@@ -56,6 +56,7 @@ Codec-specific write options are forwarded with `codec_options:`:
 ```ruby
 audio.write("master.flac", codec_options: { block_size: 2048 })
 audio.write("preview.ogg", codec_options: { quality: 0.5 })
+audio.write("master.wav", overwrite: false)
 ```
 
 ## Core API
@@ -64,10 +65,10 @@ audio.write("preview.ogg", codec_options: { quality: 0.5 })
 
 Main constructors:
 
-- `Audio.read(path, format: nil, codec_options: {}, strict: false)`
-- `Audio.metadata(path_or_io, format: nil, codec_options: {}, strict: false)`
-- `Audio.info(path_or_io, format: nil, codec_options: {}, strict: false)`
-- `Audio.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: {}, strict: false)`
+- `Audio.read(path_or_io, format: nil, codec_options: {}, strict: false, filename: nil)`
+- `Audio.metadata(path_or_io, format: nil, codec_options: {}, strict: false, filename: nil)`
+- `Audio.info(path_or_io, format: nil, codec_options: {}, strict: false, filename: nil)`
+- `Audio.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: {}, strict: false, filename: nil)`
 - `Audio.tone(frequency:, duration:, waveform:, format:)`
 - `Audio.silence(duration_seconds, format:)`
 - `Audio.mix(*audios, strategy: :clip)`
@@ -130,6 +131,13 @@ Raw example:
 raw_format = Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
 audio = Wavify::Audio.read("input.pcm", format: raw_format)
 audio.write("output.wav")
+```
+
+For IO objects without magic bytes, pass `filename:` as a codec hint:
+
+```ruby
+io = StringIO.new(raw_bytes)
+audio = Wavify::Audio.read(io, filename: "input.raw", format: raw_format)
 ```
 
 Metadata example:

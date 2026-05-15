@@ -326,4 +326,18 @@ RSpec.describe Wavify::Core::Stream do
     expect(fake_codec.captured_options).to eq(block_size: 2, block_size_strategy: :fixed)
     expect(sink.length).to eq(1)
   end
+
+  it "refuses to overwrite existing path output when requested" do
+    source = write_source_wav([0.1, 0.2])
+    output = Tempfile.new(["wavify_stream_existing", ".wav"])
+    output.close
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
+
+    expect do
+      stream.write_to(output.path, overwrite: false)
+    end.to raise_error(Wavify::InvalidParameterError, /already exists/)
+  ensure
+    source&.unlink
+    output&.unlink
+  end
 end

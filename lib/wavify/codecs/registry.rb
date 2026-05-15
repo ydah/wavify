@@ -42,25 +42,27 @@ module Wavify
         # Read detection prefers magic bytes when available.
         #
         # @param io_or_path [String, IO]
+        # @param filename [String, nil] optional filename hint for IO inputs
         # @return [Class] codec class
-        def detect(io_or_path, strict: false)
-          detect_for_read(io_or_path, strict: strict)
+        def detect(io_or_path, strict: false, filename: nil)
+          detect_for_read(io_or_path, strict: strict, filename: filename)
         end
 
         # Detects the codec for reading.
         #
         # @param io_or_path [String, IO]
         # @param strict [Boolean] raise when extension and magic bytes disagree
+        # @param filename [String, nil] optional filename hint for IO inputs
         # @return [Class] codec class
-        def detect_for_read(io_or_path, strict: false)
-          extension_codec = detect_by_extension(io_or_path)
+        def detect_for_read(io_or_path, strict: false, filename: nil)
+          extension_codec = detect_by_extension(io_or_path, filename: filename)
           magic_codec = detect_by_magic(io_or_path)
           if strict && extension_codec && magic_codec && extension_codec != magic_codec
             raise InvalidFormatError,
                   "codec mismatch: extension implies #{extension_codec.name}, magic bytes imply #{magic_codec.name}"
           end
 
-          magic_codec || extension_codec || raise_not_found(io_or_path)
+          magic_codec || extension_codec || raise_not_found(filename || io_or_path)
         end
 
         # Detects the codec for writing.
@@ -90,10 +92,11 @@ module Wavify
 
         private
 
-        def detect_by_extension(io_or_path)
-          return unless io_or_path.is_a?(String)
+        def detect_by_extension(io_or_path, filename: nil)
+          source = filename || io_or_path
+          return unless source.is_a?(String)
 
-          extensions[File.extname(io_or_path).downcase]
+          extensions[File.extname(source).downcase]
         end
 
         def extensions
@@ -148,8 +151,8 @@ module Wavify
 
     class << self
       # @see Registry.detect
-      def detect(io_or_path, strict: false)
-        Registry.detect(io_or_path, strict: strict)
+      def detect(io_or_path, strict: false, filename: nil)
+        Registry.detect(io_or_path, strict: strict, filename: filename)
       end
 
       # @see Registry.register

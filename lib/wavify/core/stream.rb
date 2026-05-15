@@ -196,8 +196,10 @@ module Wavify
       # @param path_or_io [String, IO]
       # @param format [Format, nil] output format (required for raw output if unknown)
       # @param codec_options [Hash] codec-specific options forwarded to `stream_write`
+      # @param overwrite [Boolean] whether existing path output may be replaced
       # @return [String, IO] the same target argument
-      def write_to(path_or_io, format: nil, codec_options: nil)
+      def write_to(path_or_io, format: nil, codec_options: nil, overwrite: true)
+        validate_overwrite!(path_or_io, overwrite)
         output_codec = detect_output_codec(path_or_io)
         target_format = resolve_target_format(format, output_codec)
         options = validate_codec_options!(codec_options, "codec_options")
@@ -423,6 +425,13 @@ module Wavify
         end
 
         codec_options.dup
+      end
+
+      def validate_overwrite!(path_or_io, overwrite)
+        raise InvalidParameterError, "overwrite must be true or false" unless overwrite == true || overwrite == false
+        return if overwrite || !path_or_io.is_a?(String) || !File.exist?(path_or_io)
+
+        raise InvalidParameterError, "output file already exists: #{path_or_io}"
       end
 
       def validate_pipeline_name!(name)
