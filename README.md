@@ -97,13 +97,16 @@ Wavify::Core::Duration.parse("1:23.456")
 
 ```ruby
 Wavify::Audio.stream("input.wav", chunk_size: 4096)
-             .pipe(Wavify::Effects::Compressor.new(threshold: -18, ratio: 3.0))
-             .pipe(Wavify::Effects::Chorus.new(rate: 0.5, depth: 0.2, mix: 0.15))
+             .pipe(Wavify::Effects::Compressor.new(threshold: -18, ratio: 3.0), name: :comp)
+             .map_chunks(name: :trim_preview) { |chunk| Wavify::Audio.new(chunk).trim(threshold: 0.005).buffer }
+             .meter { |stats| puts stats[:peak_dbfs] }
+             .tee("preview.wav")
              .write_to("output.aiff", format: Wavify::Core::Format::CD_QUALITY)
 ```
 
 `pipe` accepts processors that respond to `call`, `process`, or `apply`.
 Stateful processors may implement `reset`, `flush(format:)`, and `tail_duration`.
+Use `take_duration`, `drop_duration`, `to_audio`, `progress`, `meter`, `tee`, and `pipeline_steps` for common chunk workflows and inspection.
 
 `write_to` also accepts codec-specific output options:
 

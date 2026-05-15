@@ -97,11 +97,81 @@ RSpec.describe Wavify::Core::Stream do
     stream = described_class.new("unused", codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
     processor = ->(chunk) { chunk }
 
-    stream.pipe(processor)
+    stream.pipe(processor, name: :identity)
     snapshot = stream.pipeline
     snapshot.clear
 
     expect(stream.pipeline).to eq([processor])
+    expect(stream.pipeline_steps).to eq([{ name: "identity", processor: processor }])
+  end
+
+  it "maps chunks with a named block processor" do
+    source = write_source_wav([0.1, 0.2, 0.3, 0.4])
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
+
+    stream.map_chunks(name: :double) do |chunk|
+      Wavify::Core::SampleBuffer.new(chunk.samples.map { |sample| sample * 2.0 }, chunk.format)
+    end
+
+    expect(stream.pipeline_steps.first[:name]).to eq("double")
+    stream.each_chunk.flat_map(&:samples).zip([0.2, 0.4, 0.6, 0.8]).each do |actual, target|
+      expect(actual).to be_within(0.0001).of(target)
+    end
+  ensure
+    source&.unlink
+  end
+
+  it "materializes dropped and limited stream windows into Audio" do
+    source = write_source_wav([0.1, 0.2, 0.3, 0.4, 0.5])
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
+
+    audio = stream.drop_duration(1.0 / format.sample_rate).take_duration(3.0 / format.sample_rate).to_audio
+
+    expect(audio).to be_a(Wavify::Audio)
+    audio.buffer.samples.zip([0.2, 0.3, 0.4]).each do |actual, target|
+      expect(actual).to be_within(0.0001).of(target)
+    end
+  ensure
+    source&.unlink
+  end
+
+  it "reports chunk meters and cumulative progress without changing audio" do
+    source = write_source_wav([0.25, -0.5, 0.5, -0.25])
+    meters = []
+    progresses = []
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
+    stream.meter { |stats| meters << stats }
+    stream.progress(total_frames: 4) { |stats| progresses << stats }
+
+    samples = stream.each_chunk.flat_map(&:samples)
+
+    expect(samples).to eq([0.25, -0.5, 0.5, -0.25])
+    expect(meters.map { |stats| stats[:sample_frame_count] }).to eq([2, 2])
+    expect(meters.map { |stats| stats[:peak_amplitude] }).to all(be_within(0.0001).of(0.5))
+    expect(progresses.map { |stats| stats[:sample_frame_count] }).to eq([2, 4])
+    expect(progresses.last[:progress]).to eq(1.0)
+  ensure
+    source&.unlink
+  end
+
+  it "tees processed chunks to an additional output" do
+    source = write_source_wav([0.2, 0.4, 0.6, 0.8])
+    tee_output = Tempfile.new(["wavify_stream_tee", ".wav"])
+    tee_output.close
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
+    stream.map_chunks do |chunk|
+      Wavify::Core::SampleBuffer.new(chunk.samples.map { |sample| sample * 0.5 }, chunk.format)
+    end
+
+    stream.tee(tee_output.path).each_chunk.to_a
+
+    written = Wavify::Codecs::Wav.read(tee_output.path)
+    written.samples.zip([0.1, 0.2, 0.3, 0.4]).each do |actual, target|
+      expect(actual).to be_within(0.0001).of(target)
+    end
+  ensure
+    source&.unlink
+    tee_output&.unlink
   end
 
   it "resets stateful processors before each stream pass" do
