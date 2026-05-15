@@ -108,6 +108,16 @@ module Wavify
         JSON.generate(timeline(default_bars: default_bars))
       end
 
+      # Renders the sequencer timeline as a compact text table.
+      #
+      # @param default_bars [Integer]
+      # @return [String]
+      def timeline_text(default_bars: @default_bars)
+        events = timeline(default_bars: default_bars)
+        rows = events.map { |event| timeline_text_row(event) }
+        (["time\tbar\ttrack\tkind\tdetail"] + rows).join("\n")
+      end
+
       # Renders the song definition to an {Wavify::Audio} instance.
       #
       # @param default_bars [Integer]
@@ -370,6 +380,29 @@ module Wavify
         raise if message.start_with?("#{label}:")
 
         raise Wavify::SequencerError, "#{label}: #{message}"
+      end
+
+      def timeline_text_row(event)
+        [
+          Kernel.format("%.3f", event.fetch(:start_time)),
+          event.fetch(:bar),
+          event.fetch(:track),
+          event.fetch(:kind),
+          timeline_text_detail(event)
+        ].join("\t")
+      end
+
+      def timeline_text_detail(event)
+        case event.fetch(:kind)
+        when :trigger
+          "step=#{event.fetch(:step_index)} velocity=#{Kernel.format('%.2f', event.fetch(:velocity))}"
+        when :note
+          "step=#{event.fetch(:step_index)} midi=#{event.fetch(:midi_notes).join(',')}"
+        when :chord
+          "chord=#{event.fetch(:chord)} midi=#{event.fetch(:midi_notes).join(',')}"
+        else
+          "step=#{event.fetch(:step_index)}"
+        end
       end
     end
 

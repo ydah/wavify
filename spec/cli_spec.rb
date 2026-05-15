@@ -98,6 +98,23 @@ RSpec.describe Wavify::CLI do
     end
   end
 
+  it "prints a DSL timeline" do
+    Tempfile.create(["wavify-cli-timeline", ".rb"]) do |song_file|
+      song_file.write(<<~RUBY)
+        track :lead do
+          notes "C4 . . .", resolution: 4
+        end
+      RUBY
+      song_file.flush
+
+      status, stdout, stderr = run_cli(["timeline", song_file.path, "--tempo", "120", "--bars", "1"])
+
+      expect(status).to eq(0)
+      expect(stdout).to include("time\tbar\ttrack\tkind\tdetail", "lead", "note")
+      expect(stderr).to eq("")
+    end
+  end
+
   it "returns an error status for invalid commands" do
     status, stdout, stderr = run_cli(["unknown"])
 

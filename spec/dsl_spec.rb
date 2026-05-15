@@ -211,6 +211,10 @@ RSpec.describe Wavify::DSL do
       parsed = JSON.parse(song.timeline_json)
       expect(parsed).not_to be_empty
       expect(parsed.any? { |event| event["bar"] == 1 }).to be(true)
+
+      text = song.timeline_text
+      expect(text).to include("time\tbar\ttrack\tkind\tdetail")
+      expect(text).to include("lead", "note")
     end
 
     it "renders and writes track stems" do

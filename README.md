@@ -192,6 +192,7 @@ end
 
 timeline = song.timeline
 song.timeline_json
+song.timeline_text
 stems = song.render(stems: true)
 mix = song.render
 mix.write("song.wav")
@@ -251,6 +252,7 @@ wavify normalize input.wav output.wav --target -1
 wavify trim input.wav output.wav --threshold 0.01
 wavify chain input.wav output.wav --gain -3 --fade-in 0.02 --fade-out 0.05
 wavify render song.rb out.wav --tempo 120 --swing 0.55 --bars 4
+wavify timeline song.rb --tempo 120 --bars 4
 wavify formats
 wavify doctor
 ```

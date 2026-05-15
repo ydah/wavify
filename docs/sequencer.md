@@ -20,6 +20,7 @@ end
 
 song.duration
 song.timeline_json
+song.timeline_text
 song.render(stems: true)
 song.render.write("song.wav")
 ```
@@ -37,5 +38,6 @@ Pattern velocity suffixes are normalized `0.0..1.0` values. `x` defaults to `0.8
 Swing starts at `0.5` for straight timing and applies to off-beat steps on even pattern/note grids.
 `sample_folder` resolves `sample :kick` to `kick.wav` under that folder, and `pitch:` shifts samples by semitones using resample-based playback speed changes. Use `Wavify::DSL.validate(format: ...)` to catch notation, track, and arrangement errors before rendering.
 Use `Wavify::DSL.effect(:name, MyEffect)` to make custom processors available to track-level `effect :name` calls.
+Use `song.timeline_text` or `wavify timeline song.rb` for quick terminal inspection, and `timeline_json` for visualization tools.
 
 Keep song logic in Ruby when the DSL does not expose a feature yet. This keeps the core DSL small and avoids locking early ideas into public syntax too soon.

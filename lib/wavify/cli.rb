@@ -3,7 +3,7 @@
 module Wavify
   # Minimal command-line interface for common Wavify workflows.
   class CLI
-    COMMANDS = %w[info convert tone normalize trim chain render formats doctor].freeze
+    COMMANDS = %w[info convert tone normalize trim chain render timeline formats doctor].freeze
 
     def self.run(argv = ARGV, stdout: $stdout, stderr: $stderr)
       new(argv, stdout: stdout, stderr: stderr).run
@@ -102,18 +102,21 @@ module Wavify
       input = require_argument!("song path")
       output = require_argument!("output path")
       options = parse_options(@argv)
-      source = read_source_file(input)
-      song = DSL.build_definition(
-        format: base_format(options),
-        tempo: options.fetch(:tempo, 120.0),
-        beats_per_bar: options.fetch(:beats_per_bar, 4),
-        swing: options.fetch(:swing, 0.5),
-        default_bars: options.fetch(:bars, 1)
-      ) do
-        instance_eval(source, input, 1)
-      end
+      song = load_song_definition(input, options)
       song.write(output, default_bars: options.fetch(:bars, 1))
       @stdout.puts "rendered: #{input} -> #{output}"
+    end
+
+    def run_timeline
+      input = require_argument!("song path")
+      options = parse_options(@argv)
+      song = load_song_definition(input, options)
+      output = if options[:json]
+                 song.timeline_json(default_bars: options.fetch(:bars, 1))
+               else
+                 song.timeline_text(default_bars: options.fetch(:bars, 1))
+               end
+      @stdout.puts output
     end
 
     def run_formats
@@ -170,6 +173,8 @@ module Wavify
           options[:beats_per_bar] = Integer(require_option_value!(token, tokens))
         when "--bars"
           options[:bars] = Integer(require_option_value!(token, tokens))
+        when "--json"
+          options[:json] = true
         else
           if token.start_with?("--")
             raise InvalidParameterError, "unknown option #{token}"
@@ -211,6 +216,19 @@ module Wavify
       File.read(path)
     rescue Errno::ENOENT
       raise InvalidParameterError, "song file not found: #{path}"
+    end
+
+    def load_song_definition(path, options)
+      source = read_source_file(path)
+      DSL.build_definition(
+        format: base_format(options),
+        tempo: options.fetch(:tempo, 120.0),
+        beats_per_bar: options.fetch(:beats_per_bar, 4),
+        swing: options.fetch(:swing, 0.5),
+        default_bars: options.fetch(:bars, 1)
+      ) do
+        instance_eval(source, path, 1)
+      end
     end
 
     def usage
