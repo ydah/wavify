@@ -15,6 +15,9 @@ require_relative "effects/expander"
 require_relative "effects/auto_pan"
 require_relative "effects/stereo_widener"
 require_relative "effects/eq"
+require_relative "effects/effect_chain"
+require_relative "effects/mastering_chain"
+require_relative "effects/podcast_chain"
 
 module Wavify
   module DSP
@@ -34,7 +37,9 @@ module Wavify
         expander: Expander,
         auto_pan: AutoPan,
         stereo_widener: StereoWidener,
-        eq: EQ
+        eq: EQ,
+        mastering_chain: MasteringChain,
+        podcast_chain: PodcastChain
       }.freeze
 
       class << self

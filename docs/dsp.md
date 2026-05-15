@@ -6,6 +6,7 @@ Built-in DSP components are designed for small scripts and streaming pipelines:
 - Envelope: ADSR
 - Filters: lowpass, highpass, bandpass, notch, peaking, shelves
 - Effects: Delay, Reverb, Chorus, Distortion, Compressor, Limiter, SoftLimiter, NoiseGate, Expander, Tremolo, AutoPan, StereoWidener, Bitcrusher, EQ
+- Preset chains: MasteringChain, PodcastChain
 
 Effects use the processor protocol:
 
@@ -25,6 +26,8 @@ Wavify::Audio.stream("dry.wav")
 ```
 
 Register custom processors with `Wavify::Effects.register(:name, MyEffect)` or a block returning a processor. Registered effects can be built with `Wavify::Effects.build(:name, **params)` and used by the DSL through `Wavify::DSL.effect`.
+
+Use `Wavify::Effects::MasteringChain.new` for a compact EQ/compressor/limiter pass, and `Wavify::Effects::PodcastChain.new` for gate/EQ/compression/limiting on speech.
 
 `Compressor` supports `makeup_gain:` and `knee:` in dB. `Limiter` and `SoftLimiter` are peak-control processors, `NoiseGate` and `Expander` attenuate low-level noise, `Tremolo` and `AutoPan` apply sine-LFO modulation, `StereoWidener` adjusts mid/side width, `EQ` chains filters, and `Bitcrusher` reduces bit depth or holds samples for downsampling effects.
 `Audio#fade_in`, `Audio#fade_out`, and `Audio#fade` support `curve: :linear`, `:exp`, and `:log`.

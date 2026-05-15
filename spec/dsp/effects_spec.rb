@@ -240,6 +240,45 @@ RSpec.describe Wavify::DSP::Effects do
     end
   end
 
+  describe Wavify::DSP::Effects::EffectChain do
+    it "applies processors in order and exposes timing metadata" do
+      chain = described_class.new([
+        Wavify::DSP::Effects::Limiter.new(ceiling: -6.0206),
+        Wavify::DSP::Effects::NoiseGate.new(threshold: -20.0)
+      ])
+
+      processed = chain.process(Wavify::Core::SampleBuffer.new([0.005, 1.0], mono_float))
+
+      expect(processed.samples.first.abs).to be < 0.00001
+      expect(processed.samples.last).to be_within(0.0001).of(0.5)
+      expect(chain.latency).to eq(0.0)
+      expect(chain.lookahead).to eq(0.0)
+      expect(chain.tail_duration).to eq(0.0)
+    end
+  end
+
+  describe Wavify::DSP::Effects::MasteringChain do
+    it "applies a compact mastering preset" do
+      source = Wavify::Core::SampleBuffer.new([0.1, 1.0, -1.0, 0.2], mono_float)
+
+      processed = described_class.new(ceiling: -3.0).process(source)
+
+      expect(processed.samples.map(&:abs).max).to be <= (10.0**(-3.0 / 20.0))
+    end
+  end
+
+  describe Wavify::DSP::Effects::PodcastChain do
+    it "applies speech cleanup without changing length" do
+      source = Wavify::Core::SampleBuffer.new([0.001, 0.001, 0.3, 0.3], mono_float)
+
+      processed = described_class.new(ceiling: -3.0).process(source)
+
+      expect(processed.samples.length).to eq(source.samples.length)
+      expect(processed.samples).to all(be_finite)
+      expect(processed.samples.map(&:abs).max).to be <= (10.0**(-3.0 / 20.0))
+    end
+  end
+
   describe "registry" do
     it "builds registered effects from classes and factories" do
       custom_class = Class.new do
