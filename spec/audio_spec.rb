@@ -58,6 +58,19 @@ RSpec.describe Wavify::Audio do
       end
     end
 
+    it "passes WAV info metadata write options through registry" do
+      source_buffer = Wavify::Core::SampleBuffer.new([100, -100], format.with(channels: 1))
+      source_audio = described_class.new(source_buffer)
+
+      Tempfile.create(["wavify_audio_info", ".wav"]) do |file|
+        source_audio.write(file.path, codec_options: { info: { title: "Tone", software: "wavify-spec" } })
+
+        metadata = described_class.metadata(file.path)
+        expect(metadata[:info][:title]).to eq("Tone")
+        expect(metadata[:info][:software]).to eq("wavify-spec")
+      end
+    end
+
     it "reads metadata through the registry without constructing Audio" do
       source_buffer = Wavify::Core::SampleBuffer.new([100, -100, 200, -200], format)
 

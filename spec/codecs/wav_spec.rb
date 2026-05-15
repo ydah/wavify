@@ -58,6 +58,22 @@ RSpec.describe Wavify::Codecs::Wav do
         end
       end
     end
+
+    it "writes and reads LIST/INFO metadata" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      buffer = Wavify::Core::SampleBuffer.new([100, -100], format)
+
+      Tempfile.create(["wavify_info", ".wav"]) do |file|
+        described_class.write(file.path, buffer, info: { title: "Bell", artist: "Wavify", "ICMT" => "demo" })
+
+        metadata = described_class.metadata(file.path)
+
+        expect(metadata[:info][:title]).to eq("Bell")
+        expect(metadata[:info][:artist]).to eq("Wavify")
+        expect(metadata[:info][:comment]).to eq("demo")
+        expect(metadata[:info][:raw]["INAM"]).to eq("Bell")
+      end
+    end
   end
 
   describe ".stream_write/.stream_read" do
@@ -117,6 +133,16 @@ RSpec.describe Wavify::Codecs::Wav do
         expect(metadata[:smpl]).not_to be_nil
         expect(metadata[:smpl][:loop_count]).to eq(1)
         expect(metadata[:smpl][:loops].first[:identifier]).to eq(7)
+        expect(metadata[:loops]).to eq([
+          {
+            identifier: 7,
+            type: :forward,
+            start_frame: 10,
+            end_frame: 100,
+            length_frames: 91,
+            play_count: 2
+          }
+        ])
       end
     end
   end

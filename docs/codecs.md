@@ -19,6 +19,7 @@ Write detection prefers the output extension:
 ```ruby
 audio.write("master.flac")
 audio.write("preview.ogg", codec_options: { quality: 0.5 })
+audio.write("tagged.wav", codec_options: { info: { title: "Loop", artist: "Wavify" } })
 audio.write("master.wav", overwrite: false)
 ```
 
@@ -42,6 +43,7 @@ Custom codecs should expose `read`, `write`, `stream_read`, `stream_write`, and 
 ## Format Notes
 
 - WAV supports PCM and float WAV, including extensible WAV.
+- WAV metadata exposes `info:` from LIST/INFO chunks and normalized `loops:` from `smpl` chunks.
 - AIFF supports PCM AIFF. AIFF-C is intentionally unsupported.
 - FLAC is implemented in pure Ruby.
 - OGG Vorbis uses `ogg-ruby` and `vorbis`.

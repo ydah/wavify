@@ -56,6 +56,7 @@ Codec-specific write options are forwarded with `codec_options:`:
 ```ruby
 audio.write("master.flac", codec_options: { block_size: 2048 })
 audio.write("preview.ogg", codec_options: { quality: 0.5 })
+audio.write("tagged.wav", codec_options: { info: { title: "Tone", artist: "Wavify" } })
 audio.write("master.wav", overwrite: false)
 ```
 

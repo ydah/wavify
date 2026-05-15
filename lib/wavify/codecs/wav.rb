@@ -13,6 +13,22 @@ module Wavify
       GUID_TAIL = [0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71].pack("C*").freeze # :nodoc:
       PCM_SUBFORMAT_GUID = ([WAV_FORMAT_PCM, 0x0000, 0x0010].pack("V v v") + GUID_TAIL).freeze # :nodoc:
       FLOAT_SUBFORMAT_GUID = ([WAV_FORMAT_FLOAT, 0x0000, 0x0010].pack("V v v") + GUID_TAIL).freeze # :nodoc:
+      INFO_TAGS = {
+        "INAM" => :title,
+        "IART" => :artist,
+        "ICMT" => :comment,
+        "ICOP" => :copyright,
+        "ICRD" => :date,
+        "IGNR" => :genre,
+        "ISFT" => :software,
+        "ITCH" => :technician
+      }.freeze # :nodoc:
+      INFO_TAG_CODES = INFO_TAGS.invert.freeze # :nodoc:
+      SMPL_LOOP_TYPES = {
+        0 => :forward,
+        1 => :alternating,
+        2 => :backward
+      }.freeze # :nodoc:
 
       class << self
         # @param io_or_path [String, IO]
@@ -57,7 +73,7 @@ module Wavify
         # @param sample_buffer [Wavify::Core::SampleBuffer]
         # @param format [Wavify::Core::Format, nil]
         # @return [String, IO]
-        def write(io_or_path, sample_buffer, format: nil, **codec_options)
+        def write(io_or_path, sample_buffer, format: nil, info: nil, **codec_options)
           validate_no_codec_options!(codec_options, operation: "WAV write")
           raise InvalidParameterError, "sample_buffer must be Core::SampleBuffer" unless sample_buffer.is_a?(Core::SampleBuffer)
 
@@ -65,7 +81,7 @@ module Wavify
           raise InvalidParameterError, "format must be Core::Format" unless target_format.is_a?(Core::Format)
 
           buffer = sample_buffer.format == target_format ? sample_buffer : sample_buffer.convert(target_format)
-          stream_write(io_or_path, format: target_format) do |writer|
+          stream_write(io_or_path, format: target_format, info: info) do |writer|
             writer.call(buffer)
           end
         end
@@ -104,9 +120,9 @@ module Wavify
         # @param io_or_path [String, IO]
         # @param format [Wavify::Core::Format]
         # @return [Enumerator, String, IO]
-        def stream_write(io_or_path, format:, **codec_options)
+        def stream_write(io_or_path, format:, info: nil, **codec_options)
           validate_no_codec_options!(codec_options, operation: "WAV stream_write")
-          return enum_for(__method__, io_or_path, format: format) unless block_given?
+          return enum_for(__method__, io_or_path, format: format, info: info) unless block_given?
           raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
 
           io, close_io = open_output(io_or_path)
@@ -114,7 +130,7 @@ module Wavify
           io.rewind if io.respond_to?(:rewind)
           io.truncate(0) if io.respond_to?(:truncate)
 
-          header = write_stream_header(io, format)
+          header = write_stream_header(io, format, info: info)
           total_data_bytes = 0
           total_sample_frames = 0
 
@@ -155,7 +171,9 @@ module Wavify
             sample_frame_count: sample_frame_count,
             duration: Core::Duration.from_samples(sample_frame_count, format.sample_rate),
             fact_sample_length: info[:fact_sample_length],
-            smpl: info[:smpl]
+            smpl: info[:smpl],
+            loops: normalized_smpl_loops(info[:smpl]),
+            info: info[:info]
           }
         ensure
           io.close if close_io && io
@@ -163,7 +181,7 @@ module Wavify
 
         private
 
-        def write_stream_header(io, format)
+        def write_stream_header(io, format, info:)
           io.write("RIFF")
           riff_size_offset = io.pos
           io.write([0].pack("V"))
@@ -171,6 +189,7 @@ module Wavify
 
           fmt_chunk = build_fmt_chunk(format)
           write_chunk(io, "fmt ", fmt_chunk)
+          write_chunk(io, "LIST", build_info_list_chunk(info)) if info
 
           fact_sample_offset = nil
           if format.sample_format != :pcm
@@ -219,7 +238,8 @@ module Wavify
             data_size: nil,
             sample_frame_count: nil,
             fact_sample_length: nil,
-            smpl: nil
+            smpl: nil,
+            info: nil
           }
 
           until io.eof?
@@ -244,6 +264,10 @@ module Wavify
             when "smpl"
               chunk_data = read_exact(io, chunk_size, "truncated smpl chunk")
               info[:smpl] = parse_smpl_chunk(chunk_data)
+            when "LIST"
+              chunk_data = read_exact(io, chunk_size, "truncated LIST chunk")
+              list_info = parse_list_chunk(chunk_data)
+              info[:info] = list_info if list_info
             else
               skip_bytes(io, chunk_size)
             end
@@ -356,6 +380,44 @@ module Wavify
           }
         end
 
+        def normalized_smpl_loops(smpl)
+          return [] unless smpl
+
+          smpl.fetch(:loops).map do |loop|
+            {
+              identifier: loop.fetch(:identifier),
+              type: SMPL_LOOP_TYPES.fetch(loop.fetch(:type), loop.fetch(:type)),
+              start_frame: loop.fetch(:start_frame),
+              end_frame: loop.fetch(:end_frame),
+              length_frames: loop.fetch(:end_frame) - loop.fetch(:start_frame) + 1,
+              play_count: loop.fetch(:play_count)
+            }
+          end
+        end
+
+        def parse_list_chunk(chunk)
+          return nil if chunk.bytesize < 4
+          return nil unless chunk[0, 4] == "INFO"
+
+          result = { raw: {} }
+          offset = 4
+          while offset + 8 <= chunk.bytesize
+            tag = chunk[offset, 4]
+            size = chunk[offset + 4, 4].unpack1("V")
+            offset += 8
+            break if offset + size > chunk.bytesize
+
+            value = chunk.byteslice(offset, size).delete_suffix("\x00").force_encoding(Encoding::UTF_8)
+            result[:raw][tag] = value
+            semantic_key = INFO_TAGS[tag]
+            result[semantic_key] = value if semantic_key
+            offset += size
+            offset += 1 if size.odd?
+          end
+
+          result
+        end
+
         def decode_samples(data_chunk, format)
           if format.sample_format == :float
             return data_chunk.unpack("e*") if format.bit_depth == 32
@@ -421,6 +483,37 @@ module Wavify
           format_code = format.sample_format == :pcm ? WAV_FORMAT_PCM : WAV_FORMAT_FLOAT
           [format_code, format.channels, format.sample_rate, format.byte_rate, format.block_align, format.bit_depth]
             .pack("v v V V v v")
+        end
+
+        def build_info_list_chunk(info)
+          normalized = normalize_info_tags!(info)
+          chunks = normalized.map do |tag, value|
+            data = "#{value}\x00".b
+            tag + [data.bytesize].pack("V") + data + (data.bytesize.odd? ? "\x00" : "")
+          end
+
+          "INFO" + chunks.join
+        end
+
+        def normalize_info_tags!(info)
+          raise InvalidParameterError, "WAV info must be a Hash" unless info.is_a?(Hash)
+
+          info.each_with_object({}) do |(key, value), normalized|
+            tag = info_tag_for!(key)
+            raise InvalidParameterError, "WAV info values must be String-compatible" unless value.respond_to?(:to_s)
+
+            normalized[tag] = value.to_s
+          end
+        end
+
+        def info_tag_for!(key)
+          return key if key.is_a?(String) && key.match?(/\A[A-Z0-9 ]{4}\z/)
+
+          semantic = key.to_sym if key.respond_to?(:to_sym)
+          tag = INFO_TAG_CODES[semantic]
+          return tag if tag
+
+          raise InvalidParameterError, "unsupported WAV info tag: #{key.inspect}"
         end
 
         def use_extensible_format?(format)
