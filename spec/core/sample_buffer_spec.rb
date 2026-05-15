@@ -77,6 +77,33 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(converted.samples[0]).to eq(1.0)
       expect(converted.samples[1]).to be_within(0.0001).of(0.707)
     end
+
+    it "resamples when the target sample rate changes" do
+      source_format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 32, sample_format: :float)
+      target_format = source_format.with(sample_rate: 16_000)
+      source = described_class.new([0.0, 1.0, 0.0, -1.0], source_format)
+
+      converted = source.convert(target_format)
+
+      expect(converted.format).to eq(target_format)
+      expect(converted.sample_frame_count).to eq(8)
+      expect(converted.duration).to eq(source.duration)
+      expect(converted.samples.first).to eq(0.0)
+      expect(converted.samples[1]).to be_within(1e-6).of(0.5)
+      expect(converted.samples[2]).to eq(1.0)
+    end
+
+    it "resamples after channel conversion" do
+      source_format = Wavify::Core::Format.new(channels: 2, sample_rate: 16_000, bit_depth: 32, sample_format: :float)
+      target_format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 32, sample_format: :float)
+      source = described_class.new([1.0, -1.0, 0.5, 0.5, -0.5, -0.5, 0.0, 1.0], source_format)
+
+      converted = source.convert(target_format)
+
+      expect(converted.format).to eq(target_format)
+      expect(converted.sample_frame_count).to eq(2)
+      expect(converted.samples).to eq([0.0, -0.5])
+    end
   end
 
   describe "validation" do

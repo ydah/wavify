@@ -60,6 +60,7 @@ module Wavify
         end
 
         converted_frames = convert_channels(frames, new_format.channels)
+        converted_frames = resample_frames(converted_frames, new_format.sample_rate)
         converted_samples = converted_frames.flatten.map do |sample|
           from_normalized_float(sample, new_format)
         end
@@ -180,6 +181,32 @@ module Wavify
         return frames.map { |frame| truncate_and_fold(frame, target_channels) } if source_channels > target_channels
 
         frames.map { |frame| upmix_with_duplication(frame, target_channels) }
+      end
+
+      def resample_frames(frames, target_sample_rate)
+        return frames if frames.empty? || @format.sample_rate == target_sample_rate
+
+        source_frame_count = frames.length
+        target_frame_count = resampled_frame_count(source_frame_count, target_sample_rate)
+        return [] if target_frame_count.zero?
+
+        channels = frames.first.length
+        Array.new(target_frame_count) do |target_index|
+          source_position = (target_index * @format.sample_rate.to_f) / target_sample_rate
+          lower_index = source_position.floor
+          upper_index = [lower_index + 1, source_frame_count - 1].min
+          fraction = source_position - lower_index
+
+          lower_frame = frames.fetch(lower_index)
+          upper_frame = frames.fetch(upper_index)
+          Array.new(channels) do |channel|
+            lower_frame.fetch(channel) + ((upper_frame.fetch(channel) - lower_frame.fetch(channel)) * fraction)
+          end
+        end
+      end
+
+      def resampled_frame_count(source_frame_count, target_sample_rate)
+        ((source_frame_count * target_sample_rate.to_f) / @format.sample_rate).round
       end
 
       def downmix_to_stereo(frame)
