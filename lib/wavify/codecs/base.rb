@@ -61,6 +61,13 @@ module Wavify
           raise NotImplementedError
         end
 
+        # Returns whether optional runtime dependencies for this codec are present.
+        #
+        # @return [Boolean]
+        def available?
+          true
+        end
+
         private
 
         def open_input(io_or_path)

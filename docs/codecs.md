@@ -1,9 +1,10 @@
 # Codecs
 
-Wavify supports WAV, AIFF, FLAC, OGG Vorbis, and raw PCM/float.
+Wavify supports WAV, AIFF, FLAC, optional OGG Vorbis, and raw PCM/float.
 
 ```ruby
 Wavify::Codecs.supported_formats
+Wavify::Codecs.available_formats
 Wavify::Codecs.detect("input.wav")
 Wavify::Audio.metadata("input.wav")
 ```
@@ -46,5 +47,5 @@ Custom codecs should expose `read`, `write`, `stream_read`, `stream_write`, and 
 - WAV metadata exposes `info:` from LIST/INFO chunks and normalized `loops:` from `smpl` chunks.
 - AIFF supports PCM AIFF. AIFF-C is intentionally unsupported.
 - FLAC is implemented in pure Ruby.
-- OGG Vorbis uses `ogg-ruby` and `vorbis`.
+- OGG Vorbis uses optional `ogg-ruby` and `vorbis` gems. Use `Wavify::Codecs.available_formats` or `wavify doctor` to check whether they are installed.
 - Raw PCM/float requires `format:` for read, stream read, and metadata.

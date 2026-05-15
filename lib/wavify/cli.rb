@@ -91,15 +91,16 @@ module Wavify
     def run_doctor
       @stdout.puts "ruby: #{RUBY_VERSION}"
       @stdout.puts "formats: #{Codecs.supported_formats.join(', ')}"
-      check_library("ogg")
-      check_library("vorbis")
+      @stdout.puts "available formats: #{Codecs.available_formats.join(', ')}"
+      check_codec("ogg/vorbis", Codecs::OggVorbis)
     end
 
-    def check_library(name)
-      require name
-      @stdout.puts "#{name}: ok"
-    rescue LoadError
-      @stdout.puts "#{name}: missing (install native dependencies and bundle install)"
+    def check_codec(name, codec)
+      if codec.available?
+        @stdout.puts "#{name}: ok"
+      else
+        @stdout.puts "#{name}: missing optional gems (add ogg-ruby and vorbis to your Gemfile)"
+      end
     end
 
     def parse_options(tokens)

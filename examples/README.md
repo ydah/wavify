@@ -1,6 +1,6 @@
 # Examples
 
-Examples write generated files under `tmp/wavify_examples/`.
+Examples write generated files under `tmp/examples/`.
 
 ```bash
 ruby examples/synth_pad.rb

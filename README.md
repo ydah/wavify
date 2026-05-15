@@ -12,7 +12,7 @@ Use it to:
 
 - Ruby `>= 3.1`
 - Bundler
-- Native build environment for gems with C extensions (`ogg-ruby`, `vorbis`)
+- Optional native build environment for OGG Vorbis gems (`ogg-ruby`, `vorbis`)
 
 ## Installation
 
@@ -33,6 +33,8 @@ Or install directly:
 ```bash
 gem install wavify
 ```
+
+WAV, AIFF, FLAC, and raw PCM work without OGG dependencies. Add `ogg-ruby` and `vorbis` to your Gemfile only when you need `.ogg` / `.oga` support.
 
 ## Quick Start
 
@@ -124,7 +126,7 @@ stream.write_to("output.flac", codec_options: { block_size_strategy: :fixed, blo
 | WAV | ✅ | ✅ | ✅ | ✅ | PCM + float WAV, including extensible WAV |
 | AIFF | ✅ | ✅ | ✅ | ✅ | PCM only (AIFC unsupported) |
 | FLAC | ✅ | ✅ | ✅ | ✅ | Pure Ruby implementation |
-| OGG Vorbis | ✅ | ✅ | ✅ | ✅ | Backed by `ogg-ruby` + `vorbis` |
+| OGG Vorbis | ✅ | ✅ | ✅ | ✅ | Optional `ogg-ruby` + `vorbis` gems |
 | Raw PCM/Float | ✅* | ✅ | ✅* | ✅ | `format:` is required for read/stream-read/metadata |
 
 Raw example:
@@ -154,6 +156,7 @@ Codec registry helpers:
 
 ```ruby
 Wavify::Codecs.supported_formats
+Wavify::Codecs.available_formats
 Wavify::Codecs.detect("input.wav")
 Wavify::Codecs.register(".custom", MyCodec)
 ```
@@ -164,6 +167,7 @@ Wavify::Codecs.register(".custom", MyCodec)
 - Interleaved multi-stream decode is mixed into one output stream.
 - If interleaved streams have different sample rates, they are resampled to the first logical stream's sample rate before mix.
 - `decode_mode: :strict` and `decode_mode: :placeholder` are accepted for API compatibility.
+- OGG support is optional; `wavify doctor` reports whether the native gems are installed.
 
 ## Sequencer DSL
 
@@ -249,7 +253,7 @@ wavify doctor
 
 - MP3, AAC, and M4A are not built into core.
 - FFmpeg and SoX are not mandatory runtime dependencies.
-- OGG Vorbis uses native gems (`ogg-ruby`, `vorbis`).
+- OGG Vorbis uses optional native gems (`ogg-ruby`, `vorbis`).
 - Raw PCM/float requires `format:` for read, stream read, and metadata.
 - Streaming writes for header-based formats require seekable output IO.
 - Resampling currently uses linear interpolation.

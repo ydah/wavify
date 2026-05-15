@@ -65,4 +65,12 @@ RSpec.describe Wavify::CLI do
     expect(stdout).to include("usage:")
     expect(stderr).to include("unknown command")
   end
+
+  it "prints dependency availability in doctor output" do
+    status, stdout, stderr = run_cli(["doctor"])
+
+    expect(status).to eq(0)
+    expect(stdout).to include("available formats:", "ogg/vorbis:")
+    expect(stderr).to eq("")
+  end
 end

@@ -99,6 +99,11 @@ RSpec.describe Wavify::Codecs::Registry do
       expect(Wavify::Codecs.supported_formats).to include("wav", "flac", "ogg", "raw")
     end
 
+    it "lists dependency-available formats" do
+      expect(described_class.available_formats).to include("wav", "flac", "raw")
+      expect(Wavify::Codecs.available_formats).to include("wav", "flac", "raw")
+    end
+
     it "registers custom extension mappings" do
       codec = Class.new do
         class << self

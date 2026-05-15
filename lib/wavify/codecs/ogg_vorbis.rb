@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "stringio"
-require "vorbis"
 
 module Wavify
   module Codecs
@@ -15,6 +14,22 @@ module Wavify
     # resampled to the first logical stream sample rate when rates differ).
     # Interleaved multi-stream OGG logical streams are mixed with clipping.
     class OggVorbis < Base
+      DEPENDENCY_LOAD_ERRORS = begin
+        errors = {}
+        begin
+          require "ogg"
+        rescue LoadError => e
+          errors["ogg-ruby"] = e
+        end
+
+        begin
+          require "vorbis"
+        rescue LoadError => e
+          errors["vorbis"] = e
+        end
+        errors.freeze
+      end
+
       # Recognized filename extensions.
       EXTENSIONS = %w[.ogg .oga].freeze
 
@@ -27,6 +42,11 @@ module Wavify
       VORBIS_ENCODE_QUALITY_RANGE = (-0.1..1.0) # :nodoc:
 
       class << self
+        # @return [Boolean]
+        def available?
+          DEPENDENCY_LOAD_ERRORS.empty?
+        end
+
         # @param io_or_path [String, IO]
         # @return [Boolean]
         def can_read?(io_or_path)
@@ -47,6 +67,7 @@ module Wavify
         #   `decode_mode:` is accepted for API compatibility but has no
         #   effect; libvorbis always performs full decode.
         def read(io_or_path, format: nil, decode_mode: :strict)
+          ensure_available!
           raise InvalidParameterError, "decode_mode must be :strict or :placeholder, got #{decode_mode.inspect}" unless %i[strict
                                                                                                                            placeholder].include?(decode_mode)
 
@@ -63,6 +84,7 @@ module Wavify
 
         # Writes OGG Vorbis audio.
         def write(io_or_path, sample_buffer, format:, quality: VORBIS_ENCODE_DEFAULT_QUALITY, **codec_options)
+          ensure_available!
           validate_no_codec_options!(codec_options, operation: "OGG Vorbis write")
           raise InvalidParameterError, "sample_buffer must be Core::SampleBuffer" unless sample_buffer.is_a?(Core::SampleBuffer)
 
@@ -80,6 +102,7 @@ module Wavify
         #   `decode_mode:` is accepted for API compatibility but has no effect.
         def stream_read(io_or_path, chunk_size: 4096, decode_mode: :strict, &block)
           return enum_for(__method__, io_or_path, chunk_size: chunk_size, decode_mode: decode_mode) unless block_given?
+          ensure_available!
           raise InvalidParameterError, "chunk_size must be a positive Integer" unless chunk_size.is_a?(Integer) && chunk_size.positive?
           raise InvalidParameterError, "decode_mode must be :strict or :placeholder, got #{decode_mode.inspect}" unless %i[strict
                                                                                                                            placeholder].include?(decode_mode)
@@ -95,6 +118,7 @@ module Wavify
         # @note Encodes using libvorbis at the default VBR quality level.
         #   Accepts any channel count and sample rate supported by libvorbis.
         def stream_write(io_or_path, format:, quality: VORBIS_ENCODE_DEFAULT_QUALITY, **codec_options)
+          ensure_available!
           validate_no_codec_options!(codec_options, operation: "OGG Vorbis stream_write")
           encode_quality = normalize_vorbis_quality(quality)
           return enum_for(__method__, io_or_path, format: format, quality: encode_quality) unless block_given?
@@ -157,6 +181,7 @@ module Wavify
         # @param io_or_path [String, IO]
         # @return [Hash]
         def metadata(io_or_path)
+          ensure_available!
           io, close_io = open_input(io_or_path)
           ensure_seekable!(io)
           chained_streams, physical_ogg_info = read_ogg_logical_stream_chains(io)
@@ -178,6 +203,14 @@ module Wavify
         end
 
         private
+
+        def ensure_available!
+          return if available?
+
+          missing = DEPENDENCY_LOAD_ERRORS.keys.join(", ")
+          raise UnsupportedFormatError,
+                "OGG Vorbis support requires optional gems: #{missing}. Add them to your Gemfile to read or write .ogg/.oga files."
+        end
 
         def normalize_vorbis_quality(quality)
           unless quality.is_a?(Numeric) && VORBIS_ENCODE_QUALITY_RANGE.cover?(quality.to_f)

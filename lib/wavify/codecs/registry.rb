@@ -90,6 +90,15 @@ module Wavify
           extensions.keys.map { |extension| extension.delete_prefix(".") }.uniq.sort.freeze
         end
 
+        # @return [Array<String>] extension names whose codec dependencies are available
+        def available_formats
+          extensions.filter_map do |extension, codec|
+            next if codec.respond_to?(:available?) && !codec.available?
+
+            extension.delete_prefix(".")
+          end.uniq.sort.freeze
+        end
+
         private
 
         def detect_by_extension(io_or_path, filename: nil)
@@ -163,6 +172,11 @@ module Wavify
       # @see Registry.supported_formats
       def supported_formats
         Registry.supported_formats
+      end
+
+      # @see Registry.available_formats
+      def available_formats
+        Registry.available_formats
       end
     end
   end
