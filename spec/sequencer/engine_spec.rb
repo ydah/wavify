@@ -25,6 +25,13 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(events[2][:start_time]).to be_within(0.0001).of(2.0)
     end
 
+    it "carries explicit pattern velocities into trigger events" do
+      track = Wavify::Sequencer::Track.new(:drums, pattern: "x0.25---X0.9---")
+      events = engine.timeline_for_track(track, bars: 1)
+
+      expect(events.map { |event| event[:velocity] }).to eq([0.25, 0.9])
+    end
+
     it "schedules note and chord events" do
       track = Wavify::Sequencer::Track.new(
         :lead,

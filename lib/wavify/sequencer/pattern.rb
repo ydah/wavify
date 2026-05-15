@@ -2,7 +2,7 @@
 
 module Wavify
   module Sequencer
-    # Step-pattern parser (`x`, `X`, `-`, `.`) for trigger sequencing.
+    # Step-pattern parser (`x`, `X`, `x0.7`, `-`, `.`) for trigger sequencing.
     class Pattern
       include Enumerable
 
@@ -81,21 +81,53 @@ module Wavify
       def parse_steps(notation)
         raise InvalidPatternError, "pattern notation must be String" unless notation.is_a?(String)
 
-        chars = notation.each_char.reject { |char| char =~ /\s/ || char == "|" }
+        chars = notation.each_char.reject { |char| char =~ /\s/ || char == "|" }.join
         raise InvalidPatternError, "pattern notation must not be empty" if chars.empty?
 
-        chars.each_with_index.map do |char, index|
+        steps = []
+        cursor = 0
+        while cursor < chars.length
+          char = chars[cursor]
+          index = steps.length
+
           case char
-          when "x"
-            Step.new(index: index, trigger: true, accent: false, symbol: char, velocity: 0.8)
-          when "X"
-            Step.new(index: index, trigger: true, accent: true, symbol: char, velocity: 1.0)
+          when "x", "X"
+            cursor += 1
+            velocity_text, cursor = scan_velocity_suffix(chars, cursor)
+            default_velocity = char == "X" ? 1.0 : 0.8
+            velocity = velocity_text ? parse_velocity!(velocity_text, index) : default_velocity
+            steps << Step.new(index: index, trigger: true, accent: char == "X", symbol: char, velocity: velocity)
           when "-", "."
-            Step.new(index: index, trigger: false, accent: false, symbol: char, velocity: 0.0)
+            steps << Step.new(index: index, trigger: false, accent: false, symbol: char, velocity: 0.0)
+            cursor += 1
           else
             raise InvalidPatternError, "invalid pattern symbol #{char.inspect} at step #{index}"
           end
         end
+
+        steps
+      end
+
+      def scan_velocity_suffix(chars, cursor)
+        return [nil, cursor] unless chars[cursor]&.match?(/\d/)
+
+        start = cursor
+        cursor += 1
+        cursor += 1 while cursor < chars.length && chars[cursor].match?(/\d/)
+        if chars[cursor] == "."
+          cursor += 1
+          cursor += 1 while cursor < chars.length && chars[cursor].match?(/\d/)
+        end
+        [chars[start...cursor], cursor]
+      end
+
+      def parse_velocity!(text, index)
+        velocity = Float(text)
+        return velocity if velocity.between?(0.0, 1.0)
+
+        raise InvalidPatternError, "velocity must be between 0.0 and 1.0 at step #{index}"
+      rescue ArgumentError
+        raise InvalidPatternError, "invalid velocity #{text.inspect} at step #{index}"
       end
     end
   end

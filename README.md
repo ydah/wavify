@@ -194,6 +194,8 @@ mix = song.render
 mix.write("song.wav")
 ```
 
+Pattern steps support rests (`-`/`.`), normal triggers (`x`, velocity `0.8`), accents (`X`, velocity `1.0`), and explicit normalized velocity suffixes such as `x0.5` or `X0.9`.
+
 ## DSP
 
 Built-in modules:

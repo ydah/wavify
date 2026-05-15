@@ -20,6 +20,15 @@ RSpec.describe Wavify::Sequencer::Pattern do
       expect(pattern.length).to eq(8)
       expect(pattern.trigger_indices).to eq([0, 4])
     end
+
+    it "parses explicit trigger velocities" do
+      pattern = described_class.new("x0.25-.X0.9")
+
+      expect(pattern.length).to eq(4)
+      expect(pattern[0].velocity).to eq(0.25)
+      expect(pattern[3]).to be_accent
+      expect(pattern[3].velocity).to eq(0.9)
+    end
   end
 
   describe "validation" do
@@ -33,6 +42,12 @@ RSpec.describe Wavify::Sequencer::Pattern do
       expect do
         described_class.new("   ")
       end.to raise_error(Wavify::InvalidPatternError)
+    end
+
+    it "rejects velocities outside the normalized range" do
+      expect do
+        described_class.new("x1.2---")
+      end.to raise_error(Wavify::InvalidPatternError, /velocity/)
     end
   end
 end

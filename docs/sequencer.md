@@ -26,9 +26,11 @@ Sample tracks can transform individual samples before scheduling:
 
 ```ruby
 track :drums do
-  pattern :kick, "x---x---"
+  pattern :kick, "x---x0.5--"
   sample :kick, "samples/kick.wav", trim: true, gain: -3, pan: -0.2, from: 0.01, duration: 0.2
 end
 ```
+
+Pattern velocity suffixes are normalized `0.0..1.0` values. `x` defaults to `0.8`, `X` defaults to `1.0`, and explicit values such as `x0.35` are passed through the sequencer timeline and sample-track renderer.
 
 Keep song logic in Ruby when the DSL does not expose a feature yet. This keeps the core DSL small and avoids locking early ideas into public syntax too soon.
