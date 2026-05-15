@@ -7,12 +7,13 @@ module Wavify
       # Default beats-per-bar value used when omitted.
       DEFAULT_BEATS_PER_BAR = 4
 
-      attr_reader :tempo, :format, :beats_per_bar
+      attr_reader :tempo, :format, :beats_per_bar, :swing
 
-      def initialize(tempo:, format: Wavify::Core::Format::CD_QUALITY, beats_per_bar: DEFAULT_BEATS_PER_BAR)
+      def initialize(tempo:, format: Wavify::Core::Format::CD_QUALITY, beats_per_bar: DEFAULT_BEATS_PER_BAR, swing: 0.5)
         @tempo = validate_tempo!(tempo)
         @format = validate_format!(format)
         @beats_per_bar = validate_beats_per_bar!(beats_per_bar)
+        @swing = validate_swing!(swing)
       end
 
       # @return [Float] seconds per beat at the current tempo
@@ -29,6 +30,22 @@ module Wavify
         raise SequencerError, "resolution must be a positive Integer" unless resolution.is_a?(Integer) && resolution.positive?
 
         bar_duration_seconds / resolution.to_f
+      end
+
+      def step_start_seconds(index, resolution)
+        base_duration = step_duration_seconds(resolution)
+        return index * base_duration if straight_timing?(resolution)
+
+        pair_duration = base_duration * 2.0
+        ((index / 2) * pair_duration) + (index.even? ? 0.0 : pair_duration * @swing)
+      end
+
+      def step_duration_at(index, resolution)
+        base_duration = step_duration_seconds(resolution)
+        return base_duration if straight_timing?(resolution)
+
+        pair_duration = base_duration * 2.0
+        pair_duration * (index.even? ? @swing : (1.0 - @swing))
       end
 
       def timeline_for_track(track, bars:, start_bar: 0)
@@ -196,19 +213,19 @@ module Wavify
       end
 
       def schedule_pattern_events(track, bars:, start_bar:)
-        step_duration = step_duration_seconds(track.pattern.length)
+        resolution = track.pattern.length
 
         (0...bars).flat_map do |bar_offset|
           track.pattern.filter(&:trigger?).map do |step|
             absolute_bar = start_bar + bar_offset
-            start_time = (absolute_bar * bar_duration_seconds) + (step.index * step_duration)
+            start_time = (absolute_bar * bar_duration_seconds) + step_start_seconds(step.index, resolution)
             {
               kind: :trigger,
               track: track.name,
               bar: absolute_bar,
               step_index: step.index,
               start_time: start_time,
-              duration: step_duration,
+              duration: step_duration_at(step.index, resolution),
               velocity: step.velocity
             }
           end
@@ -216,21 +233,21 @@ module Wavify
       end
 
       def schedule_note_events(track, bars:, start_bar:)
-        base_step_duration = step_duration_seconds(track.note_resolution)
+        resolution = track.note_resolution
 
         (0...bars).flat_map do |bar_offset|
           track.note_sequence.each_with_object([]) do |event, result|
             next if event.rest?
 
             absolute_bar = start_bar + bar_offset
-            start_time = (absolute_bar * bar_duration_seconds) + (event.index * base_step_duration)
+            start_time = (absolute_bar * bar_duration_seconds) + step_start_seconds(event.index, resolution)
             result << {
               kind: :note,
               track: track.name,
               bar: absolute_bar,
               step_index: event.index,
               start_time: start_time,
-              duration: base_step_duration,
+              duration: step_duration_at(event.index, resolution),
               midi_notes: [event.midi_note]
             }
           end
@@ -281,6 +298,18 @@ module Wavify
         raise SequencerError, "beats_per_bar must be a positive Integer" unless beats_per_bar.is_a?(Integer) && beats_per_bar.positive?
 
         beats_per_bar
+      end
+
+      def validate_swing!(swing)
+        unless swing.is_a?(Numeric) && swing.finite? && swing >= 0.5 && swing < 1.0
+          raise SequencerError, "swing must be a Numeric between 0.5 and 1.0"
+        end
+
+        swing.to_f
+      end
+
+      def straight_timing?(resolution)
+        @swing == 0.5 || resolution.odd?
       end
 
       def repeated_section_name(name, repeat_index)

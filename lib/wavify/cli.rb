@@ -107,6 +107,7 @@ module Wavify
         format: base_format(options),
         tempo: options.fetch(:tempo, 120.0),
         beats_per_bar: options.fetch(:beats_per_bar, 4),
+        swing: options.fetch(:swing, 0.5),
         default_bars: options.fetch(:bars, 1)
       ) do
         instance_eval(source, input, 1)
@@ -163,6 +164,8 @@ module Wavify
           options[:fade_out] = Float(require_option_value!(token, tokens))
         when "--tempo"
           options[:tempo] = Float(require_option_value!(token, tokens))
+        when "--swing"
+          options[:swing] = Float(require_option_value!(token, tokens))
         when "--beats-per-bar"
           options[:beats_per_bar] = Integer(require_option_value!(token, tokens))
         when "--bars"

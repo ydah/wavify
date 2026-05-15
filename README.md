@@ -174,7 +174,7 @@ Wavify::Codecs.register(".custom", MyCodec)
 Use `Wavify.build` for one-shot rendering/writing, or `Wavify::DSL.build_definition` when you want timeline access.
 
 ```ruby
-song = Wavify::DSL.build_definition(format: Wavify::Core::Format::CD_QUALITY, tempo: 116, default_bars: 2) do
+song = Wavify::DSL.build_definition(format: Wavify::Core::Format::CD_QUALITY, tempo: 116, swing: 0.55, default_bars: 2) do
   track :kick do
     synth :sine
     notes "C2 . . . C2 . . .", resolution: 16
@@ -195,6 +195,7 @@ mix.write("song.wav")
 ```
 
 Pattern steps support rests (`-`/`.`), normal triggers (`x`, velocity `0.8`), accents (`X`, velocity `1.0`), and explicit normalized velocity suffixes such as `x0.5` or `X0.9`.
+Swing values start at `0.5` for straight timing; values such as `0.55` delay off-beat steps on even grids.
 
 ## DSP
 
@@ -237,7 +238,7 @@ wavify tone --freq 440 --duration 1 tone.wav
 wavify normalize input.wav output.wav --target -1
 wavify trim input.wav output.wav --threshold 0.01
 wavify chain input.wav output.wav --gain -3 --fade-in 0.02 --fade-out 0.05
-wavify render song.rb out.wav --tempo 120 --bars 4
+wavify render song.rb out.wav --tempo 120 --swing 0.55 --bars 4
 wavify formats
 wavify doctor
 ```

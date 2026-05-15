@@ -85,7 +85,10 @@ RSpec.describe Wavify::CLI do
 
       Tempfile.create(["wavify-cli-render", ".wav"]) do |output|
         status, stdout, = run_cli(
-          ["render", song_file.path, output.path, "--tempo", "120", "--bars", "1", "--sample-rate", "8000", "--channels", "1"]
+          [
+            "render", song_file.path, output.path,
+            "--tempo", "120", "--swing", "0.55", "--bars", "1", "--sample-rate", "8000", "--channels", "1"
+          ]
         )
 
         expect(status).to eq(0)

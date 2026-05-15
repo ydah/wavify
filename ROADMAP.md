@@ -19,7 +19,7 @@ This roadmap keeps Wavify focused on pure Ruby audio workflows.
 
 ## v0.4 Sequencer Identity
 
-- Add swing, velocity, arrangement repeat, timeline export, and improved DSL error context.
+- Keep swing, velocity, arrangement repeat, timeline export, and improved DSL error context cohesive.
 - Add stems rendering when the track model is stable enough.
 - Keep the DSL compact and Ruby-native.
 

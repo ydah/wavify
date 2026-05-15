@@ -11,12 +11,13 @@ module Wavify
       # Arrangement section metadata (`name`, `bars`, active `tracks`).
       Section = Struct.new(:name, :bars, :tracks, :repeat, keyword_init: true)
 
-      attr_reader :format, :tempo, :beats_per_bar, :tracks, :sections, :default_bars
+      attr_reader :format, :tempo, :beats_per_bar, :swing, :tracks, :sections, :default_bars
 
-      def initialize(format:, tempo:, beats_per_bar:, default_bars:, tracks:, sections:)
+      def initialize(format:, tempo:, beats_per_bar:, swing:, default_bars:, tracks:, sections:)
         @format = format
         @tempo = tempo
         @beats_per_bar = beats_per_bar
+        @swing = swing
         @default_bars = default_bars
         @tracks = tracks.freeze
         @sections = sections.freeze
@@ -33,7 +34,8 @@ module Wavify
         Wavify::Sequencer::Engine.new(
           tempo: @tempo,
           format: @format,
-          beats_per_bar: @beats_per_bar
+          beats_per_bar: @beats_per_bar,
+          swing: @swing
         )
       end
 
@@ -567,18 +569,19 @@ module Wavify
       # @param beats_per_bar [Integer]
       # @param default_bars [Integer]
       # @return [SongDefinition]
-      def self.build_definition(format:, tempo: 120, beats_per_bar: 4, default_bars: 1, &block)
-        builder = new(format: format, tempo: tempo, beats_per_bar: beats_per_bar, default_bars: default_bars)
+      def self.build_definition(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1, &block)
+        builder = new(format: format, tempo: tempo, beats_per_bar: beats_per_bar, swing: swing, default_bars: default_bars)
         builder.instance_eval(&block) if block
         builder.to_song_definition
       end
 
-      def initialize(format:, tempo: 120, beats_per_bar: 4, default_bars: 1)
+      def initialize(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1)
         raise Wavify::InvalidParameterError, "format must be Core::Format" unless format.is_a?(Wavify::Core::Format)
 
         @format = format
         @tempo = tempo.to_f
         @beats_per_bar = beats_per_bar
+        @swing = validate_swing!(swing)
         @default_bars = default_bars
         @track_definitions = []
         @arrangement_sections = []
@@ -594,6 +597,10 @@ module Wavify
         raise Wavify::SequencerError, "beats_per_bar must be a positive Integer" unless value.is_a?(Integer) && value.positive?
 
         @beats_per_bar = value
+      end
+
+      def swing(value)
+        @swing = validate_swing!(value)
       end
 
       def bars(value)
@@ -623,10 +630,21 @@ module Wavify
           format: @format,
           tempo: @tempo,
           beats_per_bar: @beats_per_bar,
+          swing: @swing,
           default_bars: @default_bars,
           tracks: @track_definitions,
           sections: @arrangement_sections
         )
+      end
+
+      private
+
+      def validate_swing!(value)
+        unless value.is_a?(Numeric) && value.finite? && value >= 0.5 && value < 1.0
+          raise Wavify::SequencerError, "swing must be a Numeric between 0.5 and 1.0"
+        end
+
+        value.to_f
       end
     end
 
@@ -638,11 +656,12 @@ module Wavify
       # @param beats_per_bar [Integer]
       # @param default_bars [Integer]
       # @return [SongDefinition]
-      def build_definition(format:, tempo: 120, beats_per_bar: 4, default_bars: 1, &block)
+      def build_definition(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1, &block)
         Builder.build_definition(
           format: format,
           tempo: tempo,
           beats_per_bar: beats_per_bar,
+          swing: swing,
           default_bars: default_bars,
           &block
         )
@@ -659,11 +678,13 @@ module Wavify
     # @param beats_per_bar [Integer]
     # @param default_bars [Integer]
     # @return [Audio]
-    def build(output_path = nil, format: Core::Format::CD_QUALITY, tempo: 120, beats_per_bar: 4, default_bars: 1, &block)
+    def build(output_path = nil, format: Core::Format::CD_QUALITY, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1,
+              &block)
       song = DSL.build_definition(
         format: format,
         tempo: tempo,
         beats_per_bar: beats_per_bar,
+        swing: swing,
         default_bars: default_bars,
         &block
       )

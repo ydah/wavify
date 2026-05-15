@@ -3,7 +3,7 @@
 The sequencing DSL is intentionally small: it is for Ruby scripts that sketch arrangements, not a full DAW.
 
 ```ruby
-song = Wavify::DSL.build_definition(format: Wavify::Core::Format::CD_QUALITY, tempo: 116) do
+song = Wavify::DSL.build_definition(format: Wavify::Core::Format::CD_QUALITY, tempo: 116, swing: 0.55) do
   track :kick do
     synth :sine
     notes "C2 . . . C2 . . .", resolution: 16
@@ -32,5 +32,6 @@ end
 ```
 
 Pattern velocity suffixes are normalized `0.0..1.0` values. `x` defaults to `0.8`, `X` defaults to `1.0`, and explicit values such as `x0.35` are passed through the sequencer timeline and sample-track renderer.
+Swing starts at `0.5` for straight timing and applies to off-beat steps on even pattern/note grids.
 
 Keep song logic in Ruby when the DSL does not expose a feature yet. This keeps the core DSL small and avoids locking early ideas into public syntax too soon.

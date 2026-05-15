@@ -10,6 +10,14 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(engine.bar_duration_seconds).to be_within(0.0001).of(2.0)
       expect(engine.step_duration_seconds(16)).to be_within(0.0001).of(0.125)
     end
+
+    it "delays off-beat steps when swing is enabled" do
+      swung = described_class.new(tempo: 120, format: format, swing: 0.6)
+
+      expect(swung.step_start_seconds(1, 4)).to be_within(0.0001).of(0.6)
+      expect(swung.step_duration_at(0, 4)).to be_within(0.0001).of(0.6)
+      expect(swung.step_duration_at(1, 4)).to be_within(0.0001).of(0.4)
+    end
   end
 
   describe "#timeline_for_track" do

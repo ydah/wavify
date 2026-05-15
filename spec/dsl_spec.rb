@@ -11,6 +11,7 @@ RSpec.describe Wavify::DSL do
     it "builds a song definition from declarative DSL" do
       song = described_class.build_definition(format: format, tempo: 128) do
         beats_per_bar 4
+        swing 0.58
 
         track :drums do
           pattern :kick, "x---x---x---x---"
@@ -44,6 +45,7 @@ RSpec.describe Wavify::DSL do
 
       expect(song).to be_a(Wavify::DSL::SongDefinition)
       expect(song.tempo).to eq(128.0)
+      expect(song.swing).to eq(0.58)
       expect(song.tracks.map(&:name)).to eq(%i[drums lead pad])
       expect(song.sections.map(&:name)).to eq(%i[intro verse])
 
@@ -107,6 +109,17 @@ RSpec.describe Wavify::DSL do
       expect(timeline).not_to be_empty
       expect(timeline.any? { |event| event[:track] == :lead && event[:bar] == 2 }).to be(true)
       expect(timeline.any? { |event| event[:track] == :drums && event[:kind] == :trigger }).to be(true)
+    end
+
+    it "applies swing timing to DSL timelines" do
+      song = described_class.build_definition(format: format, tempo: 120, swing: 0.6) do
+        track :drums do
+          pattern "xx--"
+        end
+      end
+
+      trigger_times = song.timeline.map { |event| event[:start_time] }
+      expect(trigger_times).to eq([0.0, 0.6])
     end
 
     it "supports repeated sections, duration, and JSON timeline export" do
