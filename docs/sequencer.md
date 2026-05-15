@@ -4,6 +4,8 @@ The sequencing DSL is intentionally small: it is for Ruby scripts that sketch ar
 
 ```ruby
 song = Wavify::DSL.build_definition(format: Wavify::Core::Format::CD_QUALITY, tempo: 116, swing: 0.55) do
+  sample_folder "samples"
+
   track :kick do
     synth :sine
     notes "C2 . . . C2 . . .", resolution: 16
@@ -27,11 +29,12 @@ Sample tracks can transform individual samples before scheduling:
 ```ruby
 track :drums do
   pattern :kick, "x---x0.5--"
-  sample :kick, "samples/kick.wav", trim: true, gain: -3, pan: -0.2, from: 0.01, duration: 0.2
+  sample :kick, trim: true, gain: -3, pan: -0.2, pitch: 12, from: 0.01, duration: 0.2
 end
 ```
 
 Pattern velocity suffixes are normalized `0.0..1.0` values. `x` defaults to `0.8`, `X` defaults to `1.0`, and explicit values such as `x0.35` are passed through the sequencer timeline and sample-track renderer.
 Swing starts at `0.5` for straight timing and applies to off-beat steps on even pattern/note grids.
+`sample_folder` resolves `sample :kick` to `kick.wav` under that folder, and `pitch:` shifts samples by semitones using resample-based playback speed changes. Use `Wavify::DSL.validate(format: ...)` to catch notation, track, and arrangement errors before rendering.
 
 Keep song logic in Ruby when the DSL does not expose a feature yet. This keeps the core DSL small and avoids locking early ideas into public syntax too soon.

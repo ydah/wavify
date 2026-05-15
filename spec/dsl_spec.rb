@@ -59,6 +59,56 @@ RSpec.describe Wavify::DSL do
       expect(lead.effects.first[:name]).to eq(:chorus)
       expect(lead.envelope).to be_a(Wavify::DSP::Envelope)
     end
+
+    it "resolves samples from a configured sample folder" do
+      song = described_class.build_definition(format: format, tempo: 120) do
+        sample_folder "samples"
+
+        track :drums do
+          pattern :kick, "x---"
+          pattern :snare, "----"
+          sample :kick
+          sample :snare, "drums/snare.wav"
+        end
+      end
+
+      drums = song.tracks.fetch(0)
+      expect(drums.sample_folder).to eq("samples")
+      expect(drums.samples[:kick]).to eq(File.join("samples", "kick.wav"))
+      expect(drums.samples[:snare]).to eq(File.join("samples", "drums/snare.wav"))
+    end
+  end
+
+  describe ".validate" do
+    it "validates a DSL definition without rendering audio" do
+      expect(
+        described_class.validate(format: format) do
+          track :lead do
+            notes "C4 . E4 ."
+          end
+        end
+      ).to be(true)
+    end
+
+    it "adds track context to validation errors" do
+      expect do
+        described_class.validate(format: format) do
+          track :drums do
+            pattern "x-o-"
+          end
+        end
+      end.to raise_error(Wavify::SequencerError, /track :drums: invalid pattern symbol/)
+    end
+
+    it "adds arrangement context to section errors" do
+      expect do
+        described_class.build_definition(format: format) do
+          arrange do
+            section :bad, bars: 0, tracks: [:lead]
+          end
+        end
+      end.to raise_error(Wavify::SequencerError, /arrangement: bars/)
+    end
   end
 
   describe "integration" do
@@ -217,6 +267,24 @@ RSpec.describe Wavify::DSL do
         left, right = audio.buffer.samples.first(2)
         expect(left.abs).to be < 0.001
         expect(right).to be_within(0.01).of(0.8 * (10.0**(-6.0 / 20.0)))
+      end
+    end
+
+    it "applies per-sample pitch while rendering" do
+      Tempfile.create(["wavify_pitch", ".wav"]) do |hit|
+        source = Wavify::Core::SampleBuffer.new([0.2, 0.2, 0.4, 0.4, 0.6, 0.6, 0.8, 0.8], format)
+        Wavify::Audio.new(source).write(hit.path)
+
+        song = described_class.build_definition(format: format, tempo: 120) do
+          track :drums do
+            pattern :hit, "X---"
+            sample :hit, hit.path, pitch: 12
+          end
+        end
+
+        audio = song.render(default_bars: 1)
+
+        expect(audio.sample_frame_count).to eq(2)
       end
     end
   end

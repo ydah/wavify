@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "json"
+require "pathname"
 
 module Wavify
   # Declarative music-building DSL that compiles to sequencer tracks and audio.
@@ -43,7 +44,23 @@ module Wavify
       #
       # @return [Array<Wavify::Sequencer::Track>]
       def sequencer_tracks
-        @tracks.map(&:to_sequencer_track)
+        @tracks.map { |track| with_track_context(track) { track.to_sequencer_track } }
+      end
+
+      # Validates the compiled song without rendering audio.
+      #
+      # @return [true]
+      def validate!
+        raise Wavify::SequencerError, "song must define at least one track" if @tracks.empty?
+
+        @tracks.each do |track|
+          with_track_context(track) do
+            track.to_sequencer_track
+            track.sample_pattern_map
+          end
+        end
+        timeline(default_bars: @default_bars)
+        true
       end
 
       # Returns arrangement sections as hashes accepted by the sequencer engine.
@@ -177,7 +194,7 @@ module Wavify
       end
 
       def render_sample_track(track, default_bars:)
-        patterns = track.sample_pattern_map
+        patterns = with_track_context(track) { track.sample_pattern_map }
         return nil if patterns.empty?
 
         sections = active_sections_for(track.name, default_bars: default_bars)
@@ -190,7 +207,6 @@ module Wavify
         sections.each do |section|
           patterns.each do |sample_key, pattern|
             sample_audio = sample_cache[sample_key] ||= load_sample_audio(track, sample_key, work_format)
-            step_duration = engine.step_duration_seconds(pattern.length)
 
             (0...section.fetch(:bars)).each do |bar_offset|
               absolute_bar = section.fetch(:start_bar) + bar_offset
@@ -201,7 +217,7 @@ module Wavify
 
                 events << {
                   sample_key: sample_key,
-                  start_time: bar_base_time + (step.index * step_duration),
+                  start_time: bar_base_time + engine.step_start_seconds(step.index, pattern.length),
                   velocity: step.velocity,
                   sample_audio: sample_audio
                 }
@@ -263,6 +279,7 @@ module Wavify
         processed = slice_sample_option(processed, options)
         processed = trim_sample_option(processed, options)
         processed = processed.reverse if options[:reverse]
+        processed = pitch_sample_option(processed, options)
         processed = processed.convert(work_format)
         processed = processed.gain(options[:gain]) if options.key?(:gain)
         processed = processed.pan(options[:pan]) if options.key?(:pan)
@@ -282,6 +299,33 @@ module Wavify
 
         threshold = options[:trim] == true ? 0.01 : options[:trim]
         audio.trim(threshold: threshold)
+      end
+
+      def pitch_sample_option(audio, options)
+        ratio = sample_pitch_ratio(options)
+        return audio if ratio == 1.0
+
+        pitched_format = audio.format.with(sample_rate: (audio.sample_rate * ratio).round)
+        reinterpreted = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(audio.buffer.samples.dup, pitched_format))
+        reinterpreted.convert(audio.format)
+      end
+
+      def sample_pitch_ratio(options)
+        return validate_pitch_ratio!(options.fetch(:pitch_ratio)) if options.key?(:pitch_ratio)
+        return 1.0 unless options.key?(:pitch)
+
+        pitch = options.fetch(:pitch)
+        raise Wavify::SequencerError, "sample pitch must be Numeric semitones" unless pitch.is_a?(Numeric) && pitch.finite?
+
+        2.0**(pitch.to_f / 12.0)
+      end
+
+      def validate_pitch_ratio!(value)
+        unless value.is_a?(Numeric) && value.finite? && value.positive?
+          raise Wavify::SequencerError, "sample pitch_ratio must be a positive Numeric"
+        end
+
+        value.to_f
       end
 
       def overlay_sample_event!(mixed, event, work_format)
@@ -317,6 +361,16 @@ module Wavify
 
         :"#{name}_#{repeat_index + 1}"
       end
+
+      def with_track_context(track)
+        yield
+      rescue Wavify::Error => e
+        message = e.message.to_s
+        label = "track :#{track.name}"
+        raise if message.start_with?("#{label}:")
+
+        raise Wavify::SequencerError, "#{label}: #{message}"
+      end
     end
 
     # :nodoc: all
@@ -334,12 +388,13 @@ module Wavify
       # Internal mutable track state compiled from DSL blocks.
       #
       # Readers are used by {SongDefinition} rendering and sequencer conversion.
-      attr_reader :name, :waveform, :gain_db, :pan_position, :pattern_resolution, :note_resolution,
+      attr_reader :name, :sample_folder, :waveform, :gain_db, :pan_position, :pattern_resolution, :note_resolution,
                   :default_octave, :envelope, :notes_notation, :chords_notation, :effects, :samples,
                   :sample_options, :named_patterns, :synth_options
 
-      def initialize(name)
+      def initialize(name, sample_folder: nil)
         @name = name.to_sym
+        @sample_folder = sample_folder
         @waveform = :sine
         @gain_db = 0.0
         @pan_position = 0.0
@@ -386,9 +441,9 @@ module Wavify
       end
 
       # Registers a sample path keyed by a symbolic name.
-      def sample!(key, path, **options)
+      def sample!(key, path = nil, **options)
         sample_key = key.to_sym
-        @samples[sample_key] = path.to_s
+        @samples[sample_key] = resolve_sample_path(sample_key, path)
         @sample_options[sample_key] = normalize_sample_options!(options)
       end
 
@@ -470,11 +525,29 @@ module Wavify
       private
 
       def normalize_sample_options!(options)
-        supported = %i[gain pan trim reverse from to duration]
+        supported = %i[gain pan trim reverse from to duration pitch pitch_ratio]
         unknown = options.keys - supported
         raise Wavify::SequencerError, "unsupported sample options: #{unknown.join(', ')}" unless unknown.empty?
+        validate_sample_numeric_option!(options, :pitch) if options.key?(:pitch)
+        validate_sample_numeric_option!(options, :pitch_ratio, positive: true) if options.key?(:pitch_ratio)
 
         options.dup
+      end
+
+      def validate_sample_numeric_option!(options, key, positive: false)
+        value = options.fetch(key)
+        valid = value.is_a?(Numeric) && value.finite? && (!positive || value.positive?)
+        return if valid
+
+        requirement = positive ? "a positive Numeric" : "Numeric"
+        raise Wavify::SequencerError, "sample #{key} must be #{requirement}"
+      end
+
+      def resolve_sample_path(sample_key, path)
+        source = path.nil? ? "#{sample_key}.wav" : path.to_s
+        return source unless @sample_folder && !Pathname.new(source).absolute?
+
+        File.join(@sample_folder, source)
       end
     end
 
@@ -492,7 +565,7 @@ module Wavify
       end
 
       # Registers a sample mapping.
-      def sample(name, path, **options)
+      def sample(name, path = nil, **options)
         @track.sample!(name, path, **options)
       end
 
@@ -583,6 +656,7 @@ module Wavify
         @beats_per_bar = beats_per_bar
         @swing = validate_swing!(swing)
         @default_bars = default_bars
+        @sample_folder = nil
         @track_definitions = []
         @arrangement_sections = []
       end
@@ -609,10 +683,20 @@ module Wavify
         @default_bars = value
       end
 
+      def sample_folder(path)
+        raise Wavify::SequencerError, "sample_folder must be a String" unless path.is_a?(String) && !path.empty?
+
+        @sample_folder = path
+      end
+
       # Defines a track block and stores its compiled configuration.
       def track(name, &block)
-        definition = TrackDefinition.new(name)
-        TrackBuilder.new(definition).instance_eval(&block) if block
+        definition = TrackDefinition.new(name, sample_folder: @sample_folder)
+        begin
+          TrackBuilder.new(definition).instance_eval(&block) if block
+        rescue Wavify::Error => e
+          raise Wavify::SequencerError, "track :#{definition.name}: #{e.message}"
+        end
         @track_definitions << definition
         definition
       end
@@ -620,7 +704,11 @@ module Wavify
       # Defines arrangement sections for selective track playback by section.
       def arrange(&block)
         builder = ArrangementBuilder.new
-        builder.instance_eval(&block) if block
+        begin
+          builder.instance_eval(&block) if block
+        rescue Wavify::SequencerError => e
+          raise Wavify::SequencerError, "arrangement: #{e.message}"
+        end
         @arrangement_sections = builder.sections
       end
 
@@ -665,6 +753,20 @@ module Wavify
           default_bars: default_bars,
           &block
         )
+      end
+
+      # Validates a DSL block without rendering audio.
+      #
+      # @return [true]
+      def validate(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1, &block)
+        build_definition(
+          format: format,
+          tempo: tempo,
+          beats_per_bar: beats_per_bar,
+          swing: swing,
+          default_bars: default_bars,
+          &block
+        ).validate!
       end
     end
   end
