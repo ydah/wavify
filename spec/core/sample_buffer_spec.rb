@@ -53,6 +53,18 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(differences.max).to be <= 1
     end
 
+    it "can add deterministic dither when converting to lower-depth PCM" do
+      mono_float = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
+      pcm8 = mono_float.with(bit_depth: 8, sample_format: :pcm)
+      source = described_class.new(Array.new(64, 0.0), mono_float)
+
+      dithered = source.convert(pcm8, dither: true, dither_seed: 123)
+      repeated = source.convert(pcm8, dither: true, dither_seed: 123)
+
+      expect(dithered.samples).to eq(repeated.samples)
+      expect(dithered.samples.uniq).not_to eq([0])
+    end
+
     it "upmixes mono to stereo" do
       mono = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
       source = described_class.new([0.2, -0.2], mono)

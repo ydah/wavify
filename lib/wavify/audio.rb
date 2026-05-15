@@ -193,11 +193,13 @@ module Wavify
     end
 
     # @param value [Integer, nil] optional target bit depth
+    # @param dither [Boolean] add TPDF dither when converting to PCM
+    # @param dither_seed [Integer, nil] deterministic seed for dither noise
     # @return [Integer, Audio]
-    def bit_depth(value = nil)
+    def bit_depth(value = nil, dither: false, dither_seed: nil)
       return format.bit_depth if value.nil?
 
-      convert(format.with(bit_depth: value))
+      convert(format.with(bit_depth: value), dither: dither, dither_seed: dither_seed)
     end
 
     # @return [Array<Array<Numeric>>] sample frames
@@ -223,9 +225,11 @@ module Wavify
     # Converts to a new format/channels.
     #
     # @param new_format [Core::Format]
+    # @param dither [Boolean] add TPDF dither when converting to PCM
+    # @param dither_seed [Integer, nil] deterministic seed for dither noise
     # @return [Audio]
-    def convert(new_format)
-      self.class.new(@buffer.convert(new_format))
+    def convert(new_format, dither: false, dither_seed: nil)
+      self.class.new(@buffer.convert(new_format, dither: dither, dither_seed: dither_seed))
     end
 
     # Converts to another sample rate.

@@ -14,7 +14,7 @@ This roadmap keeps Wavify focused on pure Ruby audio workflows.
 
 - Refine the processor protocol around `process`, `reset`, `flush`, `tail_duration`, `latency`, and `lookahead`.
 - Add focused DSP processors such as limiter, soft limiter, noise gate, tremolo, and bitcrusher.
-- Add fade curve options and bit-depth dither.
+- Keep fade curve options and bit-depth dither covered by focused tests.
 - Keep streaming and offline behavior covered by comparison tests.
 
 ## v0.4 Sequencer Identity

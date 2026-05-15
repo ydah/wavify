@@ -52,9 +52,10 @@ module Wavify
       #
       # @param new_format [Format]
       # @return [SampleBuffer]
-      def convert(new_format)
+      def convert(new_format, dither: false, dither_seed: nil)
         raise InvalidParameterError, "new_format must be Core::Format" unless new_format.is_a?(Format)
 
+        dither_rng = dither_applicable?(new_format, dither) ? Random.new(dither_seed) : nil
         frames = frame_view.map do |frame|
           frame.map { |sample| to_normalized_float(sample, @format) }
         end
@@ -62,7 +63,7 @@ module Wavify
         converted_frames = convert_channels(frames, new_format.channels)
         converted_frames = resample_frames(converted_frames, new_format.sample_rate)
         converted_samples = converted_frames.flatten.map do |sample|
-          from_normalized_float(sample, new_format)
+          from_normalized_float(sample, new_format, dither_rng: dither_rng)
         end
 
         self.class.new(converted_samples, new_format)
@@ -153,11 +154,24 @@ module Wavify
         (sample.to_f / max).clamp(-1.0, 1.0)
       end
 
-      def from_normalized_float(sample, format)
+      def from_normalized_float(sample, format, dither_rng: nil)
         value = sample.to_f.clamp(-1.0, 1.0)
         return value if format.sample_format == :float
 
+        value = apply_tpdf_dither(value, format, dither_rng) if dither_rng
         float_to_pcm(value, format.bit_depth)
+      end
+
+      def apply_tpdf_dither(value, format, rng)
+        max = ((2**(format.bit_depth - 1)) - 1).to_f
+        (value + ((rng.rand - rng.rand) / max)).clamp(-1.0, 1.0)
+      end
+
+      def dither_applicable?(new_format, requested)
+        return false unless requested && new_format.sample_format == :pcm
+        return true if @format.sample_format == :float
+
+        @format.bit_depth > new_format.bit_depth
       end
 
       def float_to_pcm(sample, bit_depth)

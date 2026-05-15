@@ -50,7 +50,7 @@ audio = Wavify::Audio.tone(
   format: format
 )
 
-audio.fade_in(0.02, curve: :exp).fade_out(0.05, curve: :log).write("tone.wav")
+audio.fade_in(0.02, curve: :exp).fade_out(0.05, curve: :log).bit_depth(16, dither: true).write("tone.wav")
 ```
 
 Codec-specific write options are forwarded with `codec_options:`:
@@ -88,6 +88,7 @@ Utility methods:
 - `peak_amplitude`, `rms_amplitude`, `peak_dbfs`, `rms_dbfs`, `stats`, `silent?`, `clipped?`, `dc_offset`, `zero_crossing_rate`
 
 Mix strategies are `:clip` (default), `:normalize`, `:headroom`, and `:soft_limit`. `gains:` accepts one dB value per source, and `align:` can be `:start`, `:center`, or `:end`.
+Use `bit_depth(16, dither: true)` when reducing PCM bit depth and you want simple TPDF dither.
 
 Duration helpers:
 

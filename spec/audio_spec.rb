@@ -305,6 +305,16 @@ RSpec.describe Wavify::Audio do
       expect(source.resample(sample_rate: 48_000).sample_rate).to eq(48_000)
       expect(source.bit_depth(24).bit_depth).to eq(24)
     end
+
+    it "passes dither options through shortcut bit-depth conversion" do
+      pcm_format = format.with(channels: 1, bit_depth: 16)
+      source = described_class.new(Wavify::Core::SampleBuffer.new(Array.new(32, 0), pcm_format))
+
+      converted = source.bit_depth(8, dither: true, dither_seed: 7)
+
+      expect(converted.bit_depth).to eq(8)
+      expect(converted.buffer.samples.uniq).not_to eq([0])
+    end
   end
 
   describe "#split" do
