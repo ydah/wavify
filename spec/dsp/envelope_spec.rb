@@ -23,9 +23,31 @@ RSpec.describe Wavify::DSP::Envelope do
       expect(envelope.gain_at(0.4, note_on_duration: 0.6)).to be_within(0.001).of(0.5)
     end
 
+    it "holds peak level before decay when hold is configured" do
+      env = described_class.new(attack: 0.1, hold: 0.2, decay: 0.2, sustain: 0.5, release: 0.3)
+
+      expect(env.gain_at(0.25, note_on_duration: 1.0)).to be_within(0.001).of(1.0)
+      expect(env.gain_at(0.4, note_on_duration: 1.0)).to be_within(0.001).of(0.75)
+    end
+
     it "returns release ramp after note off" do
       expect(envelope.gain_at(0.75, note_on_duration: 0.6)).to be_within(0.001).of(0.25)
       expect(envelope.gain_at(1.0, note_on_duration: 0.6)).to be_within(0.001).of(0.0)
+    end
+
+    it "starts release from the current level when notes end before sustain" do
+      env = described_class.new(attack: 1.0, decay: 0.0, sustain: 0.2, release: 1.0)
+
+      expect(env.gain_at(1.0, note_on_duration: 0.5)).to be_within(0.001).of(0.25)
+    end
+
+    it "supports exponential and logarithmic segment curves" do
+      linear = described_class.new(attack: 1.0, decay: 0.0, sustain: 1.0, release: 0.0)
+      exponential = described_class.new(attack: 1.0, decay: 0.0, sustain: 1.0, release: 0.0, curve: :exp)
+      logarithmic = described_class.new(attack: 1.0, decay: 0.0, sustain: 1.0, release: 0.0, curve: :log)
+
+      expect(exponential.gain_at(0.5, note_on_duration: 1.0)).to be < linear.gain_at(0.5, note_on_duration: 1.0)
+      expect(logarithmic.gain_at(0.5, note_on_duration: 1.0)).to be > linear.gain_at(0.5, note_on_duration: 1.0)
     end
   end
 

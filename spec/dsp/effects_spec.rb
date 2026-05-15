@@ -16,6 +16,10 @@ RSpec.describe Wavify::DSP::Effects do
     Math.sqrt(samples.sum { |sample| sample * sample } / samples.length)
   end
 
+  def first_audible_index(samples, threshold: 0.0001)
+    samples.find_index { |sample| sample.abs > threshold }
+  end
+
   describe Wavify::DSP::Effects::Delay do
     it "produces delayed repeats for an impulse" do
       effect = described_class.new(time: 1.0 / 44_100, feedback: 0.5, mix: 1.0)
@@ -71,6 +75,17 @@ RSpec.describe Wavify::DSP::Effects do
     it "reports a positive tail duration when wet signal is enabled" do
       expect(described_class.new(room_size: 0.5, mix: 0.3).tail_duration).to be > 0.0
       expect(described_class.new(room_size: 0.5, mix: 0.0).tail_duration).to eq(0.0)
+    end
+
+    it "delays only the wet path when pre_delay is configured" do
+      dry = described_class.new(room_size: 0.2, damping: 0.0, mix: 1.0)
+      delayed = described_class.new(room_size: 0.2, damping: 0.0, mix: 1.0, pre_delay: 10.0 / 44_100)
+
+      dry_first = first_audible_index(dry.process(impulse_buffer(length: 3_000)).samples)
+      delayed_first = first_audible_index(delayed.process(impulse_buffer(length: 3_000)).samples)
+
+      expect(delayed_first - dry_first).to eq(10)
+      expect(delayed.tail_duration).to be > dry.tail_duration
     end
   end
 

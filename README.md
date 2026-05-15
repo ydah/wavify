@@ -207,7 +207,7 @@ Sample tracks can use `sample_folder`, per-sample `pitch:` semitones, and `Wavif
 Built-in modules:
 
 - Oscillator waveforms: `:sine`, `:square`, `:sawtooth`, `:triangle`, `:white_noise`, `:pink_noise`
-- Envelope (ADSR)
+- Envelope (AHDSR with optional segment curves)
 - Biquad filters (lowpass/highpass/bandpass/notch/peaking/shelves)
 - Effects: `Delay`, `Reverb`, `Chorus`, `Distortion`, `Compressor`, `Limiter`, `SoftLimiter`, `NoiseGate`, `Expander`, `Tremolo`, `AutoPan`, `StereoWidener`, `Bitcrusher`, `EQ`
 - Preset chains: `MasteringChain`, `PodcastChain`
@@ -218,6 +218,8 @@ Register custom processors for pipelines and DSL tracks:
 Wavify::Effects.register(:my_effect, MyEffect)
 Wavify::DSL.effect(:my_effect, MyEffect)
 ```
+
+`Envelope` supports `hold:` and `curve: :linear | :exp | :log`. `Reverb` supports `pre_delay:` for delaying only the wet path.
 
 ## Examples
 

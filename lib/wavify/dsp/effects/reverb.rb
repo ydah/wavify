@@ -8,11 +8,12 @@ module Wavify
         COMB_TAPS_44K = [1116, 1188, 1277, 1356].freeze # :nodoc:
         ALLPASS_TAPS_44K = [556, 441].freeze # :nodoc:
 
-        def initialize(room_size: 0.5, damping: 0.5, mix: 0.3)
+        def initialize(room_size: 0.5, damping: 0.5, mix: 0.3, pre_delay: 0.0)
           super()
           @room_size = validate_unit!(room_size, :room_size)
           @damping = validate_unit!(damping, :damping)
           @mix = validate_unit!(mix, :mix)
+          @pre_delay = validate_time!(pre_delay, :pre_delay)
           reset
         end
 
@@ -26,7 +27,7 @@ module Wavify
           dry = sample.to_f
           channel_state = @channels_state.fetch(channel)
 
-          comb_input = dry * @input_gain
+          comb_input = pre_delay_sample(channel_state, dry) * @input_gain
           comb_sum = 0.0
           channel_state[:combs].each do |comb|
             comb_sum += process_comb(comb, comb_input)
@@ -44,7 +45,7 @@ module Wavify
         def tail_duration
           return 0.0 if @mix.zero?
 
-          0.25 + (@room_size * 2.5)
+          @pre_delay + 0.25 + (@room_size * 2.5)
         end
 
         private
@@ -55,6 +56,7 @@ module Wavify
           damping = @damping
 
           @input_gain = 0.35
+          pre_delay_frames = (@pre_delay * sample_rate).round
           @channels_state = Array.new(channels) do
             combs = COMB_TAPS_44K.map do |tap|
               length = [(tap * scale).round, 8].max
@@ -74,13 +76,29 @@ module Wavify
                 feedback: 0.5
               }
             end
-            { combs: combs, allpasses: allpasses }
+            {
+              combs: combs,
+              allpasses: allpasses,
+              pre_delay_buffer: Array.new(pre_delay_frames, 0.0),
+              pre_delay_index: 0
+            }
           end
         end
 
         def reset_runtime_state
           @channels_state = []
           @input_gain = nil
+        end
+
+        def pre_delay_sample(channel_state, input_sample)
+          buffer = channel_state[:pre_delay_buffer]
+          return input_sample if buffer.empty?
+
+          index = channel_state[:pre_delay_index]
+          delayed = buffer[index]
+          buffer[index] = input_sample
+          channel_state[:pre_delay_index] = (index + 1) % buffer.length
+          delayed
         end
 
         def process_comb(comb, input_sample)
@@ -110,6 +128,14 @@ module Wavify
 
         def validate_unit!(value, name)
           raise InvalidParameterError, "#{name} must be Numeric in 0.0..1.0" unless value.is_a?(Numeric) && value.between?(0.0, 1.0)
+
+          value.to_f
+        end
+
+        def validate_time!(value, name)
+          unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite? && value >= 0.0
+            raise InvalidParameterError, "#{name} must be a non-negative finite Numeric"
+          end
 
           value.to_f
         end
