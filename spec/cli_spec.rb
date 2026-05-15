@@ -58,6 +58,43 @@ RSpec.describe Wavify::CLI do
     end
   end
 
+  it "chains simple processing operations" do
+    Tempfile.create(["wavify-cli-chain-source", ".wav"]) do |source|
+      Tempfile.create(["wavify-cli-chain-output", ".wav"]) do |output|
+        buffer = Wavify::Core::SampleBuffer.new([0.0, 0.5, 0.5, 0.5], format.with(sample_format: :float, bit_depth: 32))
+        Wavify::Codecs::Wav.write(source.path, buffer)
+
+        status, stdout, = run_cli(["chain", source.path, output.path, "--gain", "-6", "--fade-in", "0.0001"])
+
+        expect(status).to eq(0)
+        expect(stdout).to include("processed:")
+        expect(Wavify::Audio.read(output.path).peak_amplitude).to be < 0.5
+      end
+    end
+  end
+
+  it "renders a DSL song file" do
+    Tempfile.create(["wavify-cli-song", ".rb"]) do |song_file|
+      song_file.write(<<~RUBY)
+        track :lead do
+          synth :sine
+          notes "C4 . . .", resolution: 4
+        end
+      RUBY
+      song_file.flush
+
+      Tempfile.create(["wavify-cli-render", ".wav"]) do |output|
+        status, stdout, = run_cli(
+          ["render", song_file.path, output.path, "--tempo", "120", "--bars", "1", "--sample-rate", "8000", "--channels", "1"]
+        )
+
+        expect(status).to eq(0)
+        expect(stdout).to include("rendered:")
+        expect(Wavify::Audio.metadata(output.path)[:sample_frame_count]).to be > 0
+      end
+    end
+  end
+
   it "returns an error status for invalid commands" do
     status, stdout, stderr = run_cli(["unknown"])
 

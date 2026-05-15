@@ -3,7 +3,7 @@
 module Wavify
   # Minimal command-line interface for common Wavify workflows.
   class CLI
-    COMMANDS = %w[info convert tone normalize trim formats doctor].freeze
+    COMMANDS = %w[info convert tone normalize trim chain render formats doctor].freeze
 
     def self.run(argv = ARGV, stdout: $stdout, stderr: $stderr)
       new(argv, stdout: stdout, stderr: stderr).run
@@ -26,7 +26,7 @@ module Wavify
 
       send("run_#{command}")
       0
-    rescue Wavify::Error, ArgumentError => e
+    rescue Wavify::Error, ArgumentError, SyntaxError => e
       @stderr.puts "wavify: #{e.message}"
       1
     end
@@ -57,7 +57,7 @@ module Wavify
     def run_tone
       options = parse_options(@argv)
       output = options.delete(:output) || require_argument!("output path")
-      format = Core::Format::CD_QUALITY
+      format = base_format(options)
       audio = Audio.tone(
         frequency: options.fetch(:freq, 440.0),
         duration: options.fetch(:duration, 1.0),
@@ -82,6 +82,37 @@ module Wavify
       options = parse_options(@argv)
       Audio.read(input).trim(threshold: options.fetch(:threshold, 0.01)).write(output)
       @stdout.puts "trimmed: #{input} -> #{output}"
+    end
+
+    def run_chain
+      input = require_argument!("input path")
+      output = require_argument!("output path")
+      options = parse_options(@argv)
+      audio = Audio.read(input)
+      audio = audio.gain(options[:gain]) if options.key?(:gain)
+      audio = audio.fade_in(options[:fade_in]) if options.key?(:fade_in)
+      audio = audio.fade_out(options[:fade_out]) if options.key?(:fade_out)
+      target_format = converted_format(audio.format, options)
+      audio = audio.convert(target_format) if target_format != audio.format
+      audio.write(output)
+      @stdout.puts "processed: #{input} -> #{output}"
+    end
+
+    def run_render
+      input = require_argument!("song path")
+      output = require_argument!("output path")
+      options = parse_options(@argv)
+      source = read_source_file(input)
+      song = DSL.build_definition(
+        format: base_format(options),
+        tempo: options.fetch(:tempo, 120.0),
+        beats_per_bar: options.fetch(:beats_per_bar, 4),
+        default_bars: options.fetch(:bars, 1)
+      ) do
+        instance_eval(source, input, 1)
+      end
+      song.write(output, default_bars: options.fetch(:bars, 1))
+      @stdout.puts "rendered: #{input} -> #{output}"
     end
 
     def run_formats
@@ -124,6 +155,18 @@ module Wavify
           options[:target] = Float(require_option_value!(token, tokens))
         when "--threshold"
           options[:threshold] = Float(require_option_value!(token, tokens))
+        when "--gain"
+          options[:gain] = Float(require_option_value!(token, tokens))
+        when "--fade-in"
+          options[:fade_in] = Float(require_option_value!(token, tokens))
+        when "--fade-out"
+          options[:fade_out] = Float(require_option_value!(token, tokens))
+        when "--tempo"
+          options[:tempo] = Float(require_option_value!(token, tokens))
+        when "--beats-per-bar"
+          options[:beats_per_bar] = Integer(require_option_value!(token, tokens))
+        when "--bars"
+          options[:bars] = Integer(require_option_value!(token, tokens))
         else
           if token.start_with?("--")
             raise InvalidParameterError, "unknown option #{token}"
@@ -133,6 +176,10 @@ module Wavify
         end
       end
       options
+    end
+
+    def base_format(options)
+      converted_format(Core::Format::CD_QUALITY, options)
     end
 
     def converted_format(format, options)
@@ -155,6 +202,12 @@ module Wavify
       raise InvalidParameterError, "missing value for #{option}" if value.nil? || value.empty?
 
       value
+    end
+
+    def read_source_file(path)
+      File.read(path)
+    rescue Errno::ENOENT
+      raise InvalidParameterError, "song file not found: #{path}"
     end
 
     def usage
