@@ -10,6 +10,12 @@ RSpec.describe Wavify::DSP::Effects do
     Wavify::Core::SampleBuffer.new(samples, format)
   end
 
+  def rms(samples)
+    return 0.0 if samples.empty?
+
+    Math.sqrt(samples.sum { |sample| sample * sample } / samples.length)
+  end
+
   describe Wavify::DSP::Effects::Delay do
     it "produces delayed repeats for an impulse" do
       effect = described_class.new(time: 1.0 / 44_100, feedback: 0.5, mix: 1.0)
@@ -180,6 +186,57 @@ RSpec.describe Wavify::DSP::Effects do
       expect(processed.samples[0]).to eq(processed.samples[1])
       expect(processed.samples[2]).to eq(processed.samples[3])
       expect(processed.samples.uniq.length).to be <= 4
+    end
+  end
+
+  describe Wavify::DSP::Effects::Expander do
+    it "reduces low-level samples below threshold" do
+      effect = described_class.new(threshold: -20.0, ratio: 2.0, floor: -80.0)
+      source = Wavify::Core::SampleBuffer.new([0.005, 0.2, -0.005, -0.2], mono_float)
+
+      processed = effect.process(source)
+
+      expect(processed.samples[0].abs).to be < source.samples[0].abs
+      expect(processed.samples[1]).to be_within(0.0001).of(0.2)
+      expect(processed.samples[2].abs).to be < source.samples[2].abs
+      expect(processed.samples[3]).to be_within(0.0001).of(-0.2)
+    end
+  end
+
+  describe Wavify::DSP::Effects::AutoPan do
+    it "moves stereo signal between channels" do
+      effect = described_class.new(rate: 30.0, depth: 1.0)
+      source = Wavify::Core::SampleBuffer.new(Array.new(2_000, 1.0), stereo_float)
+
+      processed = effect.process(source)
+
+      left = processed.samples.each_slice(2).map(&:first)
+      right = processed.samples.each_slice(2).map(&:last)
+      expect(left.max - left.min).to be > 0.4
+      expect(right.max - right.min).to be > 0.4
+    end
+  end
+
+  describe Wavify::DSP::Effects::StereoWidener do
+    it "adjusts stereo side information" do
+      effect = described_class.new(width: 2.0)
+      source = Wavify::Core::SampleBuffer.new([0.6, 0.2], stereo_float)
+
+      processed = effect.process(source)
+
+      expect(processed.samples[0]).to be_within(0.0001).of(0.8)
+      expect(processed.samples[1]).to be_within(0.0001).of(0.0)
+    end
+  end
+
+  describe Wavify::DSP::Effects::EQ do
+    it "chains filters in order" do
+      low = Wavify::Audio.tone(frequency: 120, duration: 0.1, format: mono_float, waveform: :sine).buffer
+      eq = described_class.simple(highpass: 1_000)
+
+      processed = eq.process(low)
+
+      expect(rms(processed.samples)).to be < (rms(low.samples) * 0.2)
     end
   end
 

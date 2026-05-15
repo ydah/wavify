@@ -5,7 +5,7 @@ Built-in DSP components are designed for small scripts and streaming pipelines:
 - Oscillator waveforms: sine, square, sawtooth, triangle, white noise, pink noise
 - Envelope: ADSR
 - Filters: lowpass, highpass, bandpass, notch, peaking, shelves
-- Effects: Delay, Reverb, Chorus, Distortion, Compressor, Limiter, SoftLimiter, NoiseGate, Tremolo, Bitcrusher
+- Effects: Delay, Reverb, Chorus, Distortion, Compressor, Limiter, SoftLimiter, NoiseGate, Expander, Tremolo, AutoPan, StereoWidener, Bitcrusher, EQ
 
 Effects use the processor protocol:
 
@@ -24,5 +24,5 @@ Wavify::Audio.stream("dry.wav")
              .write_to("wet.wav")
 ```
 
-`Compressor` supports `makeup_gain:` and `knee:` in dB. `Limiter` and `SoftLimiter` are peak-control processors, `NoiseGate` attenuates low-level noise, `Tremolo` applies sine-LFO amplitude modulation, and `Bitcrusher` reduces bit depth or holds samples for downsampling effects.
+`Compressor` supports `makeup_gain:` and `knee:` in dB. `Limiter` and `SoftLimiter` are peak-control processors, `NoiseGate` and `Expander` attenuate low-level noise, `Tremolo` and `AutoPan` apply sine-LFO modulation, `StereoWidener` adjusts mid/side width, `EQ` chains filters, and `Bitcrusher` reduces bit depth or holds samples for downsampling effects.
 `Audio#fade_in`, `Audio#fade_out`, and `Audio#fade` support `curve: :linear`, `:exp`, and `:log`.

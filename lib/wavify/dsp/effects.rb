@@ -11,6 +11,10 @@ require_relative "effects/soft_limiter"
 require_relative "effects/noise_gate"
 require_relative "effects/tremolo"
 require_relative "effects/bitcrusher"
+require_relative "effects/expander"
+require_relative "effects/auto_pan"
+require_relative "effects/stereo_widener"
+require_relative "effects/eq"
 
 module Wavify
   module DSP
