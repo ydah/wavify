@@ -102,12 +102,14 @@ module Wavify
         raise SequencerError, "arrangement must be an Array" unless arrangement.is_a?(Array)
 
         cursor_bar = 0
-        arrangement.map do |section|
+        arrangement.flat_map do |section|
           raise SequencerError, "section must be a Hash" unless section.is_a?(Hash)
 
           name = section.fetch(:name, "section_#{cursor_bar}").to_sym
           bars = section.fetch(:bars)
           raise SequencerError, "section bars must be a positive Integer" unless bars.is_a?(Integer) && bars.positive?
+          repeat = section.fetch(:repeat, 1)
+          raise SequencerError, "section repeat must be a positive Integer" unless repeat.is_a?(Integer) && repeat.positive?
 
           track_names = Array(section.fetch(:tracks)).map(&:to_sym)
           raise SequencerError, "section tracks must not be empty" if track_names.empty?
@@ -115,9 +117,16 @@ module Wavify
           unknown = track_names - track_map.keys
           raise SequencerError, "unknown tracks in section #{name}: #{unknown.join(', ')}" unless unknown.empty?
 
-          normalized = { name: name, bars: bars, tracks: track_names, start_bar: cursor_bar }
-          cursor_bar += bars
-          normalized
+          Array.new(repeat) do |repeat_index|
+            normalized = {
+              name: repeated_section_name(name, repeat_index),
+              bars: bars,
+              tracks: track_names,
+              start_bar: cursor_bar
+            }
+            cursor_bar += bars
+            normalized
+          end
         end
       end
 
@@ -272,6 +281,12 @@ module Wavify
         raise SequencerError, "beats_per_bar must be a positive Integer" unless beats_per_bar.is_a?(Integer) && beats_per_bar.positive?
 
         beats_per_bar
+      end
+
+      def repeated_section_name(name, repeat_index)
+        return name if repeat_index.zero?
+
+        :"#{name}_#{repeat_index + 1}"
       end
     end
   end

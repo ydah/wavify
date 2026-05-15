@@ -1,19 +1,23 @@
 # frozen_string_literal: true
 
+require "fileutils"
+require "json"
+
 module Wavify
   # Declarative music-building DSL that compiles to sequencer tracks and audio.
   module DSL
     # Immutable compiled song definition returned by {DSL.build_definition}.
     class SongDefinition
       # Arrangement section metadata (`name`, `bars`, active `tracks`).
-      Section = Struct.new(:name, :bars, :tracks, keyword_init: true)
+      Section = Struct.new(:name, :bars, :tracks, :repeat, keyword_init: true)
 
-      attr_reader :format, :tempo, :beats_per_bar, :tracks, :sections
+      attr_reader :format, :tempo, :beats_per_bar, :tracks, :sections, :default_bars
 
-      def initialize(format:, tempo:, beats_per_bar:, tracks:, sections:)
+      def initialize(format:, tempo:, beats_per_bar:, default_bars:, tracks:, sections:)
         @format = format
         @tempo = tempo
         @beats_per_bar = beats_per_bar
+        @default_bars = default_bars
         @tracks = tracks.freeze
         @sections = sections.freeze
       end
@@ -44,16 +48,32 @@ module Wavify
       #
       # @return [Array<Hash>]
       def arrangement
-        @sections.map do |section|
-          { name: section.name, bars: section.bars, tracks: section.tracks }
+        @sections.flat_map do |section|
+          Array.new(section.repeat || 1) do |repeat_index|
+            {
+              name: repeated_section_name(section.name, repeat_index),
+              bars: section.bars,
+              tracks: section.tracks
+            }
+          end
         end
       end
+
+      # Planned song duration derived from arrangement/default bars.
+      #
+      # @param default_bars [Integer]
+      # @return [Wavify::Core::Duration]
+      def duration(default_bars: @default_bars)
+        Core::Duration.new(total_bars(default_bars: default_bars) * engine.bar_duration_seconds)
+      end
+
+      alias length duration
 
       # Builds a sequencer event timeline without rendering audio.
       #
       # @param default_bars [Integer]
       # @return [Array<Hash>]
-      def timeline(default_bars: 1)
+      def timeline(default_bars: @default_bars)
         engine.build_timeline(
           tracks: sequencer_tracks,
           arrangement: arrangement? ? arrangement : nil,
@@ -61,11 +81,22 @@ module Wavify
         )
       end
 
+      # Serializes the sequencer timeline to JSON for visualization tooling.
+      #
+      # @param default_bars [Integer]
+      # @return [String]
+      def timeline_json(default_bars: @default_bars)
+        JSON.generate(timeline(default_bars: default_bars))
+      end
+
       # Renders the song definition to an {Wavify::Audio} instance.
       #
       # @param default_bars [Integer]
+      # @param stems [Boolean] return track-name keyed stems instead of a mix
       # @return [Wavify::Audio]
-      def render(default_bars: 1)
+      def render(default_bars: @default_bars, stems: false)
+        return render_stems(default_bars: default_bars) if stems
+
         sequencer_audio = engine.render(
           tracks: sequencer_tracks,
           arrangement: arrangement? ? arrangement : nil,
@@ -84,11 +115,55 @@ module Wavify
       # @param path [String]
       # @param default_bars [Integer]
       # @return [Wavify::Audio]
-      def write(path, default_bars: 1)
+      def write(path, default_bars: @default_bars)
         render(default_bars: default_bars).write(path)
       end
 
+      # Renders each track and writes stems as WAV files under a directory.
+      #
+      # @param directory [String]
+      # @param default_bars [Integer]
+      # @param overwrite [Boolean]
+      # @return [Hash<Symbol, String>]
+      def write_stems(directory, default_bars: @default_bars, overwrite: true)
+        raise Wavify::InvalidParameterError, "directory must be a String" unless directory.is_a?(String)
+
+        FileUtils.mkdir_p(directory)
+        render(default_bars: default_bars, stems: true).each_with_object({}) do |(track_name, audio), paths|
+          path = File.join(directory, "#{track_name}.wav")
+          audio.write(path, overwrite: overwrite)
+          paths[track_name] = path
+        end
+      end
+
       private
+
+      def render_stems(default_bars:)
+        @tracks.each_with_object({}) do |track, stems|
+          audio = render_track_stem(track, default_bars: default_bars)
+          stems[track.name] = audio
+        end
+      end
+
+      def render_track_stem(track, default_bars:)
+        sequencer_audio = render_sequencer_track_stem(track, default_bars: default_bars)
+        sample_audio = render_sample_track(track, default_bars: default_bars)
+
+        if sample_audio && sequencer_audio.sample_frame_count.positive?
+          Wavify::Audio.mix(sequencer_audio, sample_audio)
+        else
+          sample_audio || sequencer_audio
+        end
+      end
+
+      def render_sequencer_track_stem(track, default_bars:)
+        arrangement_for_stem = arrangement? ? arrangement_for_track(track.name) : nil
+        engine.render(
+          tracks: [track.to_sequencer_track],
+          arrangement: arrangement_for_stem,
+          default_bars: default_bars
+        )
+      end
 
       def render_sample_tracks(default_bars:)
         rendered_tracks = @tracks.filter_map do |track|
@@ -154,9 +229,9 @@ module Wavify
       def active_sections_for(track_name, default_bars:)
         if arrangement?
           cursor_bar = 0
-          @sections.each_with_object([]) do |section, result|
-            result << { bars: section.bars, start_bar: cursor_bar } if section.tracks.include?(track_name)
-            cursor_bar += section.bars
+          arrangement.each_with_object([]) do |section, result|
+            result << { bars: section.fetch(:bars), start_bar: cursor_bar } if section.fetch(:tracks).include?(track_name)
+            cursor_bar += section.fetch(:bars)
           end
         else
           [{ bars: default_bars, start_bar: 0 }]
@@ -191,6 +266,25 @@ module Wavify
         end
       end
 
+      def arrangement_for_track(track_name)
+        arrangement.filter_map do |section|
+          next unless section.fetch(:tracks).include?(track_name)
+
+          section.merge(tracks: [track_name])
+        end
+      end
+
+      def total_bars(default_bars:)
+        return default_bars unless arrangement?
+
+        arrangement.sum { |section| section.fetch(:bars) }
+      end
+
+      def repeated_section_name(name, repeat_index)
+        return name if repeat_index.zero?
+
+        :"#{name}_#{repeat_index + 1}"
+      end
     end
 
     # :nodoc: all
@@ -406,13 +500,14 @@ module Wavify
         @sections = []
       end
 
-      def section(name, bars:, tracks:)
+      def section(name, bars:, tracks:, repeat: 1)
         raise Wavify::SequencerError, "bars must be a positive Integer" unless bars.is_a?(Integer) && bars.positive?
+        raise Wavify::SequencerError, "repeat must be a positive Integer" unless repeat.is_a?(Integer) && repeat.positive?
 
         names = Array(tracks).map(&:to_sym)
         raise Wavify::SequencerError, "tracks must not be empty" if names.empty?
 
-        @sections << SongDefinition::Section.new(name: name.to_sym, bars: bars, tracks: names)
+        @sections << SongDefinition::Section.new(name: name.to_sym, bars: bars, tracks: names, repeat: repeat)
       end
     end
 
@@ -485,6 +580,7 @@ module Wavify
           format: @format,
           tempo: @tempo,
           beats_per_bar: @beats_per_bar,
+          default_bars: @default_bars,
           tracks: @track_definitions,
           sections: @arrangement_sections
         )

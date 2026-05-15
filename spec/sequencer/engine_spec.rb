@@ -58,6 +58,19 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(timeline.any? { |event| event[:track] == :drums && event[:bar] == 1 }).to be(true)
       expect(timeline.any? { |event| event[:track] == :lead && event[:bar] == 2 }).to be(true)
     end
+
+    it "expands repeated arrangement sections" do
+      lead = Wavify::Sequencer::Track.new(:lead, note_sequence: "C4")
+
+      timeline = engine.build_timeline(
+        tracks: [lead],
+        arrangement: [
+          { name: :riff, bars: 1, tracks: [:lead], repeat: 3 }
+        ]
+      )
+
+      expect(timeline.map { |event| event[:bar] }.uniq).to eq([0, 1, 2])
+    end
   end
 
   describe "#render" do

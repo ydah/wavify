@@ -12,10 +12,13 @@ song = Wavify::DSL.build_definition(format: Wavify::Core::Format::CD_QUALITY, te
   end
 
   arrange do
-    section :intro, bars: 1, tracks: %i[kick]
+    section :intro, bars: 1, tracks: %i[kick], repeat: 2
   end
 end
 
+song.duration
+song.timeline_json
+song.render(stems: true)
 song.render.write("song.wav")
 ```
 

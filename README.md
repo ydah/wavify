@@ -182,6 +182,8 @@ song = Wavify::DSL.build_definition(format: Wavify::Core::Format::CD_QUALITY, te
 end
 
 timeline = song.timeline
+song.timeline_json
+stems = song.render(stems: true)
 mix = song.render
 mix.write("song.wav")
 ```

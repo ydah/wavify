@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
+require "json"
 require "tempfile"
+require "tmpdir"
 
 RSpec.describe Wavify::DSL do
   let(:format) { Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 32, sample_format: :float) }
@@ -104,6 +106,50 @@ RSpec.describe Wavify::DSL do
       expect(timeline).not_to be_empty
       expect(timeline.any? { |event| event[:track] == :lead && event[:bar] == 2 }).to be(true)
       expect(timeline.any? { |event| event[:track] == :drums && event[:kind] == :trigger }).to be(true)
+    end
+
+    it "supports repeated sections, duration, and JSON timeline export" do
+      song = described_class.build_definition(format: format, tempo: 120, default_bars: 1) do
+        track :lead do
+          notes "C4 D4"
+        end
+
+        arrange do
+          section :loop, bars: 1, tracks: [:lead], repeat: 2
+        end
+      end
+
+      expect(song.arrangement.map { |section| section[:name] }).to eq(%i[loop loop_2])
+      expect(song.duration.total_seconds).to be_within(0.0001).of(4.0)
+
+      parsed = JSON.parse(song.timeline_json)
+      expect(parsed).not_to be_empty
+      expect(parsed.any? { |event| event["bar"] == 1 }).to be(true)
+    end
+
+    it "renders and writes track stems" do
+      song = described_class.build_definition(format: format, tempo: 120) do
+        track :lead do
+          notes "C4 E4"
+          gain(-12)
+        end
+
+        track :pad do
+          chords ["Cm7"]
+          gain(-18)
+        end
+      end
+
+      stems = song.render(stems: true)
+      expect(stems.keys).to eq(%i[lead pad])
+      expect(stems.values).to all(be_a(Wavify::Audio))
+      expect(stems.values.map(&:sample_frame_count)).to all(be > 0)
+
+      Dir.mktmpdir("wavify_stems") do |directory|
+        paths = song.write_stems(directory)
+        expect(paths.keys).to eq(%i[lead pad])
+        expect(paths.values).to all(satisfy { |path| File.exist?(path) })
+      end
     end
 
     it "renders sample-trigger tracks from named patterns" do
