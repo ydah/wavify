@@ -5,6 +5,39 @@ require "tempfile"
 require "open3"
 
 RSpec.describe Wavify::Codecs::OggVorbis do
+  it "loads core APIs when optional OGG gems are absent" do
+    script = <<~'RUBY'
+      require "stringio"
+
+      module Kernel
+        alias wavify_original_require require
+
+        def require(path)
+          raise LoadError, "blocked #{path}" if %w[ogg vorbis].include?(path)
+
+          wavify_original_require(path)
+        end
+      end
+
+      require "wavify"
+
+      raise "OGG unexpectedly available" if Wavify::Codecs::OggVorbis.available?
+      raise "OGG listed as available" if Wavify::Codecs.available_formats.include?("ogg")
+      raise "WAV not available" unless Wavify::Codecs.available_formats.include?("wav")
+
+      begin
+        Wavify::Codecs::OggVorbis.metadata(StringIO.new("OggS"))
+        raise "OGG metadata should fail without optional gems"
+      rescue Wavify::UnsupportedFormatError => e
+        raise unless e.message.include?("optional gems")
+      end
+    RUBY
+
+    _stdout, stderr, status = Open3.capture3(RbConfig.ruby, "-Ilib", "-e", script)
+
+    expect(status).to be_success, stderr
+  end
+
   def spec_ogg_crc32(bytes)
     crc = 0
     bytes.each_byte do |byte|
