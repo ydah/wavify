@@ -36,6 +36,13 @@ module Wavify
           (dry * (1.0 - @mix)) + (wet * @mix)
         end
 
+        # @return [Float] maximum modulation delay emitted after input ends
+        def tail_duration
+          return 0.0 if @mix.zero?
+
+          0.03
+        end
+
         private
 
         def prepare_runtime_state(sample_rate:, channels:)

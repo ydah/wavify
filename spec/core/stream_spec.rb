@@ -93,6 +93,70 @@ RSpec.describe Wavify::Core::Stream do
     source&.unlink
   end
 
+  it "exposes pipeline processors in execution order without allowing mutation" do
+    stream = described_class.new("unused", codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
+    processor = ->(chunk) { chunk }
+
+    stream.pipe(processor)
+    snapshot = stream.pipeline
+    snapshot.clear
+
+    expect(stream.pipeline).to eq([processor])
+  end
+
+  it "resets stateful processors before each stream pass" do
+    source = write_source_wav([0.1, 0.2])
+    processor = Class.new do
+      attr_reader :reset_count
+
+      def initialize
+        @reset_count = 0
+      end
+
+      def reset
+        @reset_count += 1
+      end
+
+      def process(chunk)
+        chunk
+      end
+    end.new
+
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 1)
+    stream.pipe(processor)
+
+    2.times { stream.each_chunk.to_a }
+
+    expect(processor.reset_count).to eq(2)
+  ensure
+    source&.unlink
+  end
+
+  it "flushes tail chunks through downstream processors after input ends" do
+    source = write_source_wav([0.25])
+    tailing = Class.new do
+      def process(chunk)
+        chunk
+      end
+
+      def flush(format:)
+        Wavify::Core::SampleBuffer.new([0.5], format)
+      end
+    end.new
+    downstream = lambda do |chunk|
+      Wavify::Core::SampleBuffer.new(chunk.samples.map { |sample| sample * 2.0 }, chunk.format)
+    end
+
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 1)
+    stream.pipe(tailing).pipe(downstream)
+
+    samples = stream.each_chunk.flat_map(&:samples)
+
+    expect(samples).to eq([0.5, 1.0])
+  ensure
+    source&.unlink
+  end
+
   it "rejects invalid processors" do
     stream = described_class.new("unused", codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
 

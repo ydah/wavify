@@ -32,6 +32,15 @@ RSpec.describe Wavify::DSP::Effects do
       expect(first_out.samples).to eq([0.0, 0.0])
       expect(second_out.samples.first).to be_within(0.0001).of(1.0)
     end
+
+    it "flushes delayed tail after input ends" do
+      effect = described_class.new(time: 2.0 / 44_100, feedback: 0.0, mix: 1.0)
+      effect.process(Wavify::Core::SampleBuffer.new([1.0], mono_float))
+
+      tail = effect.flush(format: mono_float)
+
+      expect(tail.samples.first(2)).to eq([0.0, 1.0])
+    end
   end
 
   describe Wavify::DSP::Effects::Reverb do
@@ -42,6 +51,11 @@ RSpec.describe Wavify::DSP::Effects do
       tail = processed.samples[1_000..]
       expect(tail.any? { |sample| sample.abs > 0.0001 }).to be(true)
       expect(processed.samples.length).to eq(5_000)
+    end
+
+    it "reports a positive tail duration when wet signal is enabled" do
+      expect(described_class.new(room_size: 0.5, mix: 0.3).tail_duration).to be > 0.0
+      expect(described_class.new(room_size: 0.5, mix: 0.0).tail_duration).to eq(0.0)
     end
   end
 
@@ -54,6 +68,11 @@ RSpec.describe Wavify::DSP::Effects do
       expect(processed.samples.length).to eq(source.samples.length)
       differences = source.samples.zip(processed.samples).map { |left, right| (left - right).abs }
       expect(differences.max).to be > 0.0001
+    end
+
+    it "reports a short modulation tail" do
+      expect(described_class.new(mix: 0.5).tail_duration).to eq(0.03)
+      expect(described_class.new(mix: 0.0).tail_duration).to eq(0.0)
     end
   end
 

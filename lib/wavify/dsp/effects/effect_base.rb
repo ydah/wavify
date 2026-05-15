@@ -33,6 +33,32 @@ module Wavify
           Core::SampleBuffer.new(output, float_format).convert(buffer.format)
         end
 
+        # Emits effect tail after input has ended.
+        #
+        # @param format [Wavify::Core::Format, nil] output format for tail chunks
+        # @return [Wavify::Core::SampleBuffer, nil]
+        def flush(format: nil)
+          return nil unless runtime_prepared?
+
+          frames = tail_frame_count
+          return nil if frames.zero?
+
+          target_format = format || Core::Format.new(
+            channels: @runtime_channels,
+            sample_rate: @runtime_sample_rate,
+            bit_depth: 32,
+            sample_format: :float
+          )
+          float_format = target_format.with(sample_format: :float, bit_depth: 32)
+          silence = Core::SampleBuffer.new(Array.new(frames * @runtime_channels, 0.0), float_format)
+          process(silence).convert(target_format)
+        end
+
+        # @return [Float] tail duration in seconds emitted by {#flush}
+        def tail_duration
+          0.0
+        end
+
         def process_sample(_sample, channel:, sample_rate:)
           raise NotImplementedError
         end
@@ -48,6 +74,16 @@ module Wavify
         end
 
         private
+
+        def runtime_prepared?
+          @runtime_sample_rate && @runtime_channels
+        end
+
+        def tail_frame_count
+          return 0 unless tail_duration.positive?
+
+          (@runtime_sample_rate * tail_duration).ceil
+        end
 
         def prepare_runtime_if_needed!(sample_rate:, channels:)
           return if @runtime_sample_rate == sample_rate && @runtime_channels == channels

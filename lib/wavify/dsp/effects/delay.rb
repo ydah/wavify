@@ -33,6 +33,15 @@ module Wavify
           output
         end
 
+        # @return [Float] estimated feedback tail duration in seconds
+        def tail_duration
+          return 0.0 if @mix.zero?
+          return @time if @feedback.zero?
+
+          repeats = (Math.log(0.001) / Math.log(@feedback)).ceil
+          @time * [[repeats, 1].max, 32].min
+        end
+
         private
 
         def prepare_runtime_state(sample_rate:, channels:)

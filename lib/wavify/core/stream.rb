@@ -26,7 +26,8 @@ module Wavify
 
       # Adds a processor to the stream pipeline.
       #
-      # Processors may respond to `#call`, `#process`, or `#apply`.
+      # Processors may respond to `#process`, `#call`, or `#apply`.
+      # Stateful processors may also expose `#reset` and `#flush`.
       #
       # @param processor [#call, #process, #apply, nil]
       # @return [Stream] self
@@ -40,6 +41,11 @@ module Wavify
         self
       end
 
+      # @return [Array<Object>] registered processors in execution order
+      def pipeline
+        @pipeline.dup
+      end
+
       # Iterates processed chunks.
       #
       # @yield [chunk]
@@ -48,9 +54,19 @@ module Wavify
       def each_chunk
         return enum_for(:each_chunk) unless block_given?
 
+        reset_pipeline!
+        @last_output_format = nil
+
         @codec.stream_read(@source, chunk_size: @chunk_size, **@codec_read_options) do |chunk|
           @format ||= chunk.format
-          yield apply_pipeline(chunk)
+          output_chunk = apply_pipeline(chunk)
+          @last_output_format = output_chunk.format
+          yield output_chunk
+        end
+
+        flush_pipeline do |chunk|
+          @last_output_format = chunk.format
+          yield chunk
         end
       end
 
@@ -79,23 +95,75 @@ module Wavify
 
       private
 
-      def apply_pipeline(chunk)
-        @pipeline.reduce(chunk) do |current, processor|
-          result = if processor.respond_to?(:call)
-                     processor.call(current)
-                   elsif processor.respond_to?(:process)
-                     processor.process(current)
-                   else
-                     processor.apply(current)
-                   end
+      def apply_pipeline(chunk, start_index: 0)
+        @pipeline.drop(start_index).reduce(chunk) do |current, processor|
+          coerce_processor_result(invoke_processor(processor, current), "stream processor")
+        end
+      end
 
-          if result.is_a?(Audio)
-            result.buffer
-          elsif result.is_a?(SampleBuffer)
-            result
-          else
-            raise ProcessingError, "stream processor must return Core::SampleBuffer or Audio"
+      def invoke_processor(processor, chunk)
+        if processor.respond_to?(:process)
+          processor.process(chunk)
+        elsif processor.respond_to?(:call)
+          processor.call(chunk)
+        else
+          processor.apply(chunk)
+        end
+      end
+
+      def reset_pipeline!
+        @pipeline.each { |processor| processor.reset if processor.respond_to?(:reset) }
+      end
+
+      def flush_pipeline
+        @pipeline.each_with_index do |processor, index|
+          flush_processor(processor).each do |chunk|
+            yield apply_pipeline(chunk, start_index: index + 1)
           end
+        end
+      end
+
+      def flush_processor(processor)
+        return [] unless processor.respond_to?(:flush)
+
+        result = if flush_accepts_format?(processor) && flush_format
+                   processor.flush(format: flush_format)
+                 else
+                   processor.flush
+                 end
+        normalize_processor_results(result, "stream processor flush")
+      end
+
+      def flush_accepts_format?(processor)
+        processor.method(:flush).parameters.any? do |kind, name|
+          (%i[key keyreq].include?(kind) && name == :format) || kind == :keyrest
+        end
+      end
+
+      def flush_format
+        @last_output_format || @format
+      end
+
+      def normalize_processor_results(result, context)
+        return [] if result.nil?
+
+        return result.map { |item| coerce_processor_result(item, context) } if result.is_a?(Array)
+        return [coerce_processor_result(result, context)] if result.is_a?(Audio) || result.is_a?(SampleBuffer)
+
+        if result.respond_to?(:each)
+          return result.map { |item| coerce_processor_result(item, context) }
+        end
+
+        raise ProcessingError, "#{context} must return Core::SampleBuffer, Audio, an Enumerable of them, or nil"
+      end
+
+      def coerce_processor_result(result, context)
+        if result.is_a?(Audio)
+          result.buffer
+        elsif result.is_a?(SampleBuffer)
+          result
+        else
+          raise ProcessingError, "#{context} must return Core::SampleBuffer or Audio"
         end
       end
 

@@ -40,6 +40,13 @@ module Wavify
           (dry * (1.0 - @mix)) + (wet * @mix)
         end
 
+        # @return [Float] estimated reverb tail duration in seconds
+        def tail_duration
+          return 0.0 if @mix.zero?
+
+          0.25 + (@room_size * 2.5)
+        end
+
         private
 
         def prepare_runtime_state(sample_rate:, channels:)
