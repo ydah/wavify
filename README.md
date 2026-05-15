@@ -219,7 +219,7 @@ Wavify::Effects.register(:my_effect, MyEffect)
 Wavify::DSL.effect(:my_effect, MyEffect)
 ```
 
-`Envelope` supports `hold:` and `curve: :linear | :exp | :log`. `Reverb` supports `pre_delay:` for delaying only the wet path.
+`Envelope` supports `hold:` and `curve: :linear | :exp | :log`. `Reverb` supports `pre_delay:` for delaying only the wet path and `width:` for stereo wet width.
 
 ## Examples
 

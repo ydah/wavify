@@ -8,13 +8,45 @@ module Wavify
         COMB_TAPS_44K = [1116, 1188, 1277, 1356].freeze # :nodoc:
         ALLPASS_TAPS_44K = [556, 441].freeze # :nodoc:
 
-        def initialize(room_size: 0.5, damping: 0.5, mix: 0.3, pre_delay: 0.0)
+        def initialize(room_size: 0.5, damping: 0.5, mix: 0.3, pre_delay: 0.0, width: 1.0)
           super()
           @room_size = validate_unit!(room_size, :room_size)
           @damping = validate_unit!(damping, :damping)
           @mix = validate_unit!(mix, :mix)
           @pre_delay = validate_time!(pre_delay, :pre_delay)
+          @width = validate_width!(width)
           reset
+        end
+
+        # Processes a sample buffer.
+        #
+        # Stereo buffers apply `width:` to the wet signal before mixing it with
+        # the dry input. Mono and multichannel buffers keep per-channel wet paths.
+        #
+        # @param buffer [Wavify::Core::SampleBuffer]
+        # @return [Wavify::Core::SampleBuffer]
+        def process(buffer)
+          raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
+
+          float_format = buffer.format.with(sample_format: :float, bit_depth: 32)
+          float_buffer = buffer.convert(float_format)
+          channels = float_buffer.format.channels
+          prepare_runtime_if_needed!(sample_rate: float_format.sample_rate, channels: channels)
+
+          output = Array.new(float_buffer.samples.length)
+          float_buffer.samples.each_slice(channels).with_index do |frame, frame_index|
+            wet_frame = frame.each_with_index.map do |sample, channel|
+              wet_sample_for(@channels_state.fetch(channel), sample.to_f)
+            end
+            wet_frame = apply_stereo_width(wet_frame) if channels == 2
+
+            base = frame_index * channels
+            frame.each_with_index do |dry, channel|
+              output[base + channel] = mix_dry_wet(dry.to_f, wet_frame.fetch(channel))
+            end
+          end
+
+          Core::SampleBuffer.new(output, float_format).convert(buffer.format)
         end
 
         # Processes a single sample for one channel.
@@ -26,19 +58,7 @@ module Wavify
         def process_sample(sample, channel:, sample_rate:)
           dry = sample.to_f
           channel_state = @channels_state.fetch(channel)
-
-          comb_input = pre_delay_sample(channel_state, dry) * @input_gain
-          comb_sum = 0.0
-          channel_state[:combs].each do |comb|
-            comb_sum += process_comb(comb, comb_input)
-          end
-
-          wet = comb_sum / channel_state[:combs].length
-          channel_state[:allpasses].each do |allpass|
-            wet = process_allpass(allpass, wet)
-          end
-
-          (dry * (1.0 - @mix)) + (wet * @mix)
+          mix_dry_wet(dry, wet_sample_for(channel_state, dry))
         end
 
         # @return [Float] estimated reverb tail duration in seconds
@@ -101,6 +121,31 @@ module Wavify
           delayed
         end
 
+        def wet_sample_for(channel_state, dry)
+          comb_input = pre_delay_sample(channel_state, dry) * @input_gain
+          comb_sum = 0.0
+          channel_state[:combs].each do |comb|
+            comb_sum += process_comb(comb, comb_input)
+          end
+
+          wet = comb_sum / channel_state[:combs].length
+          channel_state[:allpasses].each do |allpass|
+            wet = process_allpass(allpass, wet)
+          end
+          wet
+        end
+
+        def apply_stereo_width(wet_frame)
+          left, right = wet_frame
+          mid = (left + right) * 0.5
+          side = ((left - right) * 0.5) * @width
+          [mid + side, mid - side]
+        end
+
+        def mix_dry_wet(dry, wet)
+          ((dry * (1.0 - @mix)) + (wet * @mix)).clamp(-1.0, 1.0)
+        end
+
         def process_comb(comb, input_sample)
           buffer = comb[:buffer]
           index = comb[:index]
@@ -135,6 +180,14 @@ module Wavify
         def validate_time!(value, name)
           unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite? && value >= 0.0
             raise InvalidParameterError, "#{name} must be a non-negative finite Numeric"
+          end
+
+          value.to_f
+        end
+
+        def validate_width!(value)
+          unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite? && value.between?(0.0, 2.0)
+            raise InvalidParameterError, "width must be a finite Numeric in 0.0..2.0"
           end
 
           value.to_f

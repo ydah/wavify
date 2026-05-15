@@ -87,6 +87,18 @@ RSpec.describe Wavify::DSP::Effects do
       expect(delayed_first - dry_first).to eq(10)
       expect(delayed.tail_duration).to be > dry.tail_duration
     end
+
+    it "adjusts wet stereo width" do
+      source = impulse_buffer(length: 3_000, format: stereo_float)
+      normal = described_class.new(room_size: 0.2, damping: 0.0, mix: 1.0, width: 1.0).process(source)
+      narrowed = described_class.new(room_size: 0.2, damping: 0.0, mix: 1.0, width: 0.0).process(source)
+
+      normal_frame = normal.samples.each_slice(2).find { |left, right| left.abs > 0.0001 || right.abs > 0.0001 }
+      narrowed_frame = narrowed.samples.each_slice(2).find { |left, right| left.abs > 0.0001 || right.abs > 0.0001 }
+
+      expect((normal_frame.fetch(0) - normal_frame.fetch(1)).abs).to be > 0.0001
+      expect(narrowed_frame.fetch(0)).to be_within(0.0001).of(narrowed_frame.fetch(1))
+    end
   end
 
   describe Wavify::DSP::Effects::Chorus do
