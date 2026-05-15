@@ -763,6 +763,27 @@ RSpec.describe Wavify::Codecs::OggVorbis do
       expect(metadata[:vendor]).not_to be_nil
     end
 
+    it "accepts a codec-specific quality option" do
+      io = StringIO.new
+      format = Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
+      chunk = Wavify::Core::SampleBuffer.new([0.0] * (2 * 256), format)
+
+      described_class.stream_write(io, format: format, quality: 0.1) do |writer|
+        writer.call(chunk)
+      end
+
+      metadata = described_class.metadata(StringIO.new(io.string))
+      expect(metadata[:sample_frame_count]).to eq(256)
+    end
+
+    it "rejects invalid codec-specific quality" do
+      format = Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
+
+      expect do
+        described_class.stream_write(StringIO.new, format: format, quality: 2.0) { |_writer| }
+      end.to raise_error(Wavify::InvalidParameterError, /quality/)
+    end
+
     it "encodes silent audio chunks with exact duration and near-zero signal" do
       io = StringIO.new
       format = Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 32, sample_format: :float)

@@ -631,6 +631,20 @@ RSpec.describe Wavify::Codecs::Flac do
       expect(subframe_type).to eq(10) # fixed predictor order 2
       expect(described_class.read(io).samples).to eq(samples)
     end
+
+    it "accepts a codec-specific block size option" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      samples = [0, 100, 200, 300, 400, 500]
+      buffer = Wavify::Core::SampleBuffer.new(samples, format)
+      io = StringIO.new(+"")
+
+      described_class.write(io, buffer, format: format, block_size: 3)
+
+      metadata = described_class.metadata(io)
+      expect(metadata[:min_block_size]).to eq(3)
+      expect(metadata[:max_block_size]).to eq(3)
+      expect(described_class.read(io).samples).to eq(samples)
+    end
   end
 
   describe ".stream_write" do

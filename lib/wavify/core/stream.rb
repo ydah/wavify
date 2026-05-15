@@ -60,12 +60,14 @@ module Wavify
       #
       # @param path_or_io [String, IO]
       # @param format [Format, nil] output format (required for raw output if unknown)
+      # @param codec_options [Hash] codec-specific options forwarded to `stream_write`
       # @return [String, IO] the same target argument
-      def write_to(path_or_io, format: nil)
+      def write_to(path_or_io, format: nil, codec_options: nil)
         output_codec = detect_output_codec(path_or_io)
         target_format = resolve_target_format(format, output_codec)
+        options = validate_codec_options!(codec_options, "codec_options")
 
-        output_codec.stream_write(path_or_io, format: target_format) do |writer|
+        output_codec.stream_write(path_or_io, format: target_format, **options) do |writer|
           each_chunk do |chunk|
             output_chunk = target_format ? chunk.convert(target_format) : chunk
             writer.call(output_chunk)
@@ -119,10 +121,19 @@ module Wavify
       end
 
       def validate_codec_read_options!(codec_read_options)
-        return {} if codec_read_options.nil?
-        raise InvalidParameterError, "codec_read_options must be a Hash" unless codec_read_options.is_a?(Hash)
+        validate_codec_options!(codec_read_options, "codec_read_options")
+      end
 
-        codec_read_options.dup
+      def validate_codec_options!(codec_options, name)
+        return {} if codec_options.nil?
+        raise InvalidParameterError, "#{name} must be a Hash" unless codec_options.is_a?(Hash)
+
+        invalid_keys = codec_options.keys.reject { |key| key.is_a?(Symbol) }
+        unless invalid_keys.empty?
+          raise InvalidParameterError, "#{name} keys must be Symbols: #{invalid_keys.map(&:inspect).join(', ')}"
+        end
+
+        codec_options.dup
       end
     end
   end

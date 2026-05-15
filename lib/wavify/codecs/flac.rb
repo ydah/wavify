@@ -205,17 +205,20 @@ module Wavify
         # @param io_or_path [String, IO]
         # @param sample_buffer [Wavify::Core::SampleBuffer]
         # @param format [Wavify::Core::Format]
+        # @param block_size [Integer]
         # @return [String, IO]
-        def write(io_or_path, sample_buffer, format:)
+        def write(io_or_path, sample_buffer, format:, block_size: DEFAULT_ENCODE_BLOCK_SIZE, **codec_options)
+          validate_no_codec_options!(codec_options, operation: "FLAC write")
           raise InvalidParameterError, "sample_buffer must be Core::SampleBuffer" unless sample_buffer.is_a?(Core::SampleBuffer)
 
           target_format = validate_encode_format!(format)
           buffer = sample_buffer.format == target_format ? sample_buffer : sample_buffer.convert(target_format)
+          target_block_size = normalize_encode_block_size(block_size)
 
           io, close_io = open_output(io_or_path)
           io.rewind if io.respond_to?(:rewind)
           io.truncate(0) if io.respond_to?(:truncate)
-          io.write(encode_verbatim_stream(buffer, target_format))
+          io.write(encode_verbatim_stream(buffer, target_format, block_size: target_block_size))
           io.flush if io.respond_to?(:flush)
           io.rewind if io.respond_to?(:rewind)
           io_or_path
@@ -260,7 +263,9 @@ module Wavify
         # @param block_size [Integer]
         # @param block_size_strategy [Symbol] `:per_chunk`, `:fixed`, or `:source_chunk`
         # @return [Enumerator, String, IO]
-        def stream_write(io_or_path, format:, block_size: DEFAULT_ENCODE_BLOCK_SIZE, block_size_strategy: :per_chunk)
+        def stream_write(io_or_path, format:, block_size: DEFAULT_ENCODE_BLOCK_SIZE, block_size_strategy: :per_chunk,
+                         **codec_options)
+          validate_no_codec_options!(codec_options, operation: "FLAC stream_write")
           unless block_given?
             return enum_for(
               __method__,
@@ -423,12 +428,12 @@ module Wavify
           }
         end
 
-        def encode_verbatim_stream(buffer, format)
+        def encode_verbatim_stream(buffer, format, block_size: DEFAULT_ENCODE_BLOCK_SIZE)
           encoded_frames = encode_verbatim_frames(
             buffer.samples,
             format,
             start_frame_number: 0,
-            block_size: DEFAULT_ENCODE_BLOCK_SIZE
+            block_size: block_size
           )
           md5_hex = pcm_md5_hex(buffer.samples, format)
 

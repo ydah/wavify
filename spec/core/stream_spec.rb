@@ -164,4 +164,32 @@ RSpec.describe Wavify::Core::Stream do
     expect(sink.length).to eq(1)
     expect(sink.first).to be_a(Wavify::Core::SampleBuffer)
   end
+
+  it "passes codec-specific write options to the output codec" do
+    chunk = Wavify::Core::SampleBuffer.new([0.1, 0.2], format)
+    fake_codec = Class.new do
+      class << self
+        attr_accessor :captured_options, :chunk
+
+        def stream_read(_source, chunk_size:)
+          raise "unexpected chunk_size" unless chunk_size == 2
+
+          yield chunk
+        end
+
+        def stream_write(io, format:, **options)
+          self.captured_options = options
+          yield(->(written_chunk) { io << [format, written_chunk] })
+        end
+      end
+    end
+    fake_codec.chunk = chunk
+    sink = []
+    stream = described_class.new(:source, codec: fake_codec, format: format, chunk_size: 2)
+
+    stream.write_to(sink, codec_options: { block_size: 2, block_size_strategy: :fixed })
+
+    expect(fake_codec.captured_options).to eq(block_size: 2, block_size_strategy: :fixed)
+    expect(sink.length).to eq(1)
+  end
 end

@@ -57,7 +57,8 @@ module Wavify
         # @param sample_buffer [Wavify::Core::SampleBuffer]
         # @param format [Wavify::Core::Format, nil]
         # @return [String, IO]
-        def write(io_or_path, sample_buffer, format: nil)
+        def write(io_or_path, sample_buffer, format: nil, **codec_options)
+          validate_no_codec_options!(codec_options, operation: "WAV write")
           raise InvalidParameterError, "sample_buffer must be Core::SampleBuffer" unless sample_buffer.is_a?(Core::SampleBuffer)
 
           target_format = format || sample_buffer.format
@@ -103,7 +104,8 @@ module Wavify
         # @param io_or_path [String, IO]
         # @param format [Wavify::Core::Format]
         # @return [Enumerator, String, IO]
-        def stream_write(io_or_path, format:)
+        def stream_write(io_or_path, format:, **codec_options)
+          validate_no_codec_options!(codec_options, operation: "WAV stream_write")
           return enum_for(__method__, io_or_path, format: format) unless block_given?
           raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
 

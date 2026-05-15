@@ -24,6 +24,7 @@ module Wavify
       SETUP_HEADER_TYPE = 0x05 # :nodoc:
       GRANULE_POSITION_UNKNOWN = 0xFFFF_FFFF_FFFF_FFFF # :nodoc:
       VORBIS_ENCODE_DEFAULT_QUALITY = 0.4 # :nodoc:
+      VORBIS_ENCODE_QUALITY_RANGE = (-0.1..1.0) # :nodoc:
 
       class << self
         # @param io_or_path [String, IO]
@@ -61,10 +62,11 @@ module Wavify
         end
 
         # Writes OGG Vorbis audio.
-        def write(io_or_path, sample_buffer, format:)
+        def write(io_or_path, sample_buffer, format:, quality: VORBIS_ENCODE_DEFAULT_QUALITY, **codec_options)
+          validate_no_codec_options!(codec_options, operation: "OGG Vorbis write")
           raise InvalidParameterError, "sample_buffer must be Core::SampleBuffer" unless sample_buffer.is_a?(Core::SampleBuffer)
 
-          stream_write(io_or_path, format: format) do |writer|
+          stream_write(io_or_path, format: format, quality: quality) do |writer|
             writer.call(sample_buffer)
           end
         end
@@ -92,8 +94,10 @@ module Wavify
         #
         # @note Encodes using libvorbis at the default VBR quality level.
         #   Accepts any channel count and sample rate supported by libvorbis.
-        def stream_write(io_or_path, format:)
-          return enum_for(__method__, io_or_path, format: format) unless block_given?
+        def stream_write(io_or_path, format:, quality: VORBIS_ENCODE_DEFAULT_QUALITY, **codec_options)
+          validate_no_codec_options!(codec_options, operation: "OGG Vorbis stream_write")
+          encode_quality = normalize_vorbis_quality(quality)
+          return enum_for(__method__, io_or_path, format: format, quality: encode_quality) unless block_given?
           raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
           raise InvalidParameterError, "Vorbis encode requires positive channel count" unless format.channels.to_i.positive?
           raise InvalidParameterError, "Vorbis encode requires positive sample_rate" unless format.sample_rate.to_i.positive?
@@ -112,7 +116,7 @@ module Wavify
           encoder = Vorbis::Encoder.new(
             channels: target_format.channels,
             rate: target_format.sample_rate,
-            quality: VORBIS_ENCODE_DEFAULT_QUALITY
+            quality: encode_quality
           )
 
           encoder.write_headers { |page_bytes| io.write(page_bytes) }
@@ -174,6 +178,14 @@ module Wavify
         end
 
         private
+
+        def normalize_vorbis_quality(quality)
+          unless quality.is_a?(Numeric) && VORBIS_ENCODE_QUALITY_RANGE.cover?(quality.to_f)
+            raise InvalidParameterError, "quality must be Numeric in -0.1..1.0"
+          end
+
+          quality.to_f
+        end
 
         # ---------------------------------------------------------------------------
         # OGG container reading (using ogg-ruby)

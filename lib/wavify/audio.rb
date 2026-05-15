@@ -8,6 +8,9 @@ module Wavify
   class Audio
     attr_reader :buffer
 
+    MIX_STRATEGIES = %i[clip normalize headroom soft_limit].freeze
+    SOFT_LIMIT_THRESHOLD = 0.8
+
     # Reads audio from a file path using codec auto-detection.
     #
     # @param path [String]
@@ -16,20 +19,21 @@ module Wavify
     # @return [Audio]
     def self.read(path, format: nil, codec_options: nil)
       codec = Codecs::Registry.detect(path)
-      options = codec_options || {}
-      raise InvalidParameterError, "codec_options must be a Hash" unless options.is_a?(Hash)
+      options = normalize_codec_options!(codec_options)
 
       new(codec.read(path, format: format, **options))
     end
 
-    # Mixes multiple audio objects and clips summed samples into range.
+    # Mixes multiple audio objects using a selectable clipping policy.
     #
     # @param audios [Array<Audio>]
+    # @param strategy [Symbol] `:clip`, `:normalize`, `:headroom`, or `:soft_limit`
     # @return [Audio]
-    def self.mix(*audios)
+    def self.mix(*audios, strategy: :clip)
       raise InvalidParameterError, "at least one Audio is required" if audios.empty?
       raise InvalidParameterError, "all arguments must be Audio instances" unless audios.all? { |audio| audio.is_a?(self) }
 
+      mix_strategy = normalize_mix_strategy!(strategy)
       sample_rates = audios.map { |audio| audio.format.sample_rate }.uniq
       raise InvalidParameterError, "all audios must have the same sample_rate to mix" if sample_rates.length > 1
 
@@ -46,7 +50,7 @@ module Wavify
         end
       end
 
-      mixed.map! { |sample| clip_value(sample, -1.0, 1.0) }
+      apply_mix_strategy!(mixed, mix_strategy, audios.length)
       new(Core::SampleBuffer.new(mixed, work_format).convert(target_format))
     end
 
@@ -60,8 +64,7 @@ module Wavify
     def self.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: nil)
       codec = Codecs::Registry.detect(path_or_io)
       source_format = format || codec.metadata(path_or_io)[:format]
-      options = codec_options || {}
-      raise InvalidParameterError, "codec_options must be a Hash" unless options.is_a?(Hash)
+      options = normalize_codec_options!(codec_options)
 
       stream = Core::Stream.new(
         path_or_io,
@@ -119,10 +122,12 @@ module Wavify
     #
     # @param path [String]
     # @param format [Core::Format, nil] optional output format
+    # @param codec_options [Hash] codec-specific options forwarded to `.write`
     # @return [Audio] self
-    def write(path, format: nil)
+    def write(path, format: nil, codec_options: nil)
       codec = Codecs::Registry.detect(path)
-      codec.write(path, @buffer, format: format || @buffer.format)
+      options = normalize_codec_options!(codec_options)
+      codec.write(path, @buffer, format: format || @buffer.format, **options)
       self
     end
 
@@ -395,6 +400,23 @@ module Wavify
 
     private
 
+    def self.normalize_codec_options!(codec_options)
+      return {} if codec_options.nil?
+      raise InvalidParameterError, "codec_options must be a Hash" unless codec_options.is_a?(Hash)
+
+      invalid_keys = codec_options.keys.reject { |key| key.is_a?(Symbol) }
+      unless invalid_keys.empty?
+        raise InvalidParameterError, "codec_options keys must be Symbols: #{invalid_keys.map(&:inspect).join(', ')}"
+      end
+
+      codec_options.dup
+    end
+    private_class_method :normalize_codec_options!
+
+    def normalize_codec_options!(codec_options)
+      self.class.send(:normalize_codec_options!, codec_options)
+    end
+
     def apply_fade(seconds:, mode:)
       raise InvalidParameterError, "seconds must be a non-negative Numeric" unless seconds.is_a?(Numeric) && seconds >= 0
 
@@ -479,5 +501,48 @@ module Wavify
       value
     end
     private_class_method :clip_value
+
+    def self.normalize_mix_strategy!(strategy)
+      normalized = strategy.to_sym if strategy.respond_to?(:to_sym)
+      return normalized if MIX_STRATEGIES.include?(normalized)
+
+      raise InvalidParameterError, "strategy must be one of: #{MIX_STRATEGIES.join(', ')}"
+    end
+    private_class_method :normalize_mix_strategy!
+
+    def self.apply_mix_strategy!(samples, strategy, source_count)
+      case strategy
+      when :clip
+        samples.map! { |sample| clip_value(sample, -1.0, 1.0) }
+      when :normalize
+        normalize_mix_samples!(samples)
+      when :headroom
+        divisor = [source_count, 1].max.to_f
+        samples.map! { |sample| clip_value(sample / divisor, -1.0, 1.0) }
+      when :soft_limit
+        samples.map! { |sample| soft_limit_value(sample) }
+      end
+    end
+    private_class_method :apply_mix_strategy!
+
+    def self.normalize_mix_samples!(samples)
+      peak = samples.map(&:abs).max || 0.0
+      return samples if peak <= 1.0
+
+      samples.map! { |sample| sample / peak }
+    end
+    private_class_method :normalize_mix_samples!
+
+    def self.soft_limit_value(sample)
+      value = sample.to_f
+      magnitude = value.abs
+      return value if magnitude <= SOFT_LIMIT_THRESHOLD
+
+      range = 1.0 - SOFT_LIMIT_THRESHOLD
+      sign = value.negative? ? -1.0 : 1.0
+      limited = SOFT_LIMIT_THRESHOLD + (range * (1.0 - Math.exp(-(magnitude - SOFT_LIMIT_THRESHOLD) / range)))
+      sign * clip_value(limited, 0.0, 1.0)
+    end
+    private_class_method :soft_limit_value
   end
 end

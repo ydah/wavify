@@ -45,6 +45,13 @@ audio = Wavify::Audio.tone(
 audio.fade_in(0.02).fade_out(0.05).write("tone.wav")
 ```
 
+Codec-specific write options are forwarded with `codec_options:`:
+
+```ruby
+audio.write("master.flac", codec_options: { block_size: 2048 })
+audio.write("preview.ogg", codec_options: { quality: 0.5 })
+```
+
 ## Core API
 
 ### `Wavify::Audio`
@@ -55,7 +62,7 @@ Main constructors:
 - `Audio.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: {})`
 - `Audio.tone(frequency:, duration:, waveform:, format:)`
 - `Audio.silence(duration_seconds, format:)`
-- `Audio.mix(*audios)`
+- `Audio.mix(*audios, strategy: :clip)`
 
 Immutable transforms (each also has `!` in-place variants):
 
@@ -64,6 +71,8 @@ Immutable transforms (each also has `!` in-place variants):
 Utility methods:
 
 - `convert`, `split(at:)`, `peak_amplitude`, `rms_amplitude`, `duration`, `sample_frame_count`
+
+Mix strategies are `:clip` (default), `:normalize`, `:headroom`, and `:soft_limit`.
 
 ### Streaming pipeline
 
@@ -75,6 +84,12 @@ Wavify::Audio.stream("input.wav", chunk_size: 4096)
 ```
 
 `pipe` accepts processors that respond to `call`, `process`, or `apply`.
+
+`write_to` also accepts codec-specific output options:
+
+```ruby
+stream.write_to("output.flac", codec_options: { block_size_strategy: :fixed, block_size: 2048 })
+```
 
 ## Format Support
 

@@ -40,6 +40,22 @@ RSpec.describe Wavify::Audio do
       expect(audio.sample_frame_count).to be > 0
       expect(audio.buffer.samples.any? { |sample| sample != 0.0 }).to eq(true)
     end
+
+    it "passes codec-specific write options through registry" do
+      source_buffer = Wavify::Core::SampleBuffer.new([100, -100, 200, -200, 300, -300, 400, -400], format)
+      source_audio = described_class.new(source_buffer)
+
+      Tempfile.create(["wavify_audio", ".flac"]) do |file|
+        source_audio.write(file.path, codec_options: { block_size: 2 })
+
+        metadata = Wavify::Codecs::Flac.metadata(file.path)
+        loaded = described_class.read(file.path)
+
+        expect(metadata[:min_block_size]).to eq(2)
+        expect(metadata[:max_block_size]).to eq(2)
+        expect(loaded.buffer.samples).to eq(source_buffer.samples)
+      end
+    end
   end
 
   describe ".stream" do
@@ -80,6 +96,43 @@ RSpec.describe Wavify::Audio do
       expect(mixed.sample_frame_count).to eq(2)
       expect(mixed.buffer.samples[0]).to be_within(0.0001).of(1.0)
       expect(mixed.buffer.samples[2]).to be_within(0.0001).of(-0.4)
+    end
+
+    it "can normalize instead of clipping when mixing" do
+      a = described_class.new(Wavify::Core::SampleBuffer.new([0.75, -0.75], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
+      b = described_class.new(Wavify::Core::SampleBuffer.new([0.75, 0.0], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
+
+      mixed = described_class.mix(a, b, strategy: :normalize)
+
+      expect(mixed.buffer.samples[0]).to be_within(0.0001).of(1.0)
+      expect(mixed.buffer.samples[1]).to be_within(0.0001).of(-0.5)
+    end
+
+    it "can apply headroom when mixing" do
+      a = described_class.new(Wavify::Core::SampleBuffer.new([0.75], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
+      b = described_class.new(Wavify::Core::SampleBuffer.new([0.75], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
+
+      mixed = described_class.mix(a, b, strategy: :headroom)
+
+      expect(mixed.buffer.samples[0]).to be_within(0.0001).of(0.75)
+    end
+
+    it "can soft-limit mix peaks" do
+      a = described_class.new(Wavify::Core::SampleBuffer.new([0.9], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
+      b = described_class.new(Wavify::Core::SampleBuffer.new([0.9], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
+
+      mixed = described_class.mix(a, b, strategy: :soft_limit)
+
+      expect(mixed.buffer.samples[0]).to be > 0.9
+      expect(mixed.buffer.samples[0]).to be <= 1.0
+    end
+
+    it "rejects unsupported mix strategies" do
+      audio = described_class.new(Wavify::Core::SampleBuffer.new([0.1], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
+
+      expect do
+        described_class.mix(audio, strategy: :unknown)
+      end.to raise_error(Wavify::InvalidParameterError, /strategy/)
     end
 
     it "raises when sample rates differ" do

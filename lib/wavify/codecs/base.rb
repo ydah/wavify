@@ -31,7 +31,7 @@ module Wavify
         # @param _sample_buffer [Wavify::Core::SampleBuffer]
         # @param format [Wavify::Core::Format]
         # @return [String, IO]
-        def write(_io_or_path, _sample_buffer, format:)
+        def write(_io_or_path, _sample_buffer, format:, **_codec_options)
           raise NotImplementedError
         end
 
@@ -49,7 +49,7 @@ module Wavify
         # @param _io_or_path [String, IO]
         # @param format [Wavify::Core::Format]
         # @return [Enumerator, String, IO]
-        def stream_write(_io_or_path, format:)
+        def stream_write(_io_or_path, format:, **_codec_options)
           raise NotImplementedError
         end
 
@@ -101,6 +101,13 @@ module Wavify
           return if io.respond_to?(:seek) && io.respond_to?(:pos)
 
           raise StreamError, "codec requires seekable IO"
+        end
+
+        def validate_no_codec_options!(codec_options, operation:)
+          return if codec_options.empty?
+
+          names = codec_options.keys.map(&:inspect).join(", ")
+          raise InvalidParameterError, "unsupported #{operation} codec_options: #{names}"
         end
       end
     end
