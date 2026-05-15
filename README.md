@@ -2,6 +2,12 @@
 
 Wavify is a Ruby audio processing toolkit with immutable transforms, codec I/O, streaming pipelines, DSP effects, and a sequencing DSL.
 
+Use it to:
+
+- Read, inspect, transform, and write audio from Ruby scripts.
+- Process large files with streaming pipelines and stateful DSP effects.
+- Generate tones, small arrangements, and test fixtures without mandatory FFmpeg or SoX.
+
 ## Requirements
 
 - Ruby `>= 3.1`
@@ -58,8 +64,10 @@ audio.write("preview.ogg", codec_options: { quality: 0.5 })
 
 Main constructors:
 
-- `Audio.read(path, format: nil, codec_options: {})`
-- `Audio.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: {})`
+- `Audio.read(path, format: nil, codec_options: {}, strict: false)`
+- `Audio.metadata(path_or_io, format: nil, codec_options: {}, strict: false)`
+- `Audio.info(path_or_io, format: nil, codec_options: {}, strict: false)`
+- `Audio.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: {}, strict: false)`
 - `Audio.tone(frequency:, duration:, waveform:, format:)`
 - `Audio.silence(duration_seconds, format:)`
 - `Audio.mix(*audios, strategy: :clip)`
@@ -67,12 +75,23 @@ Main constructors:
 Immutable transforms (each also has `!` in-place variants):
 
 - `gain`, `normalize`, `trim`, `fade_in`, `fade_out`, `pan`, `reverse`, `loop`, `apply`
+- `concat`, `append`, `prepend`, `overlay`, `crossfade`, `slice`, `crop`, `pad_start`, `pad_end`, `insert_silence`
+- `to_mono`, `to_stereo`, `resample`, `bit_depth`, `map_samples`, `map_frames`
 
 Utility methods:
 
-- `convert`, `split(at:)`, `peak_amplitude`, `rms_amplitude`, `duration`, `sample_frame_count`
+- `convert`, `split(at:)`, `duration`, `sample_frame_count`, `channels`, `sample_rate`, `frames`, `each_frame`
+- `peak_amplitude`, `rms_amplitude`, `peak_dbfs`, `rms_dbfs`, `stats`, `silent?`, `clipped?`, `dc_offset`, `zero_crossing_rate`
 
 Mix strategies are `:clip` (default), `:normalize`, `:headroom`, and `:soft_limit`.
+
+Duration helpers:
+
+```ruby
+Wavify.ms(250)
+Wavify.seconds(3)
+Wavify::Core::Duration.parse("1:23.456")
+```
 
 ### Streaming pipeline
 
@@ -84,6 +103,7 @@ Wavify::Audio.stream("input.wav", chunk_size: 4096)
 ```
 
 `pipe` accepts processors that respond to `call`, `process`, or `apply`.
+Stateful processors may implement `reset`, `flush(format:)`, and `tail_duration`.
 
 `write_to` also accepts codec-specific output options:
 
@@ -107,6 +127,22 @@ Raw example:
 raw_format = Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
 audio = Wavify::Audio.read("input.pcm", format: raw_format)
 audio.write("output.wav")
+```
+
+Metadata example:
+
+```ruby
+metadata = Wavify::Audio.metadata("input.wav")
+metadata[:format].sample_rate
+metadata[:duration]
+```
+
+Codec registry helpers:
+
+```ruby
+Wavify::Codecs.supported_formats
+Wavify::Codecs.detect("input.wav")
+Wavify::Codecs.register(".custom", MyCodec)
 ```
 
 ### OGG Vorbis notes
@@ -167,6 +203,42 @@ Run:
 ruby examples/synth_pad.rb
 ```
 
+See `examples/README.md` for the full list.
+
+## CLI
+
+The gem includes a small CLI for common scripting tasks:
+
+```bash
+wavify info input.wav
+wavify convert input.wav output.flac
+wavify tone --freq 440 --duration 1 tone.wav
+wavify normalize input.wav output.wav --target -1
+wavify trim input.wav output.wav --threshold 0.01
+wavify formats
+wavify doctor
+```
+
+## Documentation
+
+- `docs/getting-started.md`
+- `docs/codecs.md`
+- `docs/dsp.md`
+- `docs/streaming.md`
+- `docs/sequencer.md`
+- `docs/limitations.md`
+- `docs/performance.md`
+- YARD docs can be generated with `bundle exec rake docs:yard`.
+
+## Limitations
+
+- MP3, AAC, and M4A are not built into core.
+- FFmpeg and SoX are not mandatory runtime dependencies.
+- OGG Vorbis uses native gems (`ogg-ruby`, `vorbis`).
+- Raw PCM/float requires `format:` for read, stream read, and metadata.
+- Streaming writes for header-based formats require seekable output IO.
+- Resampling currently uses linear interpolation.
+
 ## Development
 
 Install dependencies:
@@ -190,6 +262,8 @@ bundle exec rake docs:yard
 YARD_MINIMUM=85 bundle exec rake docs:check
 bundle exec rake docs:all
 ```
+
+`docs:examples` smoke-runs the self-contained example scripts. `docs:yard` generates YARD output under `doc/`. `docs:check` enforces the configured YARD documentation percentage.
 
 Benchmarks:
 

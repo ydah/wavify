@@ -1,0 +1,39 @@
+name: Bug report
+description: Report incorrect audio behavior, codec I/O, streaming, or DSP output.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include the smallest Ruby snippet or fixture details that reproduce the issue.
+      render: ruby
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: input
+    id: ruby
+    attributes:
+      label: Ruby version
+      placeholder: "ruby 3.4.0"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, installed native audio libraries, and relevant gem versions.

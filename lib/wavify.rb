@@ -20,6 +20,7 @@ require_relative "wavify/dsp/effects"
 require_relative "wavify/sequencer"
 require_relative "wavify/audio"
 require_relative "wavify/dsl"
+require_relative "wavify/cli"
 
 ##
 # Wavify is a pure Ruby audio processing toolkit with immutable transforms,

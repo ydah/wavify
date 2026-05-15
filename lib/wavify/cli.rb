@@ -1,0 +1,164 @@
+# frozen_string_literal: true
+
+module Wavify
+  # Minimal command-line interface for common Wavify workflows.
+  class CLI
+    COMMANDS = %w[info convert tone normalize trim formats doctor].freeze
+
+    def self.run(argv = ARGV, stdout: $stdout, stderr: $stderr)
+      new(argv, stdout: stdout, stderr: stderr).run
+    end
+
+    def initialize(argv, stdout:, stderr:)
+      @argv = argv.dup
+      @stdout = stdout
+      @stderr = stderr
+    end
+
+    def run
+      command = @argv.shift
+      return usage if command.nil? || %w[-h --help help].include?(command)
+
+      unless COMMANDS.include?(command)
+        @stderr.puts "wavify: unknown command #{command.inspect}"
+        return usage
+      end
+
+      send("run_#{command}")
+      0
+    rescue Wavify::Error, ArgumentError => e
+      @stderr.puts "wavify: #{e.message}"
+      1
+    end
+
+    private
+
+    def run_info
+      path = require_argument!("input path")
+      metadata = Audio.metadata(path)
+      format = metadata.fetch(:format)
+      @stdout.puts "path: #{path}"
+      @stdout.puts "format: #{format.sample_rate}Hz #{format.channels}ch #{format.bit_depth}-bit #{format.sample_format}"
+      @stdout.puts "duration: #{metadata[:duration]}"
+      @stdout.puts "frames: #{metadata[:sample_frame_count]}"
+    end
+
+    def run_convert
+      input = require_argument!("input path")
+      output = require_argument!("output path")
+      options = parse_options(@argv)
+      audio = Audio.read(input)
+      target_format = converted_format(audio.format, options)
+      target = target_format == audio.format ? audio : audio.convert(target_format)
+      target.write(output)
+      @stdout.puts "converted: #{input} -> #{output}"
+    end
+
+    def run_tone
+      options = parse_options(@argv)
+      output = options.delete(:output) || require_argument!("output path")
+      format = Core::Format::CD_QUALITY
+      audio = Audio.tone(
+        frequency: options.fetch(:freq, 440.0),
+        duration: options.fetch(:duration, 1.0),
+        waveform: options.fetch(:waveform, :sine),
+        format: format
+      )
+      audio.write(output)
+      @stdout.puts "wrote: #{output}"
+    end
+
+    def run_normalize
+      input = require_argument!("input path")
+      output = require_argument!("output path")
+      options = parse_options(@argv)
+      Audio.read(input).normalize(target_db: options.fetch(:target, -1.0)).write(output)
+      @stdout.puts "normalized: #{input} -> #{output}"
+    end
+
+    def run_trim
+      input = require_argument!("input path")
+      output = require_argument!("output path")
+      options = parse_options(@argv)
+      Audio.read(input).trim(threshold: options.fetch(:threshold, 0.01)).write(output)
+      @stdout.puts "trimmed: #{input} -> #{output}"
+    end
+
+    def run_formats
+      @stdout.puts Codecs.supported_formats.join("\n")
+    end
+
+    def run_doctor
+      @stdout.puts "ruby: #{RUBY_VERSION}"
+      @stdout.puts "formats: #{Codecs.supported_formats.join(', ')}"
+      check_library("ogg")
+      check_library("vorbis")
+    end
+
+    def check_library(name)
+      require name
+      @stdout.puts "#{name}: ok"
+    rescue LoadError
+      @stdout.puts "#{name}: missing (install native dependencies and bundle install)"
+    end
+
+    def parse_options(tokens)
+      options = {}
+      until tokens.empty?
+        token = tokens.shift
+        case token
+        when "--freq"
+          options[:freq] = Float(require_option_value!(token, tokens))
+        when "--duration"
+          options[:duration] = Float(require_option_value!(token, tokens))
+        when "--waveform"
+          options[:waveform] = require_option_value!(token, tokens).to_sym
+        when "--sample-rate"
+          options[:sample_rate] = Integer(require_option_value!(token, tokens))
+        when "--channels"
+          options[:channels] = Integer(require_option_value!(token, tokens))
+        when "--bit-depth"
+          options[:bit_depth] = Integer(require_option_value!(token, tokens))
+        when "--target"
+          options[:target] = Float(require_option_value!(token, tokens))
+        when "--threshold"
+          options[:threshold] = Float(require_option_value!(token, tokens))
+        else
+          if token.start_with?("--")
+            raise InvalidParameterError, "unknown option #{token}"
+          end
+
+          options[:output] = token
+        end
+      end
+      options
+    end
+
+    def converted_format(format, options)
+      format.with(
+        channels: options[:channels],
+        sample_rate: options[:sample_rate],
+        bit_depth: options[:bit_depth]
+      )
+    end
+
+    def require_argument!(name)
+      value = @argv.shift
+      raise InvalidParameterError, "missing #{name}" if value.nil? || value.empty?
+
+      value
+    end
+
+    def require_option_value!(option, tokens)
+      value = tokens.shift
+      raise InvalidParameterError, "missing value for #{option}" if value.nil? || value.empty?
+
+      value
+    end
+
+    def usage
+      @stdout.puts "usage: wavify <#{COMMANDS.join('|')}> [options]"
+      1
+    end
+  end
+end

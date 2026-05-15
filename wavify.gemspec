@@ -8,8 +8,8 @@ Gem::Specification.new do |spec|
   spec.authors = ["Yudai Takada"]
   spec.email = ["t.yudai92@gmail.com"]
 
-  spec.summary = "Pure Ruby audio processing toolkit with chainable API."
-  spec.description = "Wavify provides core audio buffer primitives, codecs, and DSP-oriented high-level APIs."
+  spec.summary = "Pure Ruby audio processing toolkit with immutable transforms."
+  spec.description = "Wavify provides ergonomic Ruby APIs for audio buffers, codec I/O, streaming pipelines, DSP effects, and a small sequencing DSL."
   spec.homepage = "https://github.com/ydah/wavify"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.1"
