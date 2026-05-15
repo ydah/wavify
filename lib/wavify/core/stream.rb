@@ -207,28 +207,34 @@ module Wavify
         taken_frames = 0
 
         with_tee_writers do |tee_writers|
-          @codec.stream_read(@source, chunk_size: @chunk_size, **@codec_read_options) do |chunk|
-            @format ||= chunk.format
-            drop_frames ||= duration_frames(@drop_duration_seconds, chunk.format) || 0
-            take_frames = duration_frames(@take_duration_seconds, chunk.format) if take_frames.nil? && @take_duration_seconds
-            input_chunk, drop_frames, taken_frames = apply_duration_window(
-              chunk,
-              drop_frames: drop_frames,
-              take_frames: take_frames,
-              taken_frames: taken_frames
-            )
-            next unless input_chunk
+          with_stream_context("stream read", codec: @codec, target: @source) do
+            @codec.stream_read(@source, chunk_size: @chunk_size, **@codec_read_options) do |chunk|
+              with_stream_context("stream processing", codec: @codec, target: @source) do
+                @format ||= chunk.format
+                drop_frames ||= duration_frames(@drop_duration_seconds, chunk.format) || 0
+                take_frames = duration_frames(@take_duration_seconds, chunk.format) if take_frames.nil? && @take_duration_seconds
+                input_chunk, drop_frames, taken_frames = apply_duration_window(
+                  chunk,
+                  drop_frames: drop_frames,
+                  take_frames: take_frames,
+                  taken_frames: taken_frames
+                )
+                next unless input_chunk
 
-            output_chunk = apply_pipeline(input_chunk)
-            @last_output_format = output_chunk.format
-            write_tee_chunks(output_chunk, tee_writers)
-            yield output_chunk
+                output_chunk = apply_pipeline(input_chunk)
+                @last_output_format = output_chunk.format
+                write_tee_chunks(output_chunk, tee_writers)
+                yield output_chunk
+              end
+            end
           end
 
-          flush_pipeline do |chunk|
-            @last_output_format = chunk.format
-            write_tee_chunks(chunk, tee_writers)
-            yield chunk
+          with_stream_context("stream flush", codec: @codec, target: @source) do
+            flush_pipeline do |chunk|
+              @last_output_format = chunk.format
+              write_tee_chunks(chunk, tee_writers)
+              yield chunk
+            end
           end
         end
       end
@@ -248,10 +254,14 @@ module Wavify
         target_format = resolve_target_format(format, output_codec)
         options = validate_codec_options!(codec_options, "codec_options")
 
-        output_codec.stream_write(path_or_io, format: target_format, **options) do |writer|
-          each_chunk do |chunk|
-            output_chunk = target_format ? chunk.convert(target_format) : chunk
-            writer.call(output_chunk)
+        with_stream_context("stream write", codec: output_codec, target: path_or_io) do
+          output_codec.stream_write(path_or_io, format: target_format, **options) do |writer|
+            each_chunk do |chunk|
+              output_chunk = target_format ? chunk.convert(target_format) : chunk
+              with_stream_context("stream write", codec: output_codec, target: path_or_io) do
+                writer.call(output_chunk)
+              end
+            end
           end
         end
 
@@ -415,8 +425,10 @@ module Wavify
         return yield(writers) if targets.empty?
 
         target = targets.first
-        target[:codec].stream_write(target[:target], format: target[:format], **target[:codec_options]) do |writer|
-          with_tee_writers(targets.drop(1), writers + [target.merge(writer: writer)], &block)
+        with_stream_context("stream tee", codec: target[:codec], target: target[:target]) do
+          target[:codec].stream_write(target[:target], format: target[:format], **target[:codec_options]) do |writer|
+            with_tee_writers(targets.drop(1), writers + [target.merge(writer: writer)], &block)
+          end
         end
       end
 
@@ -513,6 +525,34 @@ module Wavify
         raise InvalidParameterError, "#{name} must be non-negative" if seconds.negative?
 
         seconds
+      end
+
+      def with_stream_context(operation, codec:, target:)
+        yield
+      rescue StreamError
+        raise
+      rescue StandardError => e
+        raise StreamError, stream_error_message(operation, codec: codec, target: target, error: e)
+      end
+
+      def stream_error_message(operation, codec:, target:, error:)
+        "#{operation} failed " \
+          "(codec=#{stream_codec_name(codec)}, target=#{stream_target_label(target)}, chunk_size=#{@chunk_size}): " \
+          "#{error.class}: #{error.message}"
+      end
+
+      def stream_codec_name(codec)
+        name = codec.respond_to?(:name) ? codec.name : nil
+        return name unless name.nil? || name.empty?
+
+        codec.to_s
+      end
+
+      def stream_target_label(target)
+        return target if target.is_a?(String)
+        return target.path if target.respond_to?(:path)
+
+        target.class.name || target.class.to_s
       end
     end
   end

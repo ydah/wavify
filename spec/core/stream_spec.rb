@@ -289,6 +289,59 @@ RSpec.describe Wavify::Core::Stream do
     source&.unlink
   end
 
+  it "adds codec, target, and chunk size context to stream read failures" do
+    failing_codec = Class.new do
+      def self.stream_read(_source, chunk_size:)
+        raise "unexpected chunk_size" unless chunk_size == 8
+
+        raise Wavify::InvalidFormatError, "broken stream"
+      end
+    end
+
+    stream = described_class.new("input.wav", codec: failing_codec, format: format, chunk_size: 8)
+
+    expect do
+      stream.each_chunk.to_a
+    end.to raise_error(Wavify::StreamError) { |error|
+      expect(error.message).to include("stream read failed")
+      expect(error.message).to include("codec=")
+      expect(error.message).to include("target=input.wav")
+      expect(error.message).to include("chunk_size=8")
+      expect(error.message).to include("broken stream")
+    }
+  end
+
+  it "adds codec, target, and chunk size context to stream write failures" do
+    chunk = Wavify::Core::SampleBuffer.new([0.1, 0.2], format)
+    failing_codec = Class.new do
+      class << self
+        attr_accessor :chunk
+
+        def stream_read(_source, chunk_size:)
+          raise "unexpected chunk_size" unless chunk_size == 2
+
+          yield chunk
+        end
+
+        def stream_write(_target, format:)
+          yield(->(_written_chunk) { raise IOError, "sink closed" })
+        end
+      end
+    end
+    failing_codec.chunk = chunk
+    stream = described_class.new(:source, codec: failing_codec, format: format, chunk_size: 2)
+
+    expect do
+      stream.write_to(:sink)
+    end.to raise_error(Wavify::StreamError) { |error|
+      expect(error.message).to include("stream write failed")
+      expect(error.message).to include("codec=")
+      expect(error.message).to include("target=Symbol")
+      expect(error.message).to include("chunk_size=2")
+      expect(error.message).to include("sink closed")
+    }
+  end
+
   it "requires format when writing raw output if stream format is unknown" do
     chunk = Wavify::Core::SampleBuffer.new([0.1, 0.2], format)
     fake_codec = Class.new do
