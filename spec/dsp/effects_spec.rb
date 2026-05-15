@@ -240,6 +240,32 @@ RSpec.describe Wavify::DSP::Effects do
     end
   end
 
+  describe "registry" do
+    it "builds registered effects from classes and factories" do
+      custom_class = Class.new do
+        def initialize(gain: 1.0)
+          @gain = gain
+        end
+
+        def process(buffer)
+          Wavify::Core::SampleBuffer.new(buffer.samples.map { |sample| sample * @gain }, buffer.format)
+        end
+      end
+
+      expect(described_class.register(:test_gain_effect, custom_class)).to eq(custom_class)
+      class_effect = described_class.build(:test_gain_effect, gain: 0.5)
+      class_processed = class_effect.process(Wavify::Core::SampleBuffer.new([1.0], mono_float))
+      expect(class_processed.samples).to eq([0.5])
+
+      described_class.register(:test_callable_effect) do |gain:|
+        custom_class.new(gain: gain)
+      end
+      callable_effect = described_class.build(:test_callable_effect, gain: 0.25)
+      callable_processed = callable_effect.process(Wavify::Core::SampleBuffer.new([1.0], mono_float))
+      expect(callable_processed.samples).to eq([0.25])
+    end
+  end
+
   it "exposes effects under Wavify::Effects alias" do
     expect(Wavify::Effects::Delay).to eq(Wavify::DSP::Effects::Delay)
   end

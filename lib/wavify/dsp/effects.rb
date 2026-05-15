@@ -20,6 +20,73 @@ module Wavify
   module DSP
     # Built-in audio effects namespace.
     module Effects
+      BUILTIN_EFFECTS = {
+        delay: Delay,
+        reverb: Reverb,
+        chorus: Chorus,
+        distortion: Distortion,
+        compressor: Compressor,
+        limiter: Limiter,
+        soft_limiter: SoftLimiter,
+        noise_gate: NoiseGate,
+        tremolo: Tremolo,
+        bitcrusher: Bitcrusher,
+        expander: Expander,
+        auto_pan: AutoPan,
+        stereo_widener: StereoWidener,
+        eq: EQ
+      }.freeze
+
+      class << self
+        # Registers an effect class or factory under a DSL-friendly name.
+        #
+        # @param name [Symbol, String]
+        # @param factory [Class, #call]
+        # @return [Class, #call]
+        def register(name, factory = nil, &block)
+          key = normalize_effect_name!(name)
+          value = factory || block
+          raise InvalidParameterError, "effect factory must be a Class or callable object" unless effect_factory?(value)
+
+          registry[key] = value
+        end
+
+        # Builds a registered effect instance.
+        #
+        # @param name [Symbol, String]
+        # @return [Object]
+        def build(name, **params)
+          key = normalize_effect_name!(name)
+          factory = registry[key]
+          raise InvalidParameterError, "unsupported effect: #{key}" unless factory
+
+          effect = factory.is_a?(Class) ? factory.new(**params) : factory.call(**params)
+          return effect if effect.respond_to?(:process) || effect.respond_to?(:call) || effect.respond_to?(:apply)
+
+          raise InvalidParameterError, "registered effect #{key} must build a processor"
+        end
+
+        # @return [Hash<Symbol, Object>]
+        def registered_effects
+          registry.dup.freeze
+        end
+
+        private
+
+        def registry
+          @registry ||= BUILTIN_EFFECTS.dup
+        end
+
+        def normalize_effect_name!(name)
+          raise InvalidParameterError, "effect name must be Symbol or String" unless name.is_a?(Symbol) || name.is_a?(String)
+
+          name.to_sym
+        end
+
+        def effect_factory?(value)
+          value.is_a?(Class) || value.respond_to?(:call)
+        end
+      end
     end
   end
 end

@@ -210,6 +210,13 @@ Built-in modules:
 - Biquad filters (lowpass/highpass/bandpass/notch/peaking/shelves)
 - Effects: `Delay`, `Reverb`, `Chorus`, `Distortion`, `Compressor`, `Limiter`, `SoftLimiter`, `NoiseGate`, `Expander`, `Tremolo`, `AutoPan`, `StereoWidener`, `Bitcrusher`, `EQ`
 
+Register custom processors for pipelines and DSL tracks:
+
+```ruby
+Wavify::Effects.register(:my_effect, MyEffect)
+Wavify::DSL.effect(:my_effect, MyEffect)
+```
+
 ## Examples
 
 Scripts in `examples/`:

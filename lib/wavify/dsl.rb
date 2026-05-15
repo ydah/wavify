@@ -376,15 +376,6 @@ module Wavify
     # :nodoc: all
     # @api private
     class TrackDefinition
-      # Internal mapping from DSL effect names to effect class constants.
-      EFFECT_CLASS_NAMES = {
-        delay: "Delay",
-        reverb: "Reverb",
-        chorus: "Chorus",
-        distortion: "Distortion",
-        compressor: "Compressor"
-      }.freeze
-
       # Internal mutable track state compiled from DSL blocks.
       #
       # Readers are used by {SongDefinition} rendering and sequencer conversion.
@@ -513,12 +504,9 @@ module Wavify
       # Instantiates configured effect processor objects.
       def effect_processors
         @effects.map do |effect|
-          effect_class_name = EFFECT_CLASS_NAMES[effect.fetch(:name)]
-          raise Wavify::SequencerError, "unsupported effect: #{effect.fetch(:name)}" unless effect_class_name
-
-          Wavify::Effects.const_get(effect_class_name).new(**effect.fetch(:params))
-        rescue NameError
-          raise Wavify::SequencerError, "effect class not found: #{effect_class_name}"
+          Wavify::Effects.build(effect.fetch(:name), **effect.fetch(:params))
+        rescue Wavify::Error => e
+          raise Wavify::SequencerError, e.message
         end
       end
 
@@ -767,6 +755,15 @@ module Wavify
           default_bars: default_bars,
           &block
         ).validate!
+      end
+
+      # Registers an effect factory for DSL `effect :name` usage.
+      #
+      # @param name [Symbol, String]
+      # @param factory [Class, #call]
+      # @return [Class, #call]
+      def effect(name, factory = nil, &block)
+        Wavify::Effects.register(name, factory, &block)
       end
     end
   end

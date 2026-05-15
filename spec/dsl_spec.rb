@@ -109,6 +109,28 @@ RSpec.describe Wavify::DSL do
         end
       end.to raise_error(Wavify::SequencerError, /arrangement: bars/)
     end
+
+    it "uses custom registered effects" do
+      custom_effect = Class.new do
+        def initialize(scale:)
+          @scale = scale
+        end
+
+        def process(buffer)
+          Wavify::Core::SampleBuffer.new(buffer.samples.map { |sample| sample * @scale }, buffer.format)
+        end
+      end
+
+      described_class.effect(:test_dsl_scale, custom_effect)
+      song = described_class.build_definition(format: format, tempo: 120) do
+        track :lead do
+          notes "C4"
+          effect :test_dsl_scale, scale: 0.1
+        end
+      end
+
+      expect(song.render(default_bars: 1).peak_amplitude).to be < 0.2
+    end
   end
 
   describe "integration" do
