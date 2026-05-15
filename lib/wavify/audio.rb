@@ -9,6 +9,8 @@ module Wavify
     attr_reader :buffer
 
     MIX_STRATEGIES = %i[clip normalize headroom soft_limit].freeze
+    MIX_ALIGNMENTS = %i[start center end].freeze
+    NORMALIZE_MODES = %i[peak rms].freeze
     SOFT_LIMIT_THRESHOLD = 0.8
 
     # Reads audio from a file path using codec auto-detection.
@@ -50,12 +52,16 @@ module Wavify
     #
     # @param audios [Array<Audio>]
     # @param strategy [Symbol] `:clip`, `:normalize`, `:headroom`, or `:soft_limit`
+    # @param gains [Array<Numeric>, nil] optional per-source gain in dB
+    # @param align [Symbol] `:start`, `:center`, or `:end`
     # @return [Audio]
-    def self.mix(*audios, strategy: :clip)
+    def self.mix(*audios, strategy: :clip, gains: nil, align: :start)
       raise InvalidParameterError, "at least one Audio is required" if audios.empty?
       raise InvalidParameterError, "all arguments must be Audio instances" unless audios.all? { |audio| audio.is_a?(self) }
 
       mix_strategy = normalize_mix_strategy!(strategy)
+      mix_gains = normalize_mix_gains!(gains, audios.length)
+      mix_alignment = normalize_mix_alignment!(align)
       sample_rates = audios.map { |audio| audio.format.sample_rate }.uniq
       raise InvalidParameterError, "all audios must have the same sample_rate to mix" if sample_rates.length > 1
 
@@ -66,9 +72,11 @@ module Wavify
       channels = work_format.channels
       mixed = Array.new(max_frames * channels, 0.0)
 
-      converted.each do |buffer|
+      converted.each_with_index do |buffer, audio_index|
+        gain_factor = db_to_amplitude(mix_gains.fetch(audio_index))
+        sample_offset = mix_alignment_offset(mix_alignment, max_frames, buffer.sample_frame_count) * channels
         buffer.samples.each_with_index do |sample, index|
-          mixed[index] += sample
+          mixed[sample_offset + index] += sample * gain_factor
         end
       end
 
@@ -429,13 +437,18 @@ module Wavify
     #
     # @param target_db [Numeric]
     # @return [Audio]
-    def normalize(target_db: 0.0)
+    def normalize(target_db: 0.0, mode: :peak)
+      normalize_mode = self.class.send(:normalize_mode!, mode)
+      unless target_db.is_a?(Numeric) && target_db.respond_to?(:finite?) && target_db.finite?
+        raise InvalidParameterError, "target_db must be a finite Numeric"
+      end
+
       transform_samples do |samples, _format|
-        peak = samples.map(&:abs).max || 0.0
-        next samples if peak.zero?
+        current = normalize_reference_amplitude(samples, normalize_mode)
+        next samples if current.zero?
 
         target = 10.0**(target_db.to_f / 20.0)
-        factor = target / peak
+        factor = target / current
         samples.map { |sample| (sample * factor).clamp(-1.0, 1.0) }
       end
     end
@@ -444,8 +457,8 @@ module Wavify
     #
     # @param target_db [Numeric]
     # @return [Audio] self
-    def normalize!(target_db: 0.0)
-      replace_buffer!(normalize(target_db: target_db).buffer)
+    def normalize!(target_db: 0.0, mode: :peak)
+      replace_buffer!(normalize(target_db: target_db, mode: mode).buffer)
       self
     end
 
@@ -796,6 +809,17 @@ module Wavify
       20.0 * Math.log10(amplitude)
     end
 
+    def normalize_reference_amplitude(samples, mode)
+      case mode
+      when :peak
+        samples.map(&:abs).max || 0.0
+      when :rms
+        return 0.0 if samples.empty?
+
+        Math.sqrt(samples.sum { |sample| sample * sample } / samples.length)
+      end
+    end
+
     def human_sample_rate
       if sample_rate >= 1000
         "#{(sample_rate / 1000.0).round(1)}kHz"
@@ -904,6 +928,54 @@ module Wavify
       raise InvalidParameterError, "strategy must be one of: #{MIX_STRATEGIES.join(', ')}"
     end
     private_class_method :normalize_mix_strategy!
+
+    def self.normalize_mix_alignment!(align)
+      normalized = align.to_sym if align.respond_to?(:to_sym)
+      return normalized if MIX_ALIGNMENTS.include?(normalized)
+
+      raise InvalidParameterError, "align must be one of: #{MIX_ALIGNMENTS.join(', ')}"
+    end
+    private_class_method :normalize_mix_alignment!
+
+    def self.normalize_mix_gains!(gains, source_count)
+      return Array.new(source_count, 0.0) if gains.nil?
+      raise InvalidParameterError, "gains must be an Array" unless gains.is_a?(Array)
+      raise InvalidParameterError, "gains must have one value per Audio" unless gains.length == source_count
+
+      gains.map do |gain|
+        unless gain.is_a?(Numeric) && gain.respond_to?(:finite?) && gain.finite?
+          raise InvalidParameterError, "gains must contain finite Numeric dB values"
+        end
+
+        gain.to_f
+      end
+    end
+    private_class_method :normalize_mix_gains!
+
+    def self.mix_alignment_offset(align, max_frames, frame_count)
+      case align
+      when :start
+        0
+      when :center
+        ((max_frames - frame_count) / 2.0).round
+      when :end
+        max_frames - frame_count
+      end
+    end
+    private_class_method :mix_alignment_offset
+
+    def self.db_to_amplitude(db)
+      10.0**(db / 20.0)
+    end
+    private_class_method :db_to_amplitude
+
+    def self.normalize_mode!(mode)
+      normalized = mode.to_sym if mode.respond_to?(:to_sym)
+      return normalized if NORMALIZE_MODES.include?(normalized)
+
+      raise InvalidParameterError, "mode must be one of: #{NORMALIZE_MODES.join(', ')}"
+    end
+    private_class_method :normalize_mode!
 
     def self.apply_mix_strategy!(samples, strategy, source_count)
       case strategy

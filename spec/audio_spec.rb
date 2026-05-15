@@ -201,12 +201,35 @@ RSpec.describe Wavify::Audio do
       expect(mixed.buffer.samples[0]).to be <= 1.0
     end
 
+    it "applies per-source gains and alignment" do
+      mono_format = format.with(channels: 1, sample_format: :float, bit_depth: 32)
+      a = described_class.new(Wavify::Core::SampleBuffer.new([0.5, 0.5], mono_format))
+      b = described_class.new(Wavify::Core::SampleBuffer.new([0.5], mono_format))
+
+      mixed = described_class.mix(a, b, gains: [0.0, -6.0206], align: :end)
+
+      expect(mixed.buffer.samples[0]).to be_within(0.0001).of(0.5)
+      expect(mixed.buffer.samples[1]).to be_within(0.0001).of(0.75)
+    end
+
     it "rejects unsupported mix strategies" do
       audio = described_class.new(Wavify::Core::SampleBuffer.new([0.1], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
 
       expect do
         described_class.mix(audio, strategy: :unknown)
       end.to raise_error(Wavify::InvalidParameterError, /strategy/)
+    end
+
+    it "rejects invalid mix gains and alignment" do
+      audio = described_class.new(Wavify::Core::SampleBuffer.new([0.1], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
+
+      expect do
+        described_class.mix(audio, gains: [0.0, 1.0])
+      end.to raise_error(Wavify::InvalidParameterError, /one value per Audio/)
+
+      expect do
+        described_class.mix(audio, align: :unknown)
+      end.to raise_error(Wavify::InvalidParameterError, /align/)
     end
 
     it "raises when sample rates differ" do
@@ -218,6 +241,33 @@ RSpec.describe Wavify::Audio do
       expect do
         described_class.mix(a, b)
       end.to raise_error(Wavify::InvalidParameterError)
+    end
+  end
+
+  describe "#normalize" do
+    it "normalizes by peak amplitude by default" do
+      source = described_class.new(Wavify::Core::SampleBuffer.new([0.25, -0.5], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
+
+      normalized = source.normalize(target_db: -6.0206)
+
+      expect(normalized.peak_amplitude).to be_within(0.0001).of(0.5)
+    end
+
+    it "normalizes by RMS amplitude when requested" do
+      source = described_class.new(Wavify::Core::SampleBuffer.new([0.5, 0.0, -0.5, 0.0], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
+
+      normalized = source.normalize(target_db: -6.0206, mode: :rms)
+
+      expect(normalized.rms_amplitude).to be_within(0.0001).of(0.5)
+      expect(normalized.peak_amplitude).to be < 1.0
+    end
+
+    it "rejects unsupported normalization modes" do
+      source = described_class.new(Wavify::Core::SampleBuffer.new([0.1], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
+
+      expect do
+        source.normalize(mode: :lufs)
+      end.to raise_error(Wavify::InvalidParameterError, /mode/)
     end
   end
 

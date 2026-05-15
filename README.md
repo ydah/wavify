@@ -71,7 +71,7 @@ Main constructors:
 - `Audio.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: {}, strict: false, filename: nil)`
 - `Audio.tone(frequency:, duration:, waveform:, format:)`
 - `Audio.silence(duration_seconds, format:)`
-- `Audio.mix(*audios, strategy: :clip)`
+- `Audio.mix(*audios, strategy: :clip, gains: nil, align: :start)`
 
 Immutable transforms (each also has `!` in-place variants):
 
@@ -84,7 +84,7 @@ Utility methods:
 - `convert`, `split(at:)`, `duration`, `sample_frame_count`, `channels`, `sample_rate`, `frames`, `each_frame`
 - `peak_amplitude`, `rms_amplitude`, `peak_dbfs`, `rms_dbfs`, `stats`, `silent?`, `clipped?`, `dc_offset`, `zero_crossing_rate`
 
-Mix strategies are `:clip` (default), `:normalize`, `:headroom`, and `:soft_limit`.
+Mix strategies are `:clip` (default), `:normalize`, `:headroom`, and `:soft_limit`. `gains:` accepts one dB value per source, and `align:` can be `:start`, `:center`, or `:end`.
 
 Duration helpers:
 
