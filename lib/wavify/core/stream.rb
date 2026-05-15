@@ -170,7 +170,7 @@ module Wavify
       def detect_output_codec(path_or_io)
         return @codec unless path_or_io.is_a?(String)
 
-        Codecs::Registry.detect(path_or_io)
+        Codecs::Registry.detect_for_write(path_or_io)
       end
 
       def resolve_target_format(format, output_codec)

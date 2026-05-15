@@ -39,11 +39,53 @@ module Wavify
 
       class << self
         # Detects the codec for a path or IO object.
+        # Read detection prefers magic bytes when available.
         #
         # @param io_or_path [String, IO]
         # @return [Class] codec class
-        def detect(io_or_path)
+        def detect(io_or_path, strict: false)
+          detect_for_read(io_or_path, strict: strict)
+        end
+
+        # Detects the codec for reading.
+        #
+        # @param io_or_path [String, IO]
+        # @param strict [Boolean] raise when extension and magic bytes disagree
+        # @return [Class] codec class
+        def detect_for_read(io_or_path, strict: false)
+          extension_codec = detect_by_extension(io_or_path)
+          magic_codec = detect_by_magic(io_or_path)
+          if strict && extension_codec && magic_codec && extension_codec != magic_codec
+            raise InvalidFormatError,
+                  "codec mismatch: extension implies #{extension_codec.name}, magic bytes imply #{magic_codec.name}"
+          end
+
+          magic_codec || extension_codec || raise_not_found(io_or_path)
+        end
+
+        # Detects the codec for writing.
+        # Write detection intentionally prefers the target filename extension.
+        #
+        # @param io_or_path [String, IO]
+        # @return [Class] codec class
+        def detect_for_write(io_or_path)
           detect_by_extension(io_or_path) || detect_by_magic(io_or_path) || raise_not_found(io_or_path)
+        end
+
+        # Registers or replaces a codec for a filename extension.
+        #
+        # @param extension [String]
+        # @param codec [Class]
+        # @return [Class] codec
+        def register(extension, codec)
+          normalized_extension = normalize_extension(extension)
+          validate_codec!(codec)
+          extensions[normalized_extension] = codec
+        end
+
+        # @return [Array<String>] supported extension names without leading dots
+        def supported_formats
+          extensions.keys.map { |extension| extension.delete_prefix(".") }.uniq.sort.freeze
         end
 
         private
@@ -51,7 +93,27 @@ module Wavify
         def detect_by_extension(io_or_path)
           return unless io_or_path.is_a?(String)
 
-          EXTENSIONS[File.extname(io_or_path).downcase]
+          extensions[File.extname(io_or_path).downcase]
+        end
+
+        def extensions
+          @extensions ||= EXTENSIONS.dup
+        end
+
+        def normalize_extension(extension)
+          unless extension.is_a?(String) && extension.match?(/\A\.?[a-z0-9]+\z/i)
+            raise InvalidParameterError, "extension must be a file extension String"
+          end
+
+          extension.start_with?(".") ? extension.downcase : ".#{extension.downcase}"
+        end
+
+        def validate_codec!(codec)
+          required_methods = %i[read write stream_read stream_write metadata]
+          missing = required_methods.reject { |method| codec.respond_to?(method) }
+          return if missing.empty?
+
+          raise InvalidParameterError, "codec must respond to: #{missing.join(', ')}"
         end
 
         def detect_by_magic(io_or_path)
@@ -81,6 +143,23 @@ module Wavify
         def raise_not_found(io_or_path)
           raise CodecNotFoundError, "codec not found for input: #{io_or_path.inspect}"
         end
+      end
+    end
+
+    class << self
+      # @see Registry.detect
+      def detect(io_or_path, strict: false)
+        Registry.detect(io_or_path, strict: strict)
+      end
+
+      # @see Registry.register
+      def register(extension, codec)
+        Registry.register(extension, codec)
+      end
+
+      # @see Registry.supported_formats
+      def supported_formats
+        Registry.supported_formats
       end
     end
   end

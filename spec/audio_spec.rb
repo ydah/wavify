@@ -56,6 +56,46 @@ RSpec.describe Wavify::Audio do
         expect(loaded.buffer.samples).to eq(source_buffer.samples)
       end
     end
+
+    it "reads metadata through the registry without constructing Audio" do
+      source_buffer = Wavify::Core::SampleBuffer.new([100, -100, 200, -200], format)
+
+      Tempfile.create(["wavify_audio", ".wav"]) do |file|
+        Wavify::Codecs::Wav.write(file.path, source_buffer)
+
+        metadata = described_class.metadata(file.path)
+
+        expect(metadata[:format]).to eq(format)
+        expect(metadata[:sample_frame_count]).to eq(2)
+        expect(described_class.info(file.path)).to eq(metadata)
+      end
+    end
+
+    it "passes explicit format for raw metadata" do
+      raw_format = format.with(channels: 1)
+      source_buffer = Wavify::Core::SampleBuffer.new([100, -100], raw_format)
+
+      Tempfile.create(["wavify_audio", ".raw"]) do |file|
+        Wavify::Codecs::Raw.write(file.path, source_buffer, format: raw_format)
+
+        metadata = described_class.metadata(file.path, format: raw_format)
+
+        expect(metadata[:format]).to eq(raw_format)
+        expect(metadata[:sample_frame_count]).to eq(2)
+      end
+    end
+
+    it "detects extension and magic mismatches in strict read mode" do
+      Tempfile.create(["wavify_audio", ".flac"]) do |file|
+        file.binmode
+        file.write("RIFF\x24\x00\x00\x00WAVE")
+        file.flush
+
+        expect do
+          described_class.read(file.path, strict: true)
+        end.to raise_error(Wavify::InvalidFormatError, /codec mismatch/)
+      end
+    end
   end
 
   describe ".stream" do

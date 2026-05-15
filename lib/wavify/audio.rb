@@ -16,13 +16,33 @@ module Wavify
     # @param path [String]
     # @param format [Core::Format, nil] optional target format to convert into
     # @param codec_options [Hash] codec-specific options forwarded to `.read`
+    # @param strict [Boolean] verify extension and magic-byte codec agreement
     # @return [Audio]
-    def self.read(path, format: nil, codec_options: nil)
-      codec = Codecs::Registry.detect(path)
+    def self.read(path, format: nil, codec_options: nil, strict: false)
+      codec = Codecs::Registry.detect_for_read(path, strict: strict)
       options = normalize_codec_options!(codec_options)
 
       new(codec.read(path, format: format, **options))
     end
+
+    # Reads audio metadata without decoding the full payload when the codec supports it.
+    #
+    # @param path_or_io [String, IO]
+    # @param format [Core::Format, nil] required for raw PCM/float input
+    # @param codec_options [Hash] codec-specific options forwarded to `.metadata`
+    # @param strict [Boolean] verify extension and magic-byte codec agreement
+    # @return [Hash]
+    def self.metadata(path_or_io, format: nil, codec_options: nil, strict: false)
+      codec = Codecs::Registry.detect_for_read(path_or_io, strict: strict)
+      options = normalize_codec_options!(codec_options)
+      return codec.metadata(path_or_io, format: format, **options) if codec == Codecs::Raw
+
+      raise InvalidParameterError, "format is only supported for raw metadata" if format
+
+      codec.metadata(path_or_io, **options)
+    end
+
+    singleton_class.alias_method :info, :metadata
 
     # Mixes multiple audio objects using a selectable clipping policy.
     #
@@ -60,9 +80,10 @@ module Wavify
     # @param chunk_size [Integer] chunk size in frames
     # @param format [Core::Format, nil] optional source format override
     # @param codec_options [Hash] codec-specific options forwarded to `.stream_read`
+    # @param strict [Boolean] verify extension and magic-byte codec agreement
     # @return [Core::Stream]
-    def self.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: nil)
-      codec = Codecs::Registry.detect(path_or_io)
+    def self.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: nil, strict: false)
+      codec = Codecs::Registry.detect_for_read(path_or_io, strict: strict)
       source_format = format || codec.metadata(path_or_io)[:format]
       options = normalize_codec_options!(codec_options)
 
@@ -125,7 +146,7 @@ module Wavify
     # @param codec_options [Hash] codec-specific options forwarded to `.write`
     # @return [Audio] self
     def write(path, format: nil, codec_options: nil)
-      codec = Codecs::Registry.detect(path)
+      codec = Codecs::Registry.detect_for_write(path)
       options = normalize_codec_options!(codec_options)
       codec.write(path, @buffer, format: format || @buffer.format, **options)
       self
