@@ -33,6 +33,14 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(sliced.sample_frame_count).to eq(2)
     end
 
+    it "returns an empty buffer for out-of-range slices" do
+      buffer = described_class.new([1, 2, 3, 4], pcm16_stereo)
+      sliced = buffer.slice(10, 2)
+
+      expect(sliced.samples).to eq([])
+      expect(sliced.format).to eq(pcm16_stereo)
+    end
+
     it "concats another buffer" do
       left = described_class.new([1, 2, 3, 4], pcm16_stereo)
       right = described_class.new([5, 6], Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 16))

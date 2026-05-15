@@ -77,7 +77,11 @@ module Wavify
       #
       # @return [SampleBuffer]
       def reverse
-        reversed = frame_view.reverse.flatten
+        reversed = []
+        channels = @format.channels
+        (@samples.length - channels).step(0, -channels) do |sample_index|
+          reversed.concat(@samples.slice(sample_index, channels))
+        end
         self.class.new(reversed, @format)
       end
 
@@ -94,8 +98,9 @@ module Wavify
           raise InvalidParameterError, "frame_length must be a non-negative Integer: #{frame_length.inspect}"
         end
 
-        sliced = frame_view.slice(start_frame, frame_length) || []
-        self.class.new(sliced.flatten, @format)
+        start_index = start_frame * @format.channels
+        sample_length = frame_length * @format.channels
+        self.class.new(@samples.slice(start_index, sample_length) || [], @format)
       end
 
       def concat(other)
