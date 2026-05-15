@@ -41,6 +41,15 @@ RSpec.describe Wavify::DSP::Effects do
 
       expect(tail.samples.first(2)).to eq([0.0, 1.0])
     end
+
+    it "builds tempo-synced delays from note values" do
+      effect = described_class.beat(:eighth, tempo: 120, feedback: 0.0, mix: 0.5)
+
+      expect(effect.tail_duration).to be_within(0.0001).of(0.25)
+
+      triplet = described_class.beat("quarter", tempo: 120, triplet: true, feedback: 0.0, mix: 1.0)
+      expect(triplet.tail_duration).to be_within(0.0001).of(1.0 / 3.0)
+    end
   end
 
   describe Wavify::DSP::Effects::Reverb do

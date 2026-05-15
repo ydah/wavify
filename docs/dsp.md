@@ -19,9 +19,10 @@ effect.flush(format: buffer.format)
 
 ```ruby
 Wavify::Audio.stream("dry.wav")
-             .pipe(Wavify::Effects::Delay.new(time: 0.25, feedback: 0.35))
+             .pipe(Wavify::Effects::Delay.beat(:eighth, tempo: 120, feedback: 0.35))
              .pipe(Wavify::Effects::SoftLimiter.new(threshold: 0.85))
              .write_to("wet.wav")
 ```
 
 `Compressor` supports `makeup_gain:` and `knee:` in dB. `Limiter` and `SoftLimiter` are peak-control processors, `NoiseGate` attenuates low-level noise, `Tremolo` applies sine-LFO amplitude modulation, and `Bitcrusher` reduces bit depth or holds samples for downsampling effects.
+`Audio#fade_in`, `Audio#fade_out`, and `Audio#fade` support `curve: :linear`, `:exp`, and `:log`.

@@ -48,7 +48,7 @@ audio = Wavify::Audio.tone(
   format: format
 )
 
-audio.fade_in(0.02).fade_out(0.05).write("tone.wav")
+audio.fade_in(0.02, curve: :exp).fade_out(0.05, curve: :log).write("tone.wav")
 ```
 
 Codec-specific write options are forwarded with `codec_options:`:

@@ -11,6 +11,7 @@ module Wavify
     MIX_STRATEGIES = %i[clip normalize headroom soft_limit].freeze
     MIX_ALIGNMENTS = %i[start center end].freeze
     NORMALIZE_MODES = %i[peak rms].freeze
+    FADE_CURVES = %i[linear exp log].freeze
     SOFT_LIMIT_THRESHOLD = 0.8
 
     # Reads audio from a file path using codec auto-detection.
@@ -494,38 +495,52 @@ module Wavify
       self
     end
 
-    # Applies a linear fade-in.
+    # Applies a fade-in.
     #
-    # @param seconds [Numeric]
+    # @param seconds [Numeric, Core::Duration]
+    # @param curve [Symbol] `:linear`, `:exp`, or `:log`
     # @return [Audio]
-    def fade_in(seconds)
-      apply_fade(seconds: seconds, mode: :in)
+    def fade_in(seconds, curve: :linear)
+      apply_fade(seconds: seconds, mode: :in, curve: curve)
     end
 
     # In-place variant of {#fade_in}.
     #
-    # @param seconds [Numeric]
+    # @param seconds [Numeric, Core::Duration]
+    # @param curve [Symbol]
     # @return [Audio] self
-    def fade_in!(seconds)
-      replace_buffer!(fade_in(seconds).buffer)
+    def fade_in!(seconds, curve: :linear)
+      replace_buffer!(fade_in(seconds, curve: curve).buffer)
       self
     end
 
-    # Applies a linear fade-out.
+    # Applies a fade-out.
     #
-    # @param seconds [Numeric]
+    # @param seconds [Numeric, Core::Duration]
+    # @param curve [Symbol] `:linear`, `:exp`, or `:log`
     # @return [Audio]
-    def fade_out(seconds)
-      apply_fade(seconds: seconds, mode: :out)
+    def fade_out(seconds, curve: :linear)
+      apply_fade(seconds: seconds, mode: :out, curve: curve)
     end
 
     # In-place variant of {#fade_out}.
     #
-    # @param seconds [Numeric]
+    # @param seconds [Numeric, Core::Duration]
+    # @param curve [Symbol]
     # @return [Audio] self
-    def fade_out!(seconds)
-      replace_buffer!(fade_out(seconds).buffer)
+    def fade_out!(seconds, curve: :linear)
+      replace_buffer!(fade_out(seconds, curve: curve).buffer)
       self
+    end
+
+    # Applies a fade in either direction.
+    #
+    # @param seconds [Numeric, Core::Duration]
+    # @param type [Symbol] `:in` or `:out`
+    # @param curve [Symbol] `:linear`, `:exp`, or `:log`
+    # @return [Audio]
+    def fade(seconds, type:, curve: :linear)
+      apply_fade(seconds: seconds, mode: type, curve: curve)
     end
 
     # Constant-power pan for mono/stereo sources.
@@ -836,29 +851,29 @@ module Wavify
       end
     end
 
-    def apply_fade(seconds:, mode:)
-      raise InvalidParameterError, "seconds must be a non-negative Numeric" unless seconds.is_a?(Numeric) && seconds >= 0
+    def apply_fade(seconds:, mode:, curve:)
+      fade_seconds = coerce_seconds(seconds)
+      fade_mode = self.class.send(:normalize_fade_mode!, mode)
+      fade_curve = self.class.send(:normalize_fade_curve!, curve)
 
       transform_samples do |samples, format|
         channels = format.channels
         sample_frames = samples.length / channels
-        fade_frames = [(seconds.to_f * format.sample_rate).round, sample_frames].min
+        fade_frames = [(fade_seconds * format.sample_rate).round, sample_frames].min
         return samples if fade_frames.zero?
 
         result = samples.dup
         start_frame = sample_frames - fade_frames
 
         result.each_slice(channels).with_index do |frame, frame_index|
-          factor = case mode
-                   when :in
-                     frame_index < fade_frames ? frame_index.to_f / fade_frames : 1.0
-                   when :out
-                     frame_index >= start_frame ? (sample_frames - frame_index - 1).to_f / fade_frames : 1.0
-                   else
-                     1.0
-                   end
-
-          factor = factor.clamp(0.0, 1.0)
+          factor = fade_factor_for(
+            frame_index,
+            fade_frames: fade_frames,
+            sample_frames: sample_frames,
+            start_frame: start_frame,
+            mode: fade_mode,
+            curve: fade_curve
+          )
           base = frame_index * channels
           frame.each_index do |channel_index|
             result[base + channel_index] = (frame[channel_index] * factor).clamp(-1.0, 1.0)
@@ -866,6 +881,28 @@ module Wavify
         end
 
         result
+      end
+    end
+
+    def fade_factor_for(frame_index, fade_frames:, sample_frames:, start_frame:, mode:, curve:)
+      linear_factor = case mode
+                      when :in
+                        frame_index < fade_frames ? frame_index.to_f / fade_frames : 1.0
+                      when :out
+                        frame_index >= start_frame ? (sample_frames - frame_index - 1).to_f / fade_frames : 1.0
+                      end
+
+      fade_curve_factor(linear_factor.clamp(0.0, 1.0), curve)
+    end
+
+    def fade_curve_factor(value, curve)
+      case curve
+      when :linear
+        value
+      when :exp
+        value * value
+      when :log
+        Math.log10(1.0 + (9.0 * value))
       end
     end
 
@@ -976,6 +1013,22 @@ module Wavify
       raise InvalidParameterError, "mode must be one of: #{NORMALIZE_MODES.join(', ')}"
     end
     private_class_method :normalize_mode!
+
+    def self.normalize_fade_mode!(mode)
+      normalized = mode.to_sym if mode.respond_to?(:to_sym)
+      return normalized if %i[in out].include?(normalized)
+
+      raise InvalidParameterError, "fade type must be :in or :out"
+    end
+    private_class_method :normalize_fade_mode!
+
+    def self.normalize_fade_curve!(curve)
+      normalized = curve.to_sym if curve.respond_to?(:to_sym)
+      return normalized if FADE_CURVES.include?(normalized)
+
+      raise InvalidParameterError, "fade curve must be one of: #{FADE_CURVES.join(', ')}"
+    end
+    private_class_method :normalize_fade_curve!
 
     def self.apply_mix_strategy!(samples, strategy, source_count)
       case strategy

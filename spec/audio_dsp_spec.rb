@@ -44,6 +44,20 @@ RSpec.describe Wavify::Audio do
       expect(faded.buffer.samples.last.abs).to be < 0.1
     end
 
+    it "supports exponential and logarithmic fade curves" do
+      audio = audio_with([1.0, 1.0, 1.0, 1.0])
+
+      linear = audio.fade(2.0 / 44_100, type: :in, curve: :linear)
+      exponential = audio.fade_in(2.0 / 44_100, curve: :exp)
+      logarithmic = audio.fade_in(Wavify.ms(1000.0 / 44_100 * 2), curve: :log)
+
+      expect(exponential.buffer.samples[2]).to be < linear.buffer.samples[2]
+      expect(logarithmic.buffer.samples[2]).to be > linear.buffer.samples[2]
+      expect do
+        audio.fade(0.01, type: :sideways)
+      end.to raise_error(Wavify::InvalidParameterError, /fade type/)
+    end
+
     it "pans mono audio to stereo" do
       mono = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
       audio = audio_with([0.5, 0.5], mono)
