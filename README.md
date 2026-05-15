@@ -108,6 +108,7 @@ Wavify::Audio.stream("input.wav", chunk_size: 4096)
 `pipe` accepts processors that respond to `call`, `process`, or `apply`.
 Stateful processors may implement `reset`, `flush(format:)`, and `tail_duration`.
 Use `take_duration`, `drop_duration`, `to_audio`, `progress`, `meter`, `tee`, and `pipeline_steps` for common chunk workflows and inspection.
+Use `dry_run(format:)` to validate a stream pipeline without writing output.
 
 `write_to` also accepts codec-specific output options:
 

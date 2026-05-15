@@ -143,9 +143,53 @@ module Wavify
         @pipeline.map.with_index do |processor, index|
           {
             name: @pipeline_names.fetch(index),
-            processor: processor
+            processor: processor,
+            latency: processor_duration(processor, :latency),
+            lookahead: processor_duration(processor, :lookahead),
+            tail_duration: processor_duration(processor, :tail_duration)
           }
         end
+      end
+
+      # @return [Float] summed processor latency in seconds
+      def latency
+        @pipeline.sum { |processor| processor_duration(processor, :latency) }
+      end
+
+      # @return [Float] summed processor lookahead in seconds
+      def lookahead
+        @pipeline.sum { |processor| processor_duration(processor, :lookahead) }
+      end
+
+      # Reads and processes the stream without writing output.
+      #
+      # @param format [Format, nil] optional output conversion to validate
+      # @return [Hash]
+      def dry_run(format: nil)
+        raise InvalidFormatError, "format must be Core::Format" if format && !format.is_a?(Format)
+
+        tee_targets = @tee_targets
+        @tee_targets = []
+        stats = {
+          chunks: 0,
+          sample_frame_count: 0,
+          format: format,
+          pipeline: pipeline_steps,
+          latency: latency,
+          lookahead: lookahead,
+          tail_duration: pipeline_tail_duration
+        }
+
+        each_chunk do |chunk|
+          output_chunk = format ? chunk.convert(format) : chunk
+          stats[:chunks] += 1
+          stats[:sample_frame_count] += output_chunk.sample_frame_count
+          stats[:format] ||= output_chunk.format
+        end
+        stats[:duration] = stats[:format] ? Duration.from_samples(stats[:sample_frame_count], stats[:format].sample_rate) : nil
+        stats
+      ensure
+        @tee_targets = tee_targets if defined?(tee_targets)
       end
 
       # Iterates processed chunks.
@@ -324,6 +368,22 @@ module Wavify
 
       def flush_format
         @last_output_format || @format
+      end
+
+      def processor_duration(processor, method_name)
+        return 0.0 unless processor.respond_to?(method_name)
+
+        value = processor.public_send(method_name)
+        return 0.0 if value.nil?
+        unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite? && value >= 0.0
+          raise InvalidParameterError, "#{method_name} must return a non-negative finite Numeric"
+        end
+
+        value.to_f
+      end
+
+      def pipeline_tail_duration
+        @pipeline.map { |processor| processor_duration(processor, :tail_duration) }.max || 0.0
       end
 
       def apply_duration_window(chunk, drop_frames:, take_frames:, taken_frames:)

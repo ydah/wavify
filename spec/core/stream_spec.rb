@@ -102,7 +102,9 @@ RSpec.describe Wavify::Core::Stream do
     snapshot.clear
 
     expect(stream.pipeline).to eq([processor])
-    expect(stream.pipeline_steps).to eq([{ name: "identity", processor: processor }])
+    expect(stream.pipeline_steps).to eq([
+      { name: "identity", processor: processor, latency: 0.0, lookahead: 0.0, tail_duration: 0.0 }
+    ])
   end
 
   it "maps chunks with a named block processor" do
@@ -169,6 +171,46 @@ RSpec.describe Wavify::Core::Stream do
     written.samples.zip([0.1, 0.2, 0.3, 0.4]).each do |actual, target|
       expect(actual).to be_within(0.0001).of(target)
     end
+  ensure
+    source&.unlink
+    tee_output&.unlink
+  end
+
+  it "dry-runs processing without writing tee outputs" do
+    source = write_source_wav([0.1, 0.2, 0.3, 0.4])
+    tee_output = Tempfile.new(["wavify_stream_dry_run", ".wav"])
+    tee_output.close
+    processor = Class.new do
+      def latency
+        0.01
+      end
+
+      def lookahead
+        0.02
+      end
+
+      def tail_duration
+        0.03
+      end
+
+      def process(chunk)
+        chunk
+      end
+    end.new
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
+    stream.pipe(processor, name: :metered).tee(tee_output.path)
+
+    before_size = File.size(tee_output.path)
+    stats = stream.dry_run
+
+    expect(stats[:chunks]).to eq(2)
+    expect(stats[:sample_frame_count]).to eq(4)
+    expect(stats[:duration].total_seconds).to be_within(0.0001).of(4.0 / format.sample_rate)
+    expect(stats[:latency]).to eq(0.01)
+    expect(stats[:lookahead]).to eq(0.02)
+    expect(stats[:tail_duration]).to eq(0.03)
+    expect(stats[:pipeline].first[:name]).to eq("metered")
+    expect(File.size(tee_output.path)).to eq(before_size)
   ensure
     source&.unlink
     tee_output&.unlink

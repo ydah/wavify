@@ -39,3 +39,4 @@ preview = Wavify::Audio.stream("input.wav", chunk_size: 2048)
 ```
 
 `progress(total_frames:)` reports cumulative processed frames and an optional progress ratio. `tee` writes the processed stream to an additional output as the stream is consumed.
+Use `dry_run(format:)` to validate reading, processors, and optional output conversion without writing files. `latency`, `lookahead`, and `pipeline_steps` expose processor timing metadata when processors provide it.

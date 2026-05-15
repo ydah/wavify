@@ -72,6 +72,16 @@ RSpec.describe Wavify::DSP::Effects::EffectBase do
     end
   end
 
+  describe "timing metadata" do
+    it "defaults latency and lookahead to zero" do
+      effect = described_class.new
+
+      expect(effect.latency).to eq(0.0)
+      expect(effect.lookahead).to eq(0.0)
+      expect(effect.tail_duration).to eq(0.0)
+    end
+  end
+
   describe "#process_sample" do
     it "is abstract by default" do
       expect do

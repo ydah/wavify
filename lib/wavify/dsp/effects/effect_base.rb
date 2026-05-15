@@ -59,6 +59,16 @@ module Wavify
           0.0
         end
 
+        # @return [Float] processing latency in seconds
+        def latency
+          0.0
+        end
+
+        # @return [Float] lookahead duration in seconds
+        def lookahead
+          0.0
+        end
+
         def process_sample(_sample, channel:, sample_rate:)
           raise NotImplementedError
         end
