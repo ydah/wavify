@@ -247,9 +247,39 @@ module Wavify
         path = track.samples[sample_key]
         raise Wavify::SequencerError, "missing sample mapping for pattern #{sample_key.inspect} on track #{track.name}" unless path
 
-        Wavify::Audio.read(path).convert(work_format)
+        apply_sample_options(
+          Wavify::Audio.read(path),
+          track.sample_options.fetch(sample_key, {}),
+          work_format
+        )
       rescue Wavify::Error => e
         raise Wavify::SequencerError, "failed to load sample #{path.inspect} for track #{track.name}: #{e.message}"
+      end
+
+      def apply_sample_options(audio, options, work_format)
+        processed = audio
+        processed = slice_sample_option(processed, options)
+        processed = trim_sample_option(processed, options)
+        processed = processed.reverse if options[:reverse]
+        processed = processed.convert(work_format)
+        processed = processed.gain(options[:gain]) if options.key?(:gain)
+        processed = processed.pan(options[:pan]) if options.key?(:pan)
+        processed.convert(work_format)
+      end
+
+      def slice_sample_option(audio, options)
+        return audio.crop(start: options.fetch(:from, 0.0), duration: options[:duration]) if options.key?(:duration)
+        return audio.slice(from: options.fetch(:from, 0.0), to: options[:to]) if options.key?(:to)
+
+        audio
+      end
+
+      def trim_sample_option(audio, options)
+        return audio unless options.key?(:trim)
+        return audio if options[:trim] == false
+
+        threshold = options[:trim] == true ? 0.01 : options[:trim]
+        audio.trim(threshold: threshold)
       end
 
       def overlay_sample_event!(mixed, event, work_format)
@@ -304,7 +334,7 @@ module Wavify
       # Readers are used by {SongDefinition} rendering and sequencer conversion.
       attr_reader :name, :waveform, :gain_db, :pan_position, :pattern_resolution, :note_resolution,
                   :default_octave, :envelope, :notes_notation, :chords_notation, :effects, :samples,
-                  :named_patterns, :synth_options
+                  :sample_options, :named_patterns, :synth_options
 
       def initialize(name)
         @name = name.to_sym
@@ -319,6 +349,7 @@ module Wavify
         @chords_notation = nil
         @effects = []
         @samples = {}
+        @sample_options = {}
         @named_patterns = {}
         @primary_pattern = nil
         @synth_options = {}
@@ -353,8 +384,10 @@ module Wavify
       end
 
       # Registers a sample path keyed by a symbolic name.
-      def sample!(key, path)
-        @samples[key.to_sym] = path.to_s
+      def sample!(key, path, **options)
+        sample_key = key.to_sym
+        @samples[sample_key] = path.to_s
+        @sample_options[sample_key] = normalize_sample_options!(options)
       end
 
       # Configures synth waveform and generator options.
@@ -431,6 +464,16 @@ module Wavify
           raise Wavify::SequencerError, "effect class not found: #{effect_class_name}"
         end
       end
+
+      private
+
+      def normalize_sample_options!(options)
+        supported = %i[gain pan trim reverse from to duration]
+        unknown = options.keys - supported
+        raise Wavify::SequencerError, "unsupported sample options: #{unknown.join(', ')}" unless unknown.empty?
+
+        options.dup
+      end
     end
 
     # :nodoc: all
@@ -447,8 +490,8 @@ module Wavify
       end
 
       # Registers a sample mapping.
-      def sample(name, path)
-        @track.sample!(name, path)
+      def sample(name, path, **options)
+        @track.sample!(name, path, **options)
       end
 
       # Configures synth waveform/options.

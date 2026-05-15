@@ -22,4 +22,13 @@ song.render(stems: true)
 song.render.write("song.wav")
 ```
 
+Sample tracks can transform individual samples before scheduling:
+
+```ruby
+track :drums do
+  pattern :kick, "x---x---"
+  sample :kick, "samples/kick.wav", trim: true, gain: -3, pan: -0.2, from: 0.01, duration: 0.2
+end
+```
+
 Keep song logic in Ruby when the DSL does not expose a feature yet. This keeps the core DSL small and avoids locking early ideas into public syntax too soon.

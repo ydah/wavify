@@ -15,7 +15,7 @@ RSpec.describe Wavify::DSL do
         track :drums do
           pattern :kick, "x---x---x---x---"
           pattern :snare, "----x-------x---"
-          sample :kick, "samples/kick.wav"
+          sample :kick, "samples/kick.wav", gain: -3, pan: -0.1, trim: true
           sample :snare, "samples/snare.wav"
           gain(-2)
           pan(-0.1)
@@ -52,6 +52,7 @@ RSpec.describe Wavify::DSL do
 
       expect(drums.named_patterns.keys).to eq(%i[kick snare])
       expect(drums.samples[:kick]).to eq("samples/kick.wav")
+      expect(drums.sample_options[:kick]).to eq(gain: -3, pan: -0.1, trim: true)
       expect(lead.waveform).to eq(:triangle)
       expect(lead.effects.first[:name]).to eq(:chorus)
       expect(lead.envelope).to be_a(Wavify::DSP::Envelope)
@@ -181,6 +182,28 @@ RSpec.describe Wavify::DSL do
           expect(audio.sample_frame_count).to be > 0
           expect(audio.peak_amplitude).to be > 0.0
         end
+      end
+    end
+
+    it "applies per-sample track options while rendering" do
+      Tempfile.create(["wavify_hit", ".wav"]) do |hit|
+        sample_format = format
+        source = Wavify::Core::SampleBuffer.new([0.0, 0.0, 0.8, 0.8, 0.4, 0.4], sample_format)
+        Wavify::Audio.new(source).write(hit.path)
+
+        song = described_class.build_definition(format: format, tempo: 120) do
+          track :drums do
+            pattern :hit, "X---"
+            sample :hit, hit.path, from: 1.0 / sample_format.sample_rate, duration: 1.0 / sample_format.sample_rate, gain: -6, pan: 1.0
+          end
+        end
+
+        audio = song.render(default_bars: 1)
+
+        expect(audio.sample_frame_count).to eq(1)
+        left, right = audio.buffer.samples.first(2)
+        expect(left.abs).to be < 0.001
+        expect(right).to be_within(0.01).of(0.8 * (10.0**(-6.0 / 20.0)))
       end
     end
   end
