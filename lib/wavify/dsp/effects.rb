@@ -6,6 +6,11 @@ require_relative "effects/reverb"
 require_relative "effects/chorus"
 require_relative "effects/distortion"
 require_relative "effects/compressor"
+require_relative "effects/limiter"
+require_relative "effects/soft_limiter"
+require_relative "effects/noise_gate"
+require_relative "effects/tremolo"
+require_relative "effects/bitcrusher"
 
 module Wavify
   module DSP

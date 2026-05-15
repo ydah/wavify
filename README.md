@@ -185,7 +185,7 @@ Built-in modules:
 - Oscillator waveforms: `:sine`, `:square`, `:sawtooth`, `:triangle`, `:white_noise`, `:pink_noise`
 - Envelope (ADSR)
 - Biquad filters (lowpass/highpass/bandpass/notch/peaking/shelves)
-- Effects: `Delay`, `Reverb`, `Chorus`, `Distortion`, `Compressor`
+- Effects: `Delay`, `Reverb`, `Chorus`, `Distortion`, `Compressor`, `Limiter`, `SoftLimiter`, `NoiseGate`, `Tremolo`, `Bitcrusher`
 
 ## Examples
 

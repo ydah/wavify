@@ -22,7 +22,12 @@ module Wavify
       end
 
       def self.bandpass(center:, bandwidth:)
-        raise InvalidParameterError, "bandwidth must be positive" unless bandwidth.is_a?(Numeric) && bandwidth.positive?
+        unless center.is_a?(Numeric) && center.respond_to?(:finite?) && center.finite? && center.positive?
+          raise InvalidParameterError, "center must be a positive finite Numeric"
+        end
+        unless bandwidth.is_a?(Numeric) && bandwidth.respond_to?(:finite?) && bandwidth.finite? && bandwidth.positive?
+          raise InvalidParameterError, "bandwidth must be a positive finite Numeric"
+        end
 
         new(:bandpass, cutoff: center, q: center.to_f / bandwidth)
       end
@@ -122,6 +127,7 @@ module Wavify
       def update_coefficients!(sample_rate)
         return if @coeff_sample_rate == sample_rate && @coefficients
 
+        validate_cutoff_below_nyquist!(sample_rate)
         @coefficients = coefficients_for(sample_rate)
         @coeff_sample_rate = sample_rate
         reset
@@ -250,21 +256,35 @@ module Wavify
       end
 
       def validate_cutoff!(cutoff)
-        raise InvalidParameterError, "cutoff must be a positive Numeric" unless cutoff.is_a?(Numeric) && cutoff.positive?
+        unless cutoff.is_a?(Numeric) && cutoff.respond_to?(:finite?) && cutoff.finite? && cutoff.positive?
+          raise InvalidParameterError, "cutoff must be a positive finite Numeric"
+        end
 
         cutoff.to_f
       end
 
       def validate_q!(q)
-        raise InvalidParameterError, "q must be a positive Numeric" unless q.is_a?(Numeric) && q.positive?
+        unless q.is_a?(Numeric) && q.respond_to?(:finite?) && q.finite? && q.positive?
+          raise InvalidParameterError, "q must be a positive finite Numeric"
+        end
 
         q.to_f
       end
 
       def validate_gain!(gain_db)
-        raise InvalidParameterError, "gain_db must be Numeric" unless gain_db.is_a?(Numeric)
+        unless gain_db.is_a?(Numeric) && gain_db.respond_to?(:finite?) && gain_db.finite?
+          raise InvalidParameterError, "gain_db must be a finite Numeric"
+        end
 
         gain_db.to_f
+      end
+
+      def validate_cutoff_below_nyquist!(sample_rate)
+        nyquist = sample_rate / 2.0
+        return if @cutoff < nyquist
+
+        raise InvalidParameterError,
+              "cutoff must be below Nyquist frequency (#{nyquist} Hz) for sample_rate #{sample_rate}"
       end
     end
   end

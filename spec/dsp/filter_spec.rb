@@ -56,4 +56,21 @@ RSpec.describe Wavify::DSP::Filter do
       expect(processed.samples.any?(&:infinite?)).to be(false)
     end
   end
+
+  describe "parameter validation" do
+    it "rejects cutoff frequencies at or above Nyquist for the processed format" do
+      source = Wavify::Core::SampleBuffer.new([0.0, 0.1, -0.1], mono_float)
+      filter = described_class.lowpass(cutoff: mono_float.sample_rate / 2.0)
+
+      expect do
+        filter.apply(source)
+      end.to raise_error(Wavify::InvalidParameterError, /below Nyquist/)
+    end
+
+    it "rejects non-finite numeric parameters" do
+      expect do
+        described_class.lowpass(cutoff: Float::INFINITY)
+      end.to raise_error(Wavify::InvalidParameterError, /finite Numeric/)
+    end
+  end
 end

@@ -97,6 +97,81 @@ RSpec.describe Wavify::DSP::Effects do
       expect(processed.samples[2].abs).to be < source.samples[2].abs
       expect(processed.samples[0]).to be_within(0.01).of(source.samples[0])
     end
+
+    it "supports makeup gain and soft knee controls" do
+      effect = described_class.new(threshold: -20.0, ratio: 2.0, attack: 0.0, release: 0.01, makeup_gain: 6.0, knee: 6.0)
+      source = Wavify::Core::SampleBuffer.new([0.05, 0.2, 0.5], mono_float)
+
+      processed = effect.process(source)
+
+      expect(processed.samples[0]).to be > source.samples[0]
+      expect(processed.samples[2]).to be < 1.0
+    end
+  end
+
+  describe Wavify::DSP::Effects::Limiter do
+    it "caps peaks at the requested ceiling" do
+      effect = described_class.new(ceiling: -6.0206)
+      source = Wavify::Core::SampleBuffer.new([0.25, 0.9, -0.9], mono_float)
+
+      processed = effect.process(source)
+
+      expect(processed.samples.map(&:abs).max).to be_within(0.0001).of(0.5)
+    end
+  end
+
+  describe Wavify::DSP::Effects::SoftLimiter do
+    it "rounds off samples above the threshold" do
+      effect = described_class.new(threshold: 0.5, ceiling: 0.9, drive: 1.0)
+      source = Wavify::Core::SampleBuffer.new([0.25, 0.75, 1.0, -1.0], mono_float)
+
+      processed = effect.process(source)
+
+      expect(processed.samples[0]).to eq(0.25)
+      expect(processed.samples[1]).to be < 0.75
+      expect(processed.samples[2]).to be <= 0.9
+      expect(processed.samples[3]).to be >= -0.9
+    end
+  end
+
+  describe Wavify::DSP::Effects::NoiseGate do
+    it "attenuates samples below the threshold" do
+      effect = described_class.new(threshold: -20.0, floor: -80.0)
+      source = Wavify::Core::SampleBuffer.new([0.005, 0.2, -0.005, -0.2], mono_float)
+
+      processed = effect.process(source)
+
+      expect(processed.samples[0].abs).to be < 0.00001
+      expect(processed.samples[1]).to be_within(0.0001).of(0.2)
+      expect(processed.samples[2].abs).to be < 0.00001
+      expect(processed.samples[3]).to be_within(0.0001).of(-0.2)
+    end
+  end
+
+  describe Wavify::DSP::Effects::Tremolo do
+    it "modulates amplitude while preserving length" do
+      effect = described_class.new(rate: 25.0, depth: 1.0, mix: 1.0)
+      source = Wavify::Core::SampleBuffer.new(Array.new(2_000, 1.0), mono_float)
+
+      processed = effect.process(source)
+
+      expect(processed.samples.length).to eq(source.samples.length)
+      expect(processed.samples.min).to be < 0.1
+      expect(processed.samples.max).to be <= 1.0
+    end
+  end
+
+  describe Wavify::DSP::Effects::Bitcrusher do
+    it "quantizes samples and holds values for downsampling" do
+      effect = described_class.new(bit_depth: 2, downsample: 2, mix: 1.0)
+      source = Wavify::Core::SampleBuffer.new([0.1, 0.4, 0.8, 0.2], mono_float)
+
+      processed = effect.process(source)
+
+      expect(processed.samples[0]).to eq(processed.samples[1])
+      expect(processed.samples[2]).to eq(processed.samples[3])
+      expect(processed.samples.uniq.length).to be <= 4
+    end
   end
 
   it "exposes effects under Wavify::Effects alias" do
