@@ -306,6 +306,45 @@ RSpec.describe Wavify::DSP::Effects do
     end
   end
 
+  describe "finite output regression coverage" do
+    it "keeps built-in effects from emitting NaN or Infinity" do
+      source = Wavify::Core::SampleBuffer.new(
+        [
+          0.0, 0.0,
+          0.25, -0.25,
+          0.95, -0.95,
+          -1.0, 1.0,
+          1.0, -1.0,
+          0.05, -0.05
+        ],
+        stereo_float
+      )
+      effects = [
+        Wavify::DSP::Effects::Delay.new(time: 1.0 / 44_100, feedback: 0.75, mix: 1.0),
+        Wavify::DSP::Effects::Reverb.new(room_size: 0.9, damping: 0.1, mix: 1.0, pre_delay: 1.0 / 44_100, width: 1.5),
+        Wavify::DSP::Effects::Chorus.new(rate: 2.0, depth: 0.7, mix: 1.0),
+        Wavify::DSP::Effects::Distortion.new(drive: 1.0, tone: 0.5, mix: 1.0),
+        Wavify::DSP::Effects::Compressor.new(threshold: -30.0, ratio: 10.0, attack: 0.0, release: 0.01, makeup_gain: 6.0, knee: 6.0),
+        Wavify::DSP::Effects::Limiter.new(ceiling: -0.1, input_gain: 12.0),
+        Wavify::DSP::Effects::SoftLimiter.new(threshold: 0.4, ceiling: 0.95, drive: 2.0),
+        Wavify::DSP::Effects::NoiseGate.new(threshold: -60.0, floor: -90.0),
+        Wavify::DSP::Effects::Expander.new(threshold: -20.0, ratio: 4.0, floor: -80.0),
+        Wavify::DSP::Effects::Tremolo.new(rate: 10.0, depth: 1.0, mix: 1.0),
+        Wavify::DSP::Effects::AutoPan.new(rate: 4.0, depth: 1.0),
+        Wavify::DSP::Effects::StereoWidener.new(width: 2.0),
+        Wavify::DSP::Effects::Bitcrusher.new(bit_depth: 3, downsample: 3, mix: 1.0),
+        Wavify::DSP::Effects::EQ.simple(highpass: 40.0, lowpass: 18_000.0, presence: { cutoff: 2_000.0, q: 1.0, gain_db: 3.0 }),
+        Wavify::DSP::Effects::MasteringChain.new(ceiling: -0.1),
+        Wavify::DSP::Effects::PodcastChain.new(ceiling: -0.1)
+      ]
+
+      effects.each do |effect|
+        processed = effect.process(source)
+        expect(processed.samples).to all(be_finite), "#{effect.class} emitted non-finite samples"
+      end
+    end
+  end
+
   describe "registry" do
     it "builds registered effects from classes and factories" do
       custom_class = Class.new do
