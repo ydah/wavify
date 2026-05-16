@@ -223,7 +223,6 @@ module Wavify
             sample_audio = sample_cache[sample_key] ||= load_sample_audio(track, sample_key, work_format)
 
             (0...section.fetch(:bars)).each do |bar_offset|
-              absolute_bar = section.fetch(:start_bar) + bar_offset
               bar_base_time = section.fetch(:start_time) + (bar_offset * section_engine.bar_duration_seconds)
 
               pattern.each do |step|

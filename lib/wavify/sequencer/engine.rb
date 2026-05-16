@@ -181,7 +181,8 @@ module Wavify
         sections.flat_map do |section|
           section_engine = engine_for_section(section)
           section[:tracks].filter_map do |track_name|
-            section_engine.render_track_audio(
+            section_engine.send(
+              :render_track_audio,
               track_map.fetch(track_name),
               bars: section[:bars],
               start_bar: section[:start_bar],
