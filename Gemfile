@@ -18,4 +18,6 @@ group :ogg do
   gem "vorbis", ">= 0.1"
 end
 
-gem "rbs", "~> 4.0"
+ruby_supports_rbs4 = Gem::Version.new(RUBY_VERSION) >= Gem::Version.new("3.2")
+
+gem "rbs", "~> 4.0" if ruby_supports_rbs4
