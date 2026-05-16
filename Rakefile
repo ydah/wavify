@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "bundler/gem_tasks"
+require "fileutils"
+require "json"
 require "rubocop/rake_task"
 require "rspec/core/rake_task"
 require "rbconfig"
@@ -31,10 +33,48 @@ end
 task default: :spec
 
 namespace :bench do
-  def run_benchmark_script(path)
+  def benchmark_scripts
+    {
+      wav_io: "benchmarks/wav_io_benchmark.rb",
+      dsp: "benchmarks/dsp_effects_benchmark.rb",
+      flac: "benchmarks/flac_benchmark.rb",
+      stream: "benchmarks/streaming_memory_benchmark.rb"
+    }.freeze
+  end
+
+  def run_benchmark_script(path, env: {})
     ruby = RbConfig.ruby
-    success = system(ruby, File.expand_path(path, __dir__))
+    success = system(env, ruby, File.expand_path(path, __dir__))
     abort("benchmark failed: #{path}") unless success
+  end
+
+  def benchmark_report_dir(name)
+    File.expand_path(ENV.fetch("BENCH_DIR", "tmp/benchmarks/#{name}"), __dir__)
+  end
+
+  def run_benchmark_reports(dir)
+    FileUtils.mkdir_p(dir)
+    benchmark_scripts.each do |name, path|
+      run_benchmark_script(path, env: { "BENCH_JSON" => File.join(dir, "#{name}.json") })
+    end
+  end
+
+  def compare_benchmark_reports!(baseline_dir, current_dir)
+    threshold = Float(ENV.fetch("BENCH_THRESHOLD", "1.2"))
+    benchmark_scripts.each_key do |name|
+      baseline = JSON.parse(File.read(File.join(baseline_dir, "#{name}.json")))
+      current = JSON.parse(File.read(File.join(current_dir, "#{name}.json")))
+      baseline_measurements = baseline.fetch("measurements").to_h { |item| [item.fetch("label"), item.fetch("elapsed_seconds")] }
+
+      current.fetch("measurements").each do |item|
+        label = item.fetch("label")
+        next unless baseline_measurements.key?(label)
+
+        allowed = baseline_measurements.fetch(label) * threshold
+        elapsed = item.fetch("elapsed_seconds")
+        abort("benchmark regression: #{name} #{label} #{elapsed}s > #{allowed.round(6)}s") if elapsed > allowed
+      end
+    end
   end
 
   desc "Run WAV I/O benchmark"
@@ -59,6 +99,24 @@ namespace :bench do
 
   desc "Run all benchmarks"
   task all: %i[wav_io dsp flac stream]
+
+  desc "Run all benchmarks and write JSON baseline reports"
+  task :baseline do
+    dir = benchmark_report_dir("baseline")
+    run_benchmark_reports(dir)
+    puts "benchmark baseline written to #{dir}"
+  end
+
+  desc "Run all benchmarks and compare with BENCH_BASELINE (default: tmp/benchmarks/baseline)"
+  task :compare do
+    baseline_dir = File.expand_path(ENV.fetch("BENCH_BASELINE", "tmp/benchmarks/baseline"), __dir__)
+    current_dir = benchmark_report_dir("current")
+    abort("missing benchmark baseline directory: #{baseline_dir}") unless Dir.exist?(baseline_dir)
+
+    run_benchmark_reports(current_dir)
+    compare_benchmark_reports!(baseline_dir, current_dir)
+    puts "benchmark compare ok: #{current_dir} <= #{ENV.fetch('BENCH_THRESHOLD', '1.2')}x baseline"
+  end
 end
 
 namespace :docs do

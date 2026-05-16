@@ -71,4 +71,24 @@ puts "  flac write size:     #{flac_size_mb.round(2)} MB"
 puts "  flac/wav ratio:      #{ratio.round(3)}"
 puts "  flac block size:     #{metadata[:min_block_size]}..#{metadata[:max_block_size]}"
 
+helper.write_json_report(
+  "flac",
+  config: {
+    iterations: iterations,
+    duration_seconds: duration_seconds,
+    chunk_size: chunk_size,
+    sample_rate: format.sample_rate,
+    channels: format.channels,
+    bit_depth: format.bit_depth
+  },
+  extra: {
+    source_frames: source_audio.sample_frame_count,
+    wav_size_mb: wav_size_mb.round(4),
+    flac_size_mb: flac_size_mb.round(4),
+    flac_wav_ratio: ratio.round(6),
+    flac_min_block_size: metadata[:min_block_size],
+    flac_max_block_size: metadata[:max_block_size]
+  }
+)
+
 helper.maybe_cleanup(wav_source_path, flac_path, flac_stream_path)

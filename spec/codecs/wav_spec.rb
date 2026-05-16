@@ -145,6 +145,36 @@ RSpec.describe Wavify::Codecs::Wav do
         ])
       end
     end
+
+    it "parses cue points when cue chunk exists" do
+      fmt_chunk = [1, 1, 44_100, 44_100, 1, 8].pack("v v V V v v")
+      cue_chunk = [1, 42, 0, "data", 0, 0, 123].pack("V V V A4 V V V")
+      data_chunk = [128, 128, 128, 128].pack("C*")
+      bytes = build_wave_bytes(
+        ["fmt ", fmt_chunk],
+        ["cue ", cue_chunk],
+        ["data", data_chunk]
+      )
+
+      Tempfile.create(["wavify-cue", ".wav"]) do |file|
+        file.binmode
+        file.write(bytes)
+        file.flush
+
+        metadata = described_class.metadata(file.path)
+        expect(metadata[:cue][:cue_count]).to eq(1)
+        expect(metadata[:cue_points]).to eq([
+          {
+            identifier: 42,
+            position: 0,
+            data_chunk_id: "data",
+            chunk_start: 0,
+            block_start: 0,
+            sample_offset: 123
+          }
+        ])
+      end
+    end
   end
 
   describe "chunk parsing behavior" do

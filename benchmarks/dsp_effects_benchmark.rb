@@ -44,3 +44,14 @@ helper.measure("audio chain x#{iterations}") do
       .apply(Wavify::Effects::Reverb.new(room_size: 0.4, damping: 0.5, mix: 0.15))
   end
 end
+
+helper.write_json_report(
+  "dsp",
+  config: {
+    iterations: iterations,
+    duration_seconds: duration_seconds,
+    sample_rate: buffer.format.sample_rate,
+    channels: buffer.format.channels,
+    frames: buffer.sample_frame_count
+  }
+)

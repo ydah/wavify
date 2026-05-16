@@ -2,6 +2,7 @@
 
 require "benchmark"
 require "fileutils"
+require "json"
 require_relative "../lib/wavify"
 
 module WavifyBenchmarks
@@ -51,7 +52,30 @@ module WavifyBenchmarks
         result = yield
       end
       puts format("  %<label>-32s %<elapsed>8.4fs", label: label, elapsed: elapsed)
+      measurements << { label: label, elapsed_seconds: elapsed.round(6) }
       [elapsed, result]
+    end
+
+    def measurements
+      @measurements ||= []
+    end
+
+    def write_json_report(name, config: {}, extra: {})
+      path = ENV.fetch("BENCH_JSON", nil)
+      return unless path && !path.empty?
+
+      path = File.join(tmp_dir, "#{name}.json") if path == "1"
+      FileUtils.mkdir_p(File.dirname(path))
+      report = {
+        name: name,
+        ruby: RUBY_VERSION,
+        platform: RUBY_PLATFORM,
+        config: config,
+        measurements: measurements,
+        extra: extra
+      }
+      File.write(path, JSON.pretty_generate(report))
+      puts "  wrote JSON report: #{path}"
     end
 
     def rss_kb

@@ -360,6 +360,29 @@ RSpec.describe Wavify::Codecs::Flac do
       expect(metadata[:md5]).to eq("0" * 32)
     end
 
+    it "parses SEEKTABLE and Vorbis Comment metadata blocks" do
+      streaminfo = build_streaminfo_bytes(
+        sample_rate: 44_100,
+        channels: 2,
+        bit_depth: 16,
+        total_samples: 44_100
+      )
+      seektable = [0, 128, 4096].pack("Q> Q> n")
+      vendor = "spec"
+      comment = "ARTIST=Wavify"
+      vorbis_comment = [vendor.bytesize].pack("V") + vendor + [1].pack("V") + [comment.bytesize].pack("V") + comment
+      bytes = +"fLaC"
+      bytes << [0x00, 0x00, 0x00, streaminfo.bytesize].pack("C4") << streaminfo
+      bytes << [0x03, 0x00, 0x00, seektable.bytesize].pack("C4") << seektable
+      bytes << [0x84, 0x00, 0x00, vorbis_comment.bytesize].pack("C4") << vorbis_comment
+
+      metadata = described_class.metadata(StringIO.new(bytes))
+
+      expect(metadata[:seekpoints].first).to include(sample_number: 0, stream_offset: 128, frame_samples: 4096)
+      expect(metadata[:vendor]).to eq("spec")
+      expect(metadata[:comments]).to eq("artist" => "Wavify")
+    end
+
     it "raises on missing streaminfo block" do
       io = StringIO.new(+"fLaC" << [0x84, 0x00, 0x00, 0x00].pack("C4"))
 
@@ -644,6 +667,18 @@ RSpec.describe Wavify::Codecs::Flac do
       expect(metadata[:min_block_size]).to eq(3)
       expect(metadata[:max_block_size]).to eq(3)
       expect(described_class.read(io).samples).to eq(samples)
+    end
+
+    it "accepts compression level and Vorbis Comment write options" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      buffer = Wavify::Core::SampleBuffer.new(Array.new(3_000, 0), format)
+      io = StringIO.new(+"")
+
+      described_class.write(io, buffer, format: format, compression_level: 0, comments: { artist: "Wavify" })
+      metadata = described_class.metadata(io)
+
+      expect(metadata[:max_block_size]).to eq(1024)
+      expect(metadata[:comments]).to eq("artist" => "Wavify")
     end
   end
 

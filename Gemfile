@@ -6,6 +6,7 @@ source "https://rubygems.org"
 gemspec
 
 gem "irb"
+gem "benchmark", "~> 0.4"
 gem "rake", "~> 13.0"
 gem "rubocop", "~> 1.76", require: false
 gem "rspec", "~> 3.0"

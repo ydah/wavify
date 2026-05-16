@@ -173,6 +173,8 @@ module Wavify
             fact_sample_length: info[:fact_sample_length],
             smpl: info[:smpl],
             loops: normalized_smpl_loops(info[:smpl]),
+            cue: info[:cue],
+            cue_points: info[:cue]&.fetch(:points) || [],
             info: info[:info]
           }
         ensure
@@ -239,6 +241,7 @@ module Wavify
             sample_frame_count: nil,
             fact_sample_length: nil,
             smpl: nil,
+            cue: nil,
             info: nil
           }
 
@@ -264,6 +267,9 @@ module Wavify
             when "smpl"
               chunk_data = read_exact(io, chunk_size, "truncated smpl chunk")
               info[:smpl] = parse_smpl_chunk(chunk_data)
+            when "cue "
+              chunk_data = read_exact(io, chunk_size, "truncated cue chunk")
+              info[:cue] = parse_cue_chunk(chunk_data)
             when "LIST"
               chunk_data = read_exact(io, chunk_size, "truncated LIST chunk")
               list_info = parse_list_chunk(chunk_data)
@@ -393,6 +399,31 @@ module Wavify
               play_count: loop.fetch(:play_count)
             }
           end
+        end
+
+        def parse_cue_chunk(chunk)
+          return nil if chunk.bytesize < 4
+
+          cue_count = chunk.unpack1("V")
+          points = []
+          offset = 4
+          cue_count.times do
+            break if offset + 24 > chunk.bytesize
+
+            identifier, position, data_chunk_id, chunk_start, block_start, sample_offset =
+              chunk.byteslice(offset, 24).unpack("V V A4 V V V")
+            points << {
+              identifier: identifier,
+              position: position,
+              data_chunk_id: data_chunk_id,
+              chunk_start: chunk_start,
+              block_start: block_start,
+              sample_offset: sample_offset
+            }
+            offset += 24
+          end
+
+          { cue_count: cue_count, points: points }
         end
 
         def parse_list_chunk(chunk)

@@ -91,4 +91,22 @@ puts "  rss before:          #{rss_before || 'n/a'} KB"
 puts "  rss peak (sampled):  #{rss_peak || 'n/a'} KB"
 puts "  rss after:           #{rss_after || 'n/a'} KB"
 
+helper.write_json_report(
+  "stream",
+  config: {
+    duration_seconds: duration_seconds,
+    chunk_frames: chunk_frames,
+    sample_rate: format.sample_rate,
+    channels: format.channels
+  },
+  extra: {
+    source_frames: generated_frames,
+    source_file_size_mb: helper.file_size_mb(source_path).round(4),
+    output_file_size_mb: helper.file_size_mb(output_path).round(4),
+    rss_before_kb: rss_before,
+    rss_peak_kb: rss_peak,
+    rss_after_kb: rss_after
+  }
+)
+
 helper.maybe_cleanup(source_path, output_path)

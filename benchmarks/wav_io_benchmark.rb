@@ -107,4 +107,14 @@ else
   puts "  Install with: gem install wavefile"
 end
 
+helper.write_json_report(
+  "wav_io",
+  config: { iterations: iterations, duration_seconds: duration_seconds, chunk_size: chunk_size },
+  extra: {
+    source_file_size_mb: helper.file_size_mb(source_path).round(4),
+    processed_file_size_mb: helper.file_size_mb(processed_path).round(4),
+    wavefile_compare: wavefile_loaded
+  }
+)
+
 helper.maybe_cleanup(source_path, processed_path, wavefile_path)

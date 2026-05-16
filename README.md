@@ -313,6 +313,8 @@ bundle exec rake bench:dsp
 bundle exec rake bench:flac
 bundle exec rake bench:stream
 bundle exec rake bench:all
+bundle exec rake bench:baseline
+bundle exec rake bench:compare
 ```
 
 Release checks:

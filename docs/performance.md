@@ -16,6 +16,8 @@ bundle exec rake bench:dsp
 bundle exec rake bench:flac
 bundle exec rake bench:stream
 bundle exec rake bench:all
+bundle exec rake bench:baseline
+bundle exec rake bench:compare
 ```
 
 Current optimization priorities:
@@ -24,3 +26,6 @@ Current optimization priorities:
 - Keep immutable public APIs while allowing internal buffer reuse where safe.
 - Prefer streaming pipelines for large inputs.
 - Keep pure Ruby codecs measurable with stable benchmark scripts.
+
+Set `BENCH_JSON=path/to/report.json` when running an individual benchmark to write a machine-readable report.
+Use `bench:baseline` to write reports under `tmp/benchmarks/baseline`, then `bench:compare` to compare a later run with `BENCH_THRESHOLD` (default `1.2`).

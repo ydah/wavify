@@ -9,10 +9,13 @@ module Wavify
       # Recognized filename extensions.
       EXTENSIONS = %w[.flac].freeze
       STREAMINFO_BLOCK_TYPE = 0 # :nodoc:
+      SEEKTABLE_BLOCK_TYPE = 3 # :nodoc:
+      VORBIS_COMMENT_BLOCK_TYPE = 4 # :nodoc:
       STREAMINFO_LENGTH = 34 # :nodoc:
       FLAC_SYNC_CODE = 0x3FFE # :nodoc:
       # Default block size used by the FLAC stream encoder.
       DEFAULT_ENCODE_BLOCK_SIZE = 4096
+      COMPRESSION_BLOCK_SIZES = [1024, 2048, 4096, 4096, 4096, 8192, 8192, 16_384, 16_384].freeze # :nodoc:
 
       BLOCK_SIZE_CODES = { # :nodoc:
         1 => 192,
@@ -207,18 +210,20 @@ module Wavify
         # @param format [Wavify::Core::Format]
         # @param block_size [Integer]
         # @return [String, IO]
-        def write(io_or_path, sample_buffer, format:, block_size: DEFAULT_ENCODE_BLOCK_SIZE, **codec_options)
+        def write(io_or_path, sample_buffer, format:, block_size: DEFAULT_ENCODE_BLOCK_SIZE, compression_level: nil,
+                  comments: nil, **codec_options)
           validate_no_codec_options!(codec_options, operation: "FLAC write")
           raise InvalidParameterError, "sample_buffer must be Core::SampleBuffer" unless sample_buffer.is_a?(Core::SampleBuffer)
 
           target_format = validate_encode_format!(format)
           buffer = sample_buffer.format == target_format ? sample_buffer : sample_buffer.convert(target_format)
-          target_block_size = normalize_encode_block_size(block_size)
+          target_block_size = normalize_write_block_size(block_size, compression_level)
+          vorbis_comments = normalize_vorbis_comments(comments)
 
           io, close_io = open_output(io_or_path)
           io.rewind if io.respond_to?(:rewind)
           io.truncate(0) if io.respond_to?(:truncate)
-          io.write(encode_verbatim_stream(buffer, target_format, block_size: target_block_size))
+          io.write(encode_verbatim_stream(buffer, target_format, block_size: target_block_size, comments: vorbis_comments))
           io.flush if io.respond_to?(:flush)
           io.rewind if io.respond_to?(:rewind)
           io_or_path
@@ -264,7 +269,7 @@ module Wavify
         # @param block_size_strategy [Symbol] `:per_chunk`, `:fixed`, or `:source_chunk`
         # @return [Enumerator, String, IO]
         def stream_write(io_or_path, format:, block_size: DEFAULT_ENCODE_BLOCK_SIZE, block_size_strategy: :per_chunk,
-                         **codec_options)
+                         compression_level: nil, comments: nil, **codec_options)
           validate_no_codec_options!(codec_options, operation: "FLAC stream_write")
           unless block_given?
             return enum_for(
@@ -272,18 +277,21 @@ module Wavify
               io_or_path,
               format: format,
               block_size: block_size,
-              block_size_strategy: block_size_strategy
+              block_size_strategy: block_size_strategy,
+              compression_level: compression_level,
+              comments: comments
             )
           end
 
           target_format = validate_encode_format!(format)
-          stream_write_options = normalize_stream_write_options(block_size, block_size_strategy)
+          stream_write_options = normalize_stream_write_options(block_size, block_size_strategy, compression_level)
+          vorbis_comments = normalize_vorbis_comments(comments)
           io, close_io = open_output(io_or_path)
           ensure_seekable!(io)
           io.rewind if io.respond_to?(:rewind)
           io.truncate(0) if io.respond_to?(:truncate)
 
-          header = write_stream_header(io)
+          header = write_stream_header(io, comments: vorbis_comments)
           total_sample_frames = 0
           next_frame_number = 0
           encode_stats = empty_encode_stats
@@ -378,6 +386,8 @@ module Wavify
           raise InvalidFormatError, "invalid FLAC stream marker" unless marker == "fLaC"
 
           streaminfo = nil
+          seektable = nil
+          vorbis_comment = nil
           loop do
             header = read_exact(io, 4, "truncated FLAC metadata block header")
             byte0 = header.getbyte(0)
@@ -386,13 +396,26 @@ module Wavify
             length = ((header.getbyte(1) << 16) | (header.getbyte(2) << 8) | header.getbyte(3))
             data = read_exact(io, length, "truncated FLAC metadata block")
 
-            streaminfo = parse_streaminfo(data) if block_type == STREAMINFO_BLOCK_TYPE
+            case block_type
+            when STREAMINFO_BLOCK_TYPE
+              streaminfo = parse_streaminfo(data)
+            when SEEKTABLE_BLOCK_TYPE
+              seektable = parse_seektable(data)
+            when VORBIS_COMMENT_BLOCK_TYPE
+              vorbis_comment = parse_vorbis_comment(data)
+            end
             break if last_block
           end
 
           raise InvalidFormatError, "STREAMINFO metadata block missing" unless streaminfo
 
-          streaminfo
+          streaminfo.merge(
+            seektable: seektable,
+            seekpoints: seektable&.fetch(:points) || [],
+            vorbis_comment: vorbis_comment,
+            vendor: vorbis_comment&.fetch(:vendor),
+            comments: vorbis_comment&.fetch(:comments) || {}
+          )
         end
 
         def parse_streaminfo(data)
@@ -428,7 +451,53 @@ module Wavify
           }
         end
 
-        def encode_verbatim_stream(buffer, format, block_size: DEFAULT_ENCODE_BLOCK_SIZE)
+        def parse_seektable(data)
+          raise InvalidFormatError, "SEEKTABLE block size must be a multiple of 18" unless (data.bytesize % 18).zero?
+
+          points = data.bytes.each_slice(18).map do |bytes|
+            block = bytes.pack("C*")
+            sample_number = block[0, 8].unpack1("Q>")
+            {
+              sample_number: sample_number,
+              stream_offset: block[8, 8].unpack1("Q>"),
+              frame_samples: block[16, 2].unpack1("n"),
+              placeholder: sample_number == 0xFFFF_FFFF_FFFF_FFFF
+            }
+          end
+          { points: points }
+        end
+
+        def parse_vorbis_comment(data)
+          offset = 0
+          vendor, offset = read_vorbis_comment_string(data, offset, "vendor")
+          comment_count, offset = read_vorbis_comment_uint32(data, offset, "comment count")
+
+          raw = []
+          comments = {}
+          comment_count.times do
+            text, offset = read_vorbis_comment_string(data, offset, "comment")
+            raw << text
+            key, value = text.split("=", 2)
+            comments[key.downcase] = value if key && value
+          end
+
+          { vendor: vendor, raw: raw, comments: comments }
+        end
+
+        def read_vorbis_comment_uint32(data, offset, label)
+          raise InvalidFormatError, "truncated Vorbis Comment #{label}" if offset + 4 > data.bytesize
+
+          [data.byteslice(offset, 4).unpack1("V"), offset + 4]
+        end
+
+        def read_vorbis_comment_string(data, offset, label)
+          length, offset = read_vorbis_comment_uint32(data, offset, "#{label} length")
+          raise InvalidFormatError, "truncated Vorbis Comment #{label}" if offset + length > data.bytesize
+
+          [data.byteslice(offset, length).force_encoding(Encoding::UTF_8), offset + length]
+        end
+
+        def encode_verbatim_stream(buffer, format, block_size: DEFAULT_ENCODE_BLOCK_SIZE, comments: nil)
           encoded_frames = encode_verbatim_frames(
             buffer.samples,
             format,
@@ -445,17 +514,27 @@ module Wavify
           )
 
           bytes = +"fLaC"
-          bytes << [0x80, 0x00, 0x00, STREAMINFO_LENGTH].pack("C4")
+          bytes << metadata_block_header(STREAMINFO_BLOCK_TYPE, STREAMINFO_LENGTH, last: comments.nil?)
           bytes << streaminfo
+          if comments
+            comment_block = build_vorbis_comment_block(comments)
+            bytes << metadata_block_header(VORBIS_COMMENT_BLOCK_TYPE, comment_block.bytesize, last: true)
+            bytes << comment_block
+          end
           bytes << encoded_frames.fetch(:bytes)
           bytes
         end
 
-        def write_stream_header(io)
+        def write_stream_header(io, comments: nil)
           io.write("fLaC")
-          io.write([0x80, 0x00, 0x00, STREAMINFO_LENGTH].pack("C4"))
+          io.write(metadata_block_header(STREAMINFO_BLOCK_TYPE, STREAMINFO_LENGTH, last: comments.nil?))
           streaminfo_offset = io.pos
           io.write("\x00" * STREAMINFO_LENGTH)
+          if comments
+            comment_block = build_vorbis_comment_block(comments)
+            io.write(metadata_block_header(VORBIS_COMMENT_BLOCK_TYPE, comment_block.bytesize, last: true))
+            io.write(comment_block)
+          end
           { streaminfo_offset: streaminfo_offset }
         end
 
@@ -482,7 +561,59 @@ module Wavify
           }
         end
 
-        def normalize_stream_write_options(block_size, block_size_strategy)
+        def metadata_block_header(block_type, length, last:)
+          [block_type | (last ? 0x80 : 0), (length >> 16) & 0xFF, (length >> 8) & 0xFF, length & 0xFF].pack("C4")
+        end
+
+        def build_vorbis_comment_block(comments)
+          vendor = "Wavify"
+          entries = comments.map { |key, value| "#{key.to_s.upcase}=#{value}" }
+          bytes = [vendor.bytesize].pack("V") + vendor + [entries.length].pack("V")
+          entries.each do |entry|
+            bytes << [entry.bytesize].pack("V")
+            bytes << entry
+          end
+          bytes
+        end
+
+        def normalize_vorbis_comments(comments)
+          return nil if comments.nil?
+
+          normalized = case comments
+                       when Hash
+                         comments.transform_keys(&:to_s).transform_values(&:to_s)
+                       when Array
+                         comments.each_with_object({}) do |entry, result|
+                           key, value = entry.to_s.split("=", 2)
+                           raise InvalidParameterError, "FLAC comments must be KEY=VALUE strings" unless key && value
+
+                           result[key] = value
+                         end
+                       else
+                         raise InvalidParameterError, "comments must be a Hash or Array"
+                       end
+          normalized.empty? ? nil : normalized
+        end
+
+        def normalize_write_block_size(block_size, compression_level)
+          level = normalize_compression_level(compression_level)
+          return normalize_encode_block_size(block_size) unless level && block_size == DEFAULT_ENCODE_BLOCK_SIZE
+
+          normalize_encode_block_size(COMPRESSION_BLOCK_SIZES.fetch(level))
+        end
+
+        def normalize_compression_level(compression_level)
+          return nil if compression_level.nil?
+
+          level = Integer(compression_level)
+          return level if level.between?(0, 8)
+
+          raise InvalidParameterError, "compression_level must be in 0..8"
+        rescue ArgumentError, TypeError
+          raise InvalidParameterError, "compression_level must be an Integer"
+        end
+
+        def normalize_stream_write_options(block_size, block_size_strategy, compression_level = nil)
           strategy = block_size_strategy.to_sym
           supported = %i[per_chunk source_chunk fixed]
           unless supported.include?(strategy)
@@ -491,7 +622,7 @@ module Wavify
 
           {
             strategy: strategy,
-            block_size: normalize_encode_block_size(block_size)
+            block_size: normalize_write_block_size(block_size, compression_level)
           }
         rescue NoMethodError
           raise InvalidParameterError, "block_size_strategy must be Symbol/String: #{block_size_strategy.inspect}"
