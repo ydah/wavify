@@ -9,6 +9,7 @@ gem "irb"
 gem "benchmark", "~> 0.4"
 gem "rake", "~> 13.0"
 gem "rubocop", "~> 1.76", require: false
+gem "rubocop-rake", "~> 0.7", require: false
 gem "rspec", "~> 3.0"
 gem "simplecov", "~> 0.22", require: false
 gem "yard", "~> 0.9", require: false
