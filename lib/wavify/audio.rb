@@ -229,16 +229,16 @@ module Wavify
     # @param dither [Boolean] add TPDF dither when converting to PCM
     # @param dither_seed [Integer, nil] deterministic seed for dither noise
     # @return [Audio]
-    def convert(new_format, dither: false, dither_seed: nil)
-      self.class.new(@buffer.convert(new_format, dither: dither, dither_seed: dither_seed))
+    def convert(new_format, dither: false, dither_seed: nil, resampler: :linear)
+      self.class.new(@buffer.convert(new_format, dither: dither, dither_seed: dither_seed, resampler: resampler))
     end
 
     # Converts to another sample rate.
     #
     # @param sample_rate [Integer]
     # @return [Audio]
-    def resample(sample_rate:)
-      convert(format.with(sample_rate: sample_rate))
+    def resample(sample_rate:, resampler: :linear)
+      convert(format.with(sample_rate: sample_rate), resampler: resampler)
     end
 
     # Converts to mono by downmixing channels.

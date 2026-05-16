@@ -279,7 +279,7 @@ wavify doctor
 - OGG Vorbis uses optional native gems (`ogg-ruby`, `vorbis`).
 - Raw PCM/float requires `format:` for read, stream read, and metadata.
 - Streaming writes for header-based formats require seekable output IO.
-- Resampling currently uses linear interpolation.
+- Resampling defaults to linear interpolation; pass `resampler: :windowed_sinc` for higher-quality offline conversion.
 
 ## Development
 

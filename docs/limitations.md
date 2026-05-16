@@ -8,7 +8,7 @@ Wavify intentionally stays small and Ruby-first.
 - AIFF-C is not supported.
 - Raw PCM/float has no embedded metadata. Pass `format:` when reading, streaming, or inspecting metadata.
 - Streaming WAV/AIFF/FLAC writes require seekable output IO because headers are finalized after writing samples.
-- Resampling currently uses linear interpolation. It is predictable and dependency-free, but not a mastering-grade sample-rate converter.
+- Resampling defaults to linear interpolation. Use `resampler: :windowed_sinc` for higher-quality offline conversion when speed is less important.
 - The sequencer DSL is intentionally compact and does not aim to replace a DAW.
 
 For large files, prefer `Audio.stream` over `Audio.read` to avoid loading the entire payload into memory.

@@ -151,6 +151,27 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(converted.samples).to all(be_between(-1.0, 1.0))
     end
 
+    it "supports windowed sinc resampling" do
+      source_format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 32, sample_format: :float)
+      target_format = source_format.with(sample_rate: 12_000)
+      source = described_class.new([0.0, 0.25, 0.5, 0.25, 0.0, -0.25, -0.5, -0.25], source_format)
+
+      converted = source.convert(target_format, resampler: :windowed_sinc)
+
+      expect(converted.sample_frame_count).to eq(12)
+      expect(converted.samples).to all(be_between(-1.0, 1.0))
+      expect(converted.samples).not_to eq(source.convert(target_format, resampler: :linear).samples)
+    end
+
+    it "rejects unsupported resamplers" do
+      target = float_stereo.with(sample_rate: 48_000)
+      source = described_class.new([0.0, 0.0], float_stereo)
+
+      expect do
+        source.convert(target, resampler: :nearest)
+      end.to raise_error(Wavify::InvalidParameterError, /resampler/)
+    end
+
     it "resamples after channel conversion" do
       source_format = Wavify::Core::Format.new(channels: 2, sample_rate: 16_000, bit_depth: 32, sample_format: :float)
       target_format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 32, sample_format: :float)

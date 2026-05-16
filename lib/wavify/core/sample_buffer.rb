@@ -52,16 +52,17 @@ module Wavify
       #
       # @param new_format [Format]
       # @return [SampleBuffer]
-      def convert(new_format, dither: false, dither_seed: nil)
+      def convert(new_format, dither: false, dither_seed: nil, resampler: :linear)
         raise InvalidParameterError, "new_format must be Core::Format" unless new_format.is_a?(Format)
 
+        resampler = normalize_resampler!(resampler)
         dither_rng = dither_applicable?(new_format, dither) ? Random.new(dither_seed) : nil
         frames = frame_view.map do |frame|
           frame.map { |sample| to_normalized_float(sample, @format) }
         end
 
         converted_frames = convert_channels(frames, new_format.channels)
-        converted_frames = resample_frames(converted_frames, new_format.sample_rate)
+        converted_frames = resample_frames(converted_frames, new_format.sample_rate, resampler: resampler)
         converted_samples = converted_frames.flatten.map do |sample|
           from_normalized_float(sample, new_format, dither_rng: dither_rng)
         end
@@ -202,7 +203,16 @@ module Wavify
         frames.map { |frame| upmix_with_duplication(frame, target_channels) }
       end
 
-      def resample_frames(frames, target_sample_rate)
+      def normalize_resampler!(resampler)
+        value = resampler.to_sym
+        return value if %i[linear windowed_sinc].include?(value)
+
+        raise InvalidParameterError, "resampler must be :linear or :windowed_sinc"
+      rescue NoMethodError
+        raise InvalidParameterError, "resampler must be Symbol/String"
+      end
+
+      def resample_frames(frames, target_sample_rate, resampler:)
         return frames if frames.empty? || @format.sample_rate == target_sample_rate
 
         source_frame_count = frames.length
@@ -212,6 +222,8 @@ module Wavify
         channels = frames.first.length
         Array.new(target_frame_count) do |target_index|
           source_position = (target_index * @format.sample_rate.to_f) / target_sample_rate
+          next windowed_sinc_frame(frames, source_position, channels) if resampler == :windowed_sinc
+
           lower_index = source_position.floor
           upper_index = [lower_index + 1, source_frame_count - 1].min
           fraction = source_position - lower_index
@@ -222,6 +234,39 @@ module Wavify
             lower_frame.fetch(channel) + ((upper_frame.fetch(channel) - lower_frame.fetch(channel)) * fraction)
           end
         end
+      end
+
+      def windowed_sinc_frame(frames, source_position, channels)
+        radius = 8
+        center = source_position.floor
+        start_index = [center - radius + 1, 0].max
+        end_index = [center + radius, frames.length - 1].min
+
+        Array.new(channels) do |channel|
+          weighted_sum = 0.0
+          weight_sum = 0.0
+          (start_index..end_index).each do |source_index|
+            distance = source_position - source_index
+            weight = sinc(distance) * hann_window(distance, radius)
+            weighted_sum += frames.fetch(source_index).fetch(channel) * weight
+            weight_sum += weight
+          end
+          weight_sum.zero? ? frames.fetch(center.clamp(0, frames.length - 1)).fetch(channel) : (weighted_sum / weight_sum)
+        end
+      end
+
+      def sinc(value)
+        return 1.0 if value.abs < 1e-12
+
+        x = Math::PI * value
+        Math.sin(x) / x
+      end
+
+      def hann_window(distance, radius)
+        normalized = distance.abs / radius.to_f
+        return 0.0 if normalized > 1.0
+
+        0.5 + (0.5 * Math.cos(Math::PI * normalized))
       end
 
       def resampled_frame_count(source_frame_count, target_sample_rate)
