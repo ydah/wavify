@@ -51,6 +51,33 @@ RSpec.describe Wavify::Codecs::Aiff do
         expect(metadata[:duration].total_seconds).to eq(1.0)
       end
     end
+
+    it "parses marker and instrument loop metadata" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 8, sample_format: :pcm)
+      comm_chunk = described_class.send(:build_comm_chunk, format, 4)
+      marker_name = "loop"
+      marker_record = [1, 10, marker_name.bytesize].pack("n N C") + marker_name + "\x00"
+      mark_chunk = [1].pack("n") + marker_record
+      inst_chunk = [60, 0, 0, 127, 1, 127, 0].pack("C6s>") + [1, 1, 1, 0, 0, 0].pack("n6")
+      ssnd_chunk = [0, 0].pack("N2") + [0, 1, 2, 3].pack("c*")
+      bytes = build_aiff_bytes(
+        ["COMM", comm_chunk],
+        ["MARK", mark_chunk],
+        ["INST", inst_chunk],
+        ["SSND", ssnd_chunk]
+      )
+
+      Tempfile.create(["wavify-aiff-metadata", ".aiff"]) do |file|
+        file.binmode
+        file.write(bytes)
+        file.flush
+
+        metadata = described_class.metadata(file.path)
+        expect(metadata[:markers]).to eq([{ identifier: 1, position: 10, name: "loop" }])
+        expect(metadata[:instrument][:base_note]).to eq(60)
+        expect(metadata[:instrument][:sustain_loop]).to eq(mode: 1, begin_marker: 1, end_marker: 1)
+      end
+    end
   end
 
   describe ".stream_read" do
@@ -94,5 +121,16 @@ RSpec.describe Wavify::Codecs::Aiff do
         end.to raise_error(Wavify::UnsupportedFormatError)
       end
     end
+  end
+
+  def build_aiff_bytes(*chunks)
+    body = +"AIFF"
+    chunks.each do |chunk_id, chunk_data|
+      body << chunk_id
+      body << [chunk_data.bytesize].pack("N")
+      body << chunk_data
+      body << "\x00" if chunk_data.bytesize.odd?
+    end
+    +"FORM" << [body.bytesize].pack("N") << body
   end
 end

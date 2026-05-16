@@ -152,7 +152,9 @@ module Wavify
           {
             format: format,
             sample_frame_count: sample_frame_count,
-            duration: Core::Duration.from_samples(sample_frame_count, format.sample_rate)
+            duration: Core::Duration.from_samples(sample_frame_count, format.sample_rate),
+            markers: info[:markers],
+            instrument: info[:instrument]
           }
         ensure
           io.close if close_io && io
@@ -173,7 +175,9 @@ module Wavify
             format: nil,
             sample_frame_count: nil,
             sound_data_offset: nil,
-            sound_data_size: nil
+            sound_data_size: nil,
+            markers: [],
+            instrument: nil
           }
 
           until io.eof?
@@ -197,6 +201,12 @@ module Wavify
               info[:sound_data_offset] = io.pos
               info[:sound_data_size] = sound_data_size
               skip_bytes(io, sound_data_size)
+            when "MARK"
+              chunk_data = read_exact(io, chunk_size, "truncated MARK chunk")
+              info[:markers] = parse_mark_chunk(chunk_data)
+            when "INST"
+              chunk_data = read_exact(io, chunk_size, "truncated INST chunk")
+              info[:instrument] = parse_inst_chunk(chunk_data)
             else
               skip_bytes(io, chunk_size)
             end
@@ -238,6 +248,50 @@ module Wavify
           io.seek(info.fetch(:sound_data_offset), IO::SEEK_SET)
           data = read_exact(io, info.fetch(:sound_data_size), "truncated SSND data")
           decode_samples(data, format)
+        end
+
+        def parse_mark_chunk(chunk)
+          return [] if chunk.bytesize < 2
+
+          marker_count = chunk.unpack1("n")
+          markers = []
+          offset = 2
+          marker_count.times do
+            break if offset + 7 > chunk.bytesize
+
+            identifier = chunk.byteslice(offset, 2).unpack1("n")
+            position = chunk.byteslice(offset + 2, 4).unpack1("N")
+            name_length = chunk.getbyte(offset + 6)
+            name_start = offset + 7
+            break if name_start + name_length > chunk.bytesize
+
+            name = chunk.byteslice(name_start, name_length).force_encoding(Encoding::UTF_8)
+            markers << { identifier: identifier, position: position, name: name }
+            offset = name_start + name_length
+            offset += 1 if (name_length + 1).odd?
+          end
+          markers
+        end
+
+        def parse_inst_chunk(chunk)
+          return nil if chunk.bytesize < 20
+
+          base_note, detune, low_note, high_note, low_velocity, high_velocity, gain =
+            chunk.byteslice(0, 8).unpack("C6s>")
+          sustain_mode, sustain_begin, sustain_end, release_mode, release_begin, release_end =
+            chunk.byteslice(8, 12).unpack("n n n n n n")
+
+          {
+            base_note: base_note,
+            detune: detune,
+            low_note: low_note,
+            high_note: high_note,
+            low_velocity: low_velocity,
+            high_velocity: high_velocity,
+            gain: gain,
+            sustain_loop: { mode: sustain_mode, begin_marker: sustain_begin, end_marker: sustain_end },
+            release_loop: { mode: release_mode, begin_marker: release_begin, end_marker: release_end }
+          }
         end
 
         def decode_samples(data, format)
