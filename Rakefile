@@ -64,6 +64,7 @@ namespace :docs do
     %w[
       examples/format_convert.rb
       examples/synth_pad.rb
+      examples/drum_machine.rb
       examples/audio_processing.rb
     ].freeze
   end
@@ -104,7 +105,7 @@ namespace :docs do
     puts "docs check ok: #{percent}% >= #{minimum}%"
   end
 
-  desc "Smoke-run all example scripts (self-contained demo mode)"
+  desc "Smoke-run short example scripts (self-contained demo mode)"
   task :examples do
     example_scripts.each do |script|
       puts "== running #{script}"
