@@ -194,17 +194,26 @@ module Wavify
         raise InvalidNoteError, "invalid chord token: #{token.inspect}" unless match
 
         root_name = "#{match[1].upcase}#{match[2]}"
-        suffix = match[3].to_s
+        suffix, bass_name = match[3].to_s.split("/", 2)
         suffix_key = normalize_chord_suffix(suffix)
         intervals = CHORD_INTERVALS[suffix_key] || CHORD_INTERVALS[suffix]
         raise InvalidNoteError, "unsupported chord quality: #{suffix.inspect}" unless intervals
 
         root_midi = NoteSequence.new("#{root_name}#{default_octave}", default_octave: default_octave).midi_notes.first
+        midi_notes = intervals.map { |interval| root_midi + interval }
+        midi_notes = apply_chord_inversion(midi_notes, bass_name, root_midi, default_octave) if bass_name
         {
           token: token,
           root_midi: root_midi,
-          midi_notes: intervals.map { |interval| root_midi + interval }
+          midi_notes: midi_notes
         }
+      end
+
+      def self.apply_chord_inversion(midi_notes, bass_name, root_midi, default_octave)
+        bass = NoteSequence.new("#{bass_name}#{default_octave}", default_octave: default_octave).midi_notes.first
+        bass -= 12 while bass > root_midi
+        remaining = midi_notes.reject { |midi| midi % 12 == bass % 12 }
+        [bass, *remaining].sort
       end
 
       def self.normalize_chord_suffix(suffix)

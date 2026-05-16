@@ -28,9 +28,13 @@ module Wavify
       }.freeze
 
       # Parsed note event (`midi_note` is `nil` for rests).
-      Event = Struct.new(:index, :token, :midi_note, keyword_init: true) do
+      Event = Struct.new(:index, :token, :midi_note, :duration_denominator, :tie, keyword_init: true) do
         def rest?
           midi_note.nil?
+        end
+
+        def tie?
+          tie
         end
       end
 
@@ -93,16 +97,38 @@ module Wavify
         raise InvalidNoteError, "note sequence notation must not be empty" if tokens.empty?
 
         tokens.each_with_index.map do |token, index|
-          Event.new(index: index, token: token, midi_note: parse_token(token))
+          midi_note, duration_denominator, tie = parse_token(token)
+          Event.new(
+            index: index,
+            token: token,
+            midi_note: midi_note,
+            duration_denominator: duration_denominator,
+            tie: tie
+          )
         end
       end
 
       def parse_token(token)
-        return nil if token == "."
+        tie = token.end_with?("~")
+        body = tie ? token.delete_suffix("~") : token
+        body, duration_denominator = split_duration_suffix(body)
 
-        return parse_midi_number(token) if token.match?(/\A-?\d+\z/)
+        return [nil, duration_denominator, tie] if body == "."
 
-        parse_note_name(token)
+        midi_note = body.match?(/\A-?\d+\z/) ? parse_midi_number(body) : parse_note_name(body)
+        [midi_note, duration_denominator, tie]
+      end
+
+      def split_duration_suffix(token)
+        body, denominator = token.split("/", 2)
+        return [body, nil] unless denominator
+
+        value = Integer(denominator)
+        raise InvalidNoteError, "duration denominator must be positive: #{token.inspect}" unless value.positive?
+
+        [body, value]
+      rescue ArgumentError
+        raise InvalidNoteError, "invalid duration suffix: #{token.inspect}"
       end
 
       def parse_midi_number(token)

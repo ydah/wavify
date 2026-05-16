@@ -29,6 +29,17 @@ RSpec.describe Wavify::Sequencer::Pattern do
       expect(pattern[3]).to be_accent
       expect(pattern[3].velocity).to eq(0.9)
     end
+
+    it "parses probability and ratchet modifiers" do
+      pattern = described_class.new("x?50:3-X:2")
+
+      expect(pattern.length).to eq(3)
+      expect(pattern[0].probability).to eq(0.5)
+      expect(pattern[0].ratchet).to eq(3)
+      expect(pattern[2]).to be_accent
+      expect(pattern[2].probability).to eq(1.0)
+      expect(pattern[2].ratchet).to eq(2)
+    end
   end
 
   describe "validation" do
@@ -48,6 +59,16 @@ RSpec.describe Wavify::Sequencer::Pattern do
       expect do
         described_class.new("x1.2---")
       end.to raise_error(Wavify::InvalidPatternError, /velocity/)
+    end
+
+    it "rejects invalid probability and ratchet modifiers" do
+      expect do
+        described_class.new("x?101")
+      end.to raise_error(Wavify::InvalidPatternError, /probability/)
+
+      expect do
+        described_class.new("x:0")
+      end.to raise_error(Wavify::InvalidPatternError, /ratchet/)
     end
   end
 end

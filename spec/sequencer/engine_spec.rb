@@ -40,6 +40,17 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(events.map { |event| event[:velocity] }).to eq([0.25, 0.9])
     end
 
+    it "expands ratcheted trigger events and carries probability metadata" do
+      track = Wavify::Sequencer::Track.new(:drums, pattern: "x?50:3---")
+      events = engine.timeline_for_track(track, bars: 1)
+
+      expect(events.length).to eq(3)
+      expect(events.map { |event| event[:ratchet_index] }).to eq([0, 1, 2])
+      expect(events.map { |event| event[:ratchet_count] }).to eq([3, 3, 3])
+      expect(events.map { |event| event[:probability] }).to eq([0.5, 0.5, 0.5])
+      expect(events[1][:start_time]).to be_within(0.0001).of(events[0][:duration])
+    end
+
     it "schedules note and chord events" do
       track = Wavify::Sequencer::Track.new(
         :lead,
@@ -53,6 +64,17 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(kinds.count(:note)).to eq(6)
       expect(kinds.count(:chord)).to eq(2)
       expect(events.any? { |event| event[:kind] == :chord && event[:chord] == "G7" }).to be(true)
+    end
+
+    it "uses note duration suffixes and ties adjacent equal notes" do
+      track = Wavify::Sequencer::Track.new(:lead, note_sequence: "C4/8 D4~ D4 E4", note_resolution: 8)
+      events = engine.timeline_for_track(track, bars: 1).select { |event| event[:kind] == :note }
+
+      expect(events.length).to eq(3)
+      expect(events[0][:duration]).to be_within(0.0001).of(engine.bar_duration_seconds / 8.0)
+      expect(events[1][:midi_notes]).to eq([62])
+      expect(events[1][:duration]).to be_within(0.0001).of(engine.step_duration_at(1, 8) + engine.step_duration_at(2, 8))
+      expect(events[2][:midi_notes]).to eq([64])
     end
   end
 

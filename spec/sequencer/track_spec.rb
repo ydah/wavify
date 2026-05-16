@@ -41,6 +41,12 @@ RSpec.describe Wavify::Sequencer::Track do
       expect(progression[2][:midi_notes]).to eq([55, 59, 62, 65])
     end
 
+    it "parses slash chord inversions" do
+      chord = described_class.parse_chords(["Cmaj7/E"], default_octave: 4).first
+
+      expect(chord[:midi_notes]).to eq([52, 60, 67, 71])
+    end
+
     it "rejects unsupported chord qualities" do
       expect do
         described_class.parse_chords(["C13"])

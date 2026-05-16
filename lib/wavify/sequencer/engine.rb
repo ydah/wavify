@@ -216,18 +216,13 @@ module Wavify
         resolution = track.pattern.length
 
         (0...bars).flat_map do |bar_offset|
-          track.pattern.filter(&:trigger?).map do |step|
+          track.pattern.filter(&:trigger?).flat_map do |step|
             absolute_bar = start_bar + bar_offset
             start_time = (absolute_bar * bar_duration_seconds) + step_start_seconds(step.index, resolution)
-            {
-              kind: :trigger,
-              track: track.name,
-              bar: absolute_bar,
-              step_index: step.index,
-              start_time: start_time,
-              duration: step_duration_at(step.index, resolution),
-              velocity: step.velocity
-            }
+            duration = step_duration_at(step.index, resolution)
+            expand_pattern_step(step, start_time: start_time, duration: duration).map do |event|
+              event.merge(kind: :trigger, track: track.name, bar: absolute_bar, step_index: step.index)
+            end
           end
         end
       end
@@ -236,22 +231,67 @@ module Wavify
         resolution = track.note_resolution
 
         (0...bars).flat_map do |bar_offset|
-          track.note_sequence.each_with_object([]) do |event, result|
+          result = []
+          events = track.note_sequence.events
+          index = 0
+          while index < events.length
+            event = events.fetch(index)
+            index += 1
             next if event.rest?
 
             absolute_bar = start_bar + bar_offset
             start_time = (absolute_bar * bar_duration_seconds) + step_start_seconds(event.index, resolution)
+            duration, index = note_duration_and_next_index(events, index - 1, resolution)
             result << {
               kind: :note,
               track: track.name,
               bar: absolute_bar,
               step_index: event.index,
               start_time: start_time,
-              duration: step_duration_at(event.index, resolution),
+              duration: duration,
               midi_notes: [event.midi_note]
             }
           end
+          result
         end
+      end
+
+      def expand_pattern_step(step, start_time:, duration:)
+        ratchet = step.ratchet || 1
+        event_duration = duration / ratchet
+        Array.new(ratchet) do |ratchet_index|
+          {
+            start_time: start_time + (event_duration * ratchet_index),
+            duration: event_duration,
+            velocity: step.velocity,
+            probability: step.probability || 1.0,
+            ratchet_index: ratchet_index,
+            ratchet_count: ratchet
+          }
+        end
+      end
+
+      def note_duration_and_next_index(events, start_index, resolution)
+        event = events.fetch(start_index)
+        duration = note_event_duration(event, resolution)
+        cursor = start_index
+
+        while event.tie? && cursor + 1 < events.length
+          next_event = events.fetch(cursor + 1)
+          break if next_event.rest? || next_event.midi_note != event.midi_note
+
+          duration += note_event_duration(next_event, resolution)
+          cursor += 1
+          event = next_event
+        end
+
+        [duration, cursor + 1]
+      end
+
+      def note_event_duration(event, resolution)
+        return bar_duration_seconds / event.duration_denominator.to_f if event.duration_denominator
+
+        step_duration_at(event.index, resolution)
       end
 
       def schedule_chord_events(track, bars:, start_bar:)

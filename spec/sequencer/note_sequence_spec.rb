@@ -27,6 +27,14 @@ RSpec.describe Wavify::Sequencer::NoteSequence do
 
       expect(sequence.midi_notes).to eq([61, 63, 58])
     end
+
+    it "parses duration suffixes and ties" do
+      sequence = described_class.new("C4/8 C4~ C4 .")
+
+      expect(sequence[0].duration_denominator).to eq(8)
+      expect(sequence[1]).to be_tie
+      expect(sequence[2]).not_to be_tie
+    end
   end
 
   describe "validation" do
@@ -46,6 +54,12 @@ RSpec.describe Wavify::Sequencer::NoteSequence do
       expect do
         described_class.new("   ")
       end.to raise_error(Wavify::InvalidNoteError)
+    end
+
+    it "rejects invalid duration suffixes" do
+      expect do
+        described_class.new("C4/0")
+      end.to raise_error(Wavify::InvalidNoteError, /duration/)
     end
   end
 end

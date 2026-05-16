@@ -2,12 +2,12 @@
 
 module Wavify
   module Sequencer
-    # Step-pattern parser (`x`, `X`, `x0.7`, `-`, `.`) for trigger sequencing.
+    # Step-pattern parser (`x`, `X`, `x0.7`, `x?50`, `x:3`, `-`, `.`) for trigger sequencing.
     class Pattern
       include Enumerable
 
       # Parsed pattern step value object.
-      Step = Struct.new(:index, :trigger, :accent, :symbol, :velocity, keyword_init: true) do
+      Step = Struct.new(:index, :trigger, :accent, :symbol, :velocity, :probability, :ratchet, keyword_init: true) do
         def rest?
           !trigger
         end
@@ -94,11 +94,20 @@ module Wavify
           when "x", "X"
             cursor += 1
             velocity_text, cursor = scan_velocity_suffix(chars, cursor)
+            probability, ratchet, cursor = scan_trigger_modifiers(chars, cursor, index)
             default_velocity = char == "X" ? 1.0 : 0.8
             velocity = velocity_text ? parse_velocity!(velocity_text, index) : default_velocity
-            steps << Step.new(index: index, trigger: true, accent: char == "X", symbol: char, velocity: velocity)
+            steps << Step.new(
+              index: index,
+              trigger: true,
+              accent: char == "X",
+              symbol: char,
+              velocity: velocity,
+              probability: probability,
+              ratchet: ratchet
+            )
           when "-", "."
-            steps << Step.new(index: index, trigger: false, accent: false, symbol: char, velocity: 0.0)
+            steps << Step.new(index: index, trigger: false, accent: false, symbol: char, velocity: 0.0, probability: 0.0, ratchet: 1)
             cursor += 1
           else
             raise InvalidPatternError, "invalid pattern symbol #{char.inspect} at step #{index}"
@@ -121,6 +130,36 @@ module Wavify
         [chars[start...cursor], cursor]
       end
 
+      def scan_trigger_modifiers(chars, cursor, index)
+        probability = 1.0
+        ratchet = 1
+
+        while cursor < chars.length && ["?", ":"].include?(chars[cursor])
+          case chars[cursor]
+          when "?"
+            text, cursor = scan_numeric_modifier(chars, cursor + 1, "probability", index)
+            probability = parse_probability!(text, index)
+          when ":"
+            text, cursor = scan_numeric_modifier(chars, cursor + 1, "ratchet", index)
+            ratchet = parse_ratchet!(text, index)
+          end
+        end
+
+        [probability, ratchet, cursor]
+      end
+
+      def scan_numeric_modifier(chars, cursor, name, index)
+        start = cursor
+        cursor += 1 while cursor < chars.length && chars[cursor].match?(/\d/)
+        if chars[cursor] == "."
+          cursor += 1
+          cursor += 1 while cursor < chars.length && chars[cursor].match?(/\d/)
+        end
+        raise InvalidPatternError, "missing #{name} value at step #{index}" if start == cursor
+
+        [chars[start...cursor], cursor]
+      end
+
       def parse_velocity!(text, index)
         velocity = Float(text)
         return velocity if velocity.between?(0.0, 1.0)
@@ -128,6 +167,24 @@ module Wavify
         raise InvalidPatternError, "velocity must be between 0.0 and 1.0 at step #{index}"
       rescue ArgumentError
         raise InvalidPatternError, "invalid velocity #{text.inspect} at step #{index}"
+      end
+
+      def parse_probability!(text, index)
+        probability = Float(text) / 100.0
+        return probability if probability.between?(0.0, 1.0)
+
+        raise InvalidPatternError, "probability must be between 0 and 100 at step #{index}"
+      rescue ArgumentError
+        raise InvalidPatternError, "invalid probability #{text.inspect} at step #{index}"
+      end
+
+      def parse_ratchet!(text, index)
+        ratchet = Integer(text)
+        return ratchet if ratchet.positive?
+
+        raise InvalidPatternError, "ratchet must be positive at step #{index}"
+      rescue ArgumentError
+        raise InvalidPatternError, "invalid ratchet #{text.inspect} at step #{index}"
       end
     end
   end

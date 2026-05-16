@@ -225,12 +225,13 @@ module Wavify
               pattern.each do |step|
                 next unless step.trigger?
 
-                events << {
-                  sample_key: sample_key,
-                  start_time: bar_base_time + engine.step_start_seconds(step.index, pattern.length),
-                  velocity: step.velocity,
-                  sample_audio: sample_audio
-                }
+                start_time = bar_base_time + engine.step_start_seconds(step.index, pattern.length)
+                duration = engine.step_duration_at(step.index, pattern.length)
+                engine.send(:expand_pattern_step, step, start_time: start_time, duration: duration).each do |expanded|
+                  next if expanded.fetch(:probability).zero?
+
+                  events << expanded.merge(sample_key: sample_key, sample_audio: sample_audio)
+                end
               end
             end
           end
@@ -395,7 +396,10 @@ module Wavify
       def timeline_text_detail(event)
         case event.fetch(:kind)
         when :trigger
-          "step=#{event.fetch(:step_index)} velocity=#{Kernel.format('%.2f', event.fetch(:velocity))}"
+          detail = "step=#{event.fetch(:step_index)} velocity=#{Kernel.format('%.2f', event.fetch(:velocity))}"
+          detail += " probability=#{Kernel.format('%.2f', event.fetch(:probability))}" if event.fetch(:probability, 1.0) < 1.0
+          detail += " ratchet=#{event.fetch(:ratchet_index) + 1}/#{event.fetch(:ratchet_count)}" if event.fetch(:ratchet_count, 1) > 1
+          detail
         when :note
           "step=#{event.fetch(:step_index)} midi=#{event.fetch(:midi_notes).join(',')}"
         when :chord
