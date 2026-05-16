@@ -5,7 +5,7 @@ module Wavify
     # AIFF codec for PCM audio and uncompressed AIFF-C variants.
     class Aiff < Base
       # Recognized filename extensions.
-      EXTENSIONS = %w[.aiff .aif].freeze
+      EXTENSIONS = %w[.aiff .aif .aifc].freeze
 
       class << self
         # @param io_or_path [String, IO]
@@ -50,7 +50,8 @@ module Wavify
         # @param sample_buffer [Wavify::Core::SampleBuffer]
         # @param format [Wavify::Core::Format, nil]
         # @return [String, IO]
-        def write(io_or_path, sample_buffer, format: nil, **codec_options)
+        def write(io_or_path, sample_buffer, format: nil, form_type: nil, compression_type: nil, compression_name: nil,
+                  **codec_options)
           validate_no_codec_options!(codec_options, operation: "AIFF write")
           raise InvalidParameterError, "sample_buffer must be Core::SampleBuffer" unless sample_buffer.is_a?(Core::SampleBuffer)
 
@@ -58,6 +59,12 @@ module Wavify
           raise InvalidParameterError, "format must be Core::Format" unless target_format.is_a?(Core::Format)
           raise UnsupportedFormatError, "AIFF writer supports PCM only" unless target_format.sample_format == :pcm
 
+          write_options = normalize_write_options(
+            io_or_path,
+            form_type: form_type,
+            compression_type: compression_type,
+            compression_name: compression_name
+          )
           buffer = sample_buffer.format == target_format ? sample_buffer : sample_buffer.convert(target_format)
 
           io, close_io = open_output(io_or_path)
@@ -65,13 +72,18 @@ module Wavify
           io.truncate(0) if io.respond_to?(:truncate)
 
           sample_frames = buffer.sample_frame_count
-          comm_chunk = build_comm_chunk(target_format, sample_frames)
-          ssnd_chunk = build_ssnd_chunk(buffer.samples, target_format)
+          comm_chunk = build_comm_chunk(
+            target_format,
+            sample_frames,
+            compression_type: write_options.fetch(:compression_type),
+            compression_name: write_options.fetch(:compression_name)
+          )
+          ssnd_chunk = build_ssnd_chunk(buffer.samples, target_format, byte_order: write_options.fetch(:byte_order))
           form_size = 4 + chunk_size(comm_chunk) + chunk_size(ssnd_chunk)
 
           io.write("FORM")
           io.write([form_size].pack("N"))
-          io.write("AIFF")
+          io.write(write_options.fetch(:form_type))
           write_chunk(io, "COMM", comm_chunk)
           write_chunk(io, "SSND", ssnd_chunk)
           io.flush if io.respond_to?(:flush)
@@ -115,26 +127,40 @@ module Wavify
         # @param io_or_path [String, IO]
         # @param format [Wavify::Core::Format]
         # @return [Enumerator, String, IO]
-        def stream_write(io_or_path, format:, **codec_options)
+        def stream_write(io_or_path, format:, form_type: nil, compression_type: nil, compression_name: nil,
+                         **codec_options)
           validate_no_codec_options!(codec_options, operation: "AIFF stream_write")
-          return enum_for(__method__, io_or_path, format: format) unless block_given?
+          unless block_given?
+            return enum_for(
+              __method__,
+              io_or_path,
+              format: format,
+              form_type: form_type,
+              compression_type: compression_type,
+              compression_name: compression_name
+            )
+          end
           raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
           raise UnsupportedFormatError, "AIFF stream writer supports PCM only" unless format.sample_format == :pcm
 
-          chunks = []
-          sample_frames = 0
+          samples = []
           writer = lambda do |buffer|
             raise InvalidParameterError, "stream chunk must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
 
             converted = buffer.format == format ? buffer : buffer.convert(format)
-            chunks << encode_samples(converted.samples, format)
-            sample_frames += converted.sample_frame_count
+            samples.concat(converted.samples)
           end
           yield writer
 
-          data = chunks.join
-          temp_buffer = Core::SampleBuffer.new(decode_samples(data, format), format)
-          write(io_or_path, temp_buffer, format: format)
+          temp_buffer = Core::SampleBuffer.new(samples, format)
+          write(
+            io_or_path,
+            temp_buffer,
+            format: format,
+            form_type: form_type,
+            compression_type: compression_type,
+            compression_name: compression_name
+          )
         end
 
         # Reads AIFF metadata without decoding the full audio payload.
@@ -315,6 +341,42 @@ module Wavify
           raise UnsupportedFormatError, "unsupported AIFF-C compression type: #{compression_type.inspect}"
         end
 
+        def normalize_write_options(io_or_path, form_type:, compression_type:, compression_name:)
+          requested_form = normalize_write_form_type(form_type || inferred_form_type(io_or_path, compression_type))
+          requested_compression = compression_type&.to_s
+          requested_form = "AIFC" if requested_compression
+          if requested_form == "AIFF"
+            return { form_type: "AIFF", compression_type: nil, compression_name: nil, byte_order: :big }
+          end
+
+          normalized_compression = requested_compression || "NONE"
+          byte_order = byte_order_for_aifc!(normalized_compression)
+          {
+            form_type: "AIFC",
+            compression_type: normalized_compression,
+            compression_name: compression_name || default_aifc_compression_name(normalized_compression),
+            byte_order: byte_order
+          }
+        end
+
+        def inferred_form_type(io_or_path, compression_type)
+          return "AIFC" if compression_type
+          return "AIFC" if io_or_path.is_a?(String) && File.extname(io_or_path).casecmp(".aifc").zero?
+
+          "AIFF"
+        end
+
+        def normalize_write_form_type(value)
+          normalized = value.to_s.upcase
+          return normalized if %w[AIFF AIFC].include?(normalized)
+
+          raise InvalidParameterError, "form_type must be :aiff or :aifc"
+        end
+
+        def default_aifc_compression_name(compression_type)
+          compression_type == "sowt" ? "little-endian PCM" : "not compressed"
+        end
+
         def parse_pascal_string(data)
           return nil if data.empty?
 
@@ -339,16 +401,16 @@ module Wavify
           end
         end
 
-        def encode_samples(samples, format)
+        def encode_samples(samples, format, byte_order: :big)
           case format.bit_depth
           when 8
             samples.pack("c*")
           when 16
-            samples.pack("s>*")
+            byte_order == :little ? samples.pack("s<*") : samples.pack("s>*")
           when 24
-            encode_pcm24_be(samples)
+            byte_order == :little ? encode_pcm24_le(samples) : encode_pcm24_be(samples)
           when 32
-            samples.pack("l>*")
+            byte_order == :little ? samples.pack("l<*") : samples.pack("l>*")
           else
             raise UnsupportedFormatError, "unsupported AIFF bit depth: #{format.bit_depth}"
           end
@@ -381,12 +443,31 @@ module Wavify
           bytes.pack("C*")
         end
 
-        def build_comm_chunk(format, sample_frames)
-          [format.channels, sample_frames, format.bit_depth].pack("n N n") + encode_extended80(format.sample_rate.to_f)
+        def encode_pcm24_le(samples)
+          bytes = samples.flat_map do |sample|
+            value = sample.to_i
+            value += 0x1000000 if value.negative?
+            [value & 0xFF, (value >> 8) & 0xFF, (value >> 16) & 0xFF]
+          end
+          bytes.pack("C*")
         end
 
-        def build_ssnd_chunk(samples, format)
-          [0, 0].pack("N2") + encode_samples(samples, format)
+        def build_comm_chunk(format, sample_frames, compression_type: nil, compression_name: nil)
+          base = [format.channels, sample_frames, format.bit_depth].pack("n N n") + encode_extended80(format.sample_rate.to_f)
+          return base unless compression_type
+
+          base + compression_type + build_pascal_string(compression_name.to_s)
+        end
+
+        def build_pascal_string(value)
+          bytes = value.b
+          data = [bytes.bytesize].pack("C") + bytes
+          data << "\x00" if data.bytesize.odd?
+          data
+        end
+
+        def build_ssnd_chunk(samples, format, byte_order: :big)
+          [0, 0].pack("N2") + encode_samples(samples, format, byte_order: byte_order)
         end
 
         def write_chunk(io, chunk_id, chunk_data)

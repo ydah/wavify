@@ -12,7 +12,7 @@ module Wavify
         "fLaC" => ->(bytes) { bytes.start_with?("fLaC") },
         "OggS" => ->(bytes) { bytes.start_with?("OggS") },
         "FORM" => lambda do |bytes|
-          bytes.bytesize >= 12 && bytes.start_with?("FORM") && bytes[8, 4] == "AIFF"
+          bytes.bytesize >= 12 && bytes.start_with?("FORM") && %w[AIFF AIFC].include?(bytes[8, 4])
         end
       }.freeze
 
@@ -25,6 +25,7 @@ module Wavify
         ".oga" => OggVorbis,
         ".aiff" => Aiff,
         ".aif" => Aiff,
+        ".aifc" => Aiff,
         ".raw" => Raw,
         ".pcm" => Raw
       }.freeze

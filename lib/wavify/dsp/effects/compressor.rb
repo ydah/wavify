@@ -5,7 +5,8 @@ module Wavify
     module Effects
       # Peak compressor with threshold, ratio, attack, and release controls.
       class Compressor < EffectBase
-        def initialize(threshold: -10, ratio: 4, attack: 0.01, release: 0.1, makeup_gain: 0.0, knee: 0.0)
+        def initialize(threshold: -10, ratio: 4, attack: 0.01, release: 0.1, makeup_gain: 0.0, knee: 0.0,
+                       sidechain: nil)
           super()
           @threshold_db = validate_numeric!(threshold, :threshold).to_f
           @ratio = validate_ratio!(ratio)
@@ -13,7 +14,36 @@ module Wavify
           @release = validate_time!(release, :release)
           @makeup_gain_db = validate_numeric!(makeup_gain, :makeup_gain).to_f
           @knee_db = validate_knee!(knee)
+          @sidechain = validate_sidechain!(sidechain)
           reset
+        end
+
+        def process(buffer)
+          return super unless @sidechain
+
+          raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
+
+          float_format = buffer.format.with(sample_format: :float, bit_depth: 32)
+          float_buffer = buffer.convert(float_format)
+          detector = @sidechain.convert(float_format)
+          prepare_runtime_if_needed!(
+            sample_rate: float_format.sample_rate,
+            channels: float_buffer.format.channels
+          )
+
+          output = Array.new(float_buffer.samples.length)
+          float_buffer.samples.each_with_index do |sample, sample_index|
+            channel = sample_index % @runtime_channels
+            detector_level = detector_level_at(detector, sample_index)
+            output[sample_index] = process_sample_with_level(
+              sample,
+              detector_level,
+              channel: channel,
+              sample_rate: @runtime_sample_rate
+            ).clamp(-1.0, 1.0)
+          end
+
+          Core::SampleBuffer.new(output, float_format).convert(buffer.format)
         end
 
         # Processes a single sample for one channel.
@@ -24,8 +54,12 @@ module Wavify
         # @return [Float]
         def process_sample(sample, channel:, sample_rate:)
           x = sample.to_f
-          level = x.abs
+          process_sample_with_level(x, x.abs, channel: channel, sample_rate: sample_rate)
+        end
 
+        private
+
+        def process_sample_with_level(sample, level, channel:, sample_rate:)
           attack_coeff = time_coefficient(@attack, sample_rate)
           release_coeff = time_coefficient(@release, sample_rate)
           envelope = @envelopes.fetch(channel)
@@ -34,10 +68,8 @@ module Wavify
           @envelopes[channel] = envelope
 
           gain = gain_for_envelope(envelope)
-          x * gain
+          sample * gain
         end
-
-        private
 
         def prepare_runtime_state(sample_rate:, channels:)
           @envelopes = Array.new(channels, 0.0)
@@ -115,6 +147,18 @@ module Wavify
           end
 
           value.to_f
+        end
+
+        def validate_sidechain!(value)
+          return nil if value.nil?
+          return value.buffer if defined?(Wavify::Audio) && value.is_a?(Wavify::Audio)
+          return value if value.is_a?(Core::SampleBuffer)
+
+          raise InvalidParameterError, "sidechain must be Audio or Core::SampleBuffer"
+        end
+
+        def detector_level_at(detector, sample_index)
+          detector.samples.fetch(sample_index, 0.0).abs
         end
       end
     end

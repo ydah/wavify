@@ -11,7 +11,7 @@ Wavify keeps the core gem focused on pure Ruby audio processing, immutable trans
 ## Codec Ecosystem
 
 - Keep WAV, AIFF/AIFF-C PCM, FLAC, raw PCM, and optional OGG Vorbis in the core gem.
-- Build MP3, AAC, FFmpeg, MIDI, and spectrogram support as adapter gems instead of adding mandatory dependencies.
+- Keep MP3, AAC, FFmpeg, MIDI, and spectrogram support behind `Wavify::Adapters` adapter-gem boundaries instead of adding mandatory dependencies.
 - Continue expanding metadata coverage where it does not require decoding the full payload.
 
 ## Sequencer
@@ -22,7 +22,7 @@ Wavify keeps the core gem focused on pure Ruby audio processing, immutable trans
 
 ## Performance
 
-- Use `SampleBuffer#frame_view` and streaming APIs in hot paths.
+- Use `SampleBuffer#frame_view`, `SampleBuffer#view`, and streaming APIs in hot paths.
 - Track benchmark reports with `bench:baseline` and scheduled benchmark smoke runs.
 - Treat large-file workflows as streaming-first.
 

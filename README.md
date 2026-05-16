@@ -126,7 +126,7 @@ stream.write_to("output.flac", codec_options: { block_size_strategy: :fixed, blo
 | Format | Read | Write | Stream Read | Stream Write | Notes |
 |--------|------|-------|-------------|--------------|-------|
 | WAV | ✅ | ✅ | ✅ | ✅ | PCM + float WAV, extensible WAV, BWF metadata, RF64 read metadata |
-| AIFF | ✅ | ✅ | ✅ | ✅ | PCM AIFF plus uncompressed AIFF-C `NONE` / `sowt` reads |
+| AIFF | ✅ | ✅ | ✅ | ✅ | PCM AIFF plus uncompressed AIFF-C `NONE` / `sowt` |
 | FLAC | ✅ | ✅ | ✅ | ✅ | Pure Ruby implementation with comments, mid-side, and LPC write options |
 | OGG Vorbis | ✅ | ✅ | ✅ | ✅ | Optional `ogg-ruby` + `vorbis` gems |
 | Raw PCM/Float | ✅* | ✅ | ✅* | ✅ | `format:` is required for read/stream-read/metadata |
@@ -161,6 +161,7 @@ Wavify::Codecs.supported_formats
 Wavify::Codecs.available_formats
 Wavify::Codecs.detect("input.wav")
 Wavify::Codecs.register(".custom", MyCodec)
+Wavify::Adapters.known
 ```
 
 ### OGG Vorbis notes
@@ -170,6 +171,7 @@ Wavify::Codecs.register(".custom", MyCodec)
 - If interleaved streams have different sample rates, they are resampled to the first logical stream's sample rate before mix.
 - `decode_mode: :strict` and `decode_mode: :placeholder` are accepted for API compatibility.
 - OGG support is optional; `wavify doctor` reports whether the native gems are installed.
+- MP3, AAC, FFmpeg, MIDI, and spectrogram support are adapter-gem boundaries; use `Wavify::Adapters.load(:ffmpeg)` after installing a matching adapter gem.
 
 ## Sequencer DSL
 

@@ -35,6 +35,23 @@ RSpec.describe Wavify::Codecs::Aiff do
         expect(decoded.samples).to eq(buffer.samples)
       end
     end
+
+    it "writes uncompressed AIFF-C with little-endian PCM when requested" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      buffer = Wavify::Core::SampleBuffer.new([100, -200, 300], format)
+
+      Tempfile.create(["wavify", ".aifc"]) do |file|
+        described_class.write(file.path, buffer, compression_type: "sowt")
+        metadata = described_class.metadata(file.path)
+        decoded = described_class.read(file.path)
+
+        expect(metadata[:form_type]).to eq("AIFC")
+        expect(metadata[:compression_type]).to eq("sowt")
+        expect(metadata[:compression_name]).to eq("little-endian PCM")
+        expect(decoded.format).to eq(format)
+        expect(decoded.samples).to eq(buffer.samples)
+      end
+    end
   end
 
   describe ".metadata" do

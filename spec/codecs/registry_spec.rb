@@ -69,6 +69,13 @@ RSpec.describe Wavify::Codecs::Registry do
       expect(described_class.detect(io)).to eq(Wavify::Codecs::Aiff)
     end
 
+    it "detects aiff-c codec by extension and magic bytes" do
+      expect(described_class.detect("demo.aifc")).to eq(Wavify::Codecs::Aiff)
+
+      io = StringIO.new("FORM\x00\x00\x00\x00AIFC")
+      expect(described_class.detect(io)).to eq(Wavify::Codecs::Aiff)
+    end
+
     it "uses a filename hint for IO inputs without magic bytes" do
       io = StringIO.new("raw sample bytes")
 
