@@ -73,6 +73,30 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(dithered.samples.uniq).not_to eq([0])
     end
 
+    it "converts empty buffers without inventing frames" do
+      target = Wavify::Core::Format.new(channels: 1, sample_rate: 48_000, bit_depth: 32, sample_format: :float)
+      source = described_class.new([], pcm16_stereo)
+
+      converted = source.convert(target)
+
+      expect(converted.samples).to eq([])
+      expect(converted.sample_frame_count).to eq(0)
+      expect(converted.duration.total_seconds).to eq(0.0)
+    end
+
+    it "preserves frame count for same-rate conversions and does not mutate the source" do
+      source_samples = [0.1, -0.1, 0.5, -0.5, 1.0, -1.0]
+      source = described_class.new(source_samples, float_stereo)
+      target = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+
+      converted = source.convert(target)
+
+      expect(converted.sample_frame_count).to eq(source.sample_frame_count)
+      expect(converted.format).to eq(target)
+      expect(source.samples).to eq(source_samples)
+      expect(source.format).to eq(float_stereo)
+    end
+
     it "upmixes mono to stereo" do
       mono = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
       source = described_class.new([0.2, -0.2], mono)
@@ -111,6 +135,20 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(converted.samples.first).to eq(0.0)
       expect(converted.samples[1]).to be_within(1e-6).of(0.5)
       expect(converted.samples[2]).to eq(1.0)
+    end
+
+    it "keeps resampled duration close to source duration and samples bounded" do
+      source_format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
+      target_format = source_format.with(sample_rate: 48_000)
+      source = described_class.new([-1.2, -0.5, 0.0, 0.75, 1.2], source_format)
+
+      converted = source.convert(target_format)
+
+      expected_frames = ((source.sample_frame_count * target_format.sample_rate.to_f) / source_format.sample_rate).round
+      duration_error = (converted.duration.total_seconds - source.duration.total_seconds).abs
+      expect(converted.sample_frame_count).to eq(expected_frames)
+      expect(duration_error).to be <= (0.5 / target_format.sample_rate)
+      expect(converted.samples).to all(be_between(-1.0, 1.0))
     end
 
     it "resamples after channel conversion" do
