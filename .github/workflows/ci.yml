@@ -5,9 +5,9 @@ on:
       - main
   pull_request:
 jobs:
-  test:
+  test-native:
     runs-on: ubuntu-latest
-    name: Ruby ${{ matrix.ruby }}
+    name: Native OGG Ruby ${{ matrix.ruby }}
     strategy:
       matrix:
         ruby:
@@ -44,3 +44,30 @@ jobs:
       - name: Run release check
         if: matrix.ruby == '3.4'
         run: bundle exec rake release:check
+      - name: Run lint
+        if: matrix.ruby == '3.4'
+        run: bundle exec rake lint
+
+  test-core:
+    runs-on: ${{ matrix.os }}
+    name: Core without OGG (${{ matrix.os }})
+    env:
+      BUNDLE_WITHOUT: ogg
+      WAVIFY_SKIP_OGG: "1"
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Run core specs
+        run: bundle exec rspec

@@ -29,7 +29,7 @@ RSpec.describe Wavify::Audio do
       end
     end
 
-    it "reads OGG Vorbis through registry with codec-specific placeholder decode options" do
+    it "reads OGG Vorbis through registry with codec-specific placeholder decode options", :ogg do
       audio = described_class.read(
         "spec/fixtures/audio/stereo_vorbis_44100.ogg",
         codec_options: { decode_mode: :placeholder }
@@ -147,7 +147,7 @@ RSpec.describe Wavify::Audio do
       end
     end
 
-    it "passes codec-specific stream_read options through Core::Stream" do
+    it "passes codec-specific stream_read options through Core::Stream", :ogg do
       metadata = Wavify::Codecs::OggVorbis.metadata("spec/fixtures/audio/stereo_vorbis_44100.ogg")
       stream = described_class.stream(
         "spec/fixtures/audio/stereo_vorbis_44100.ogg",

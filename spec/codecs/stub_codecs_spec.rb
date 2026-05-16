@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe "stub codecs" do
+RSpec.describe "stub codecs", :ogg do
   it "reads OGG Vorbis fixture through the provisional decode path" do
     buffer = Wavify::Codecs::OggVorbis.read("spec/fixtures/audio/stereo_vorbis_44100.ogg")
 

@@ -1,0 +1,33 @@
+AllCops:
+  TargetRubyVersion: 3.1
+  NewCops: enable
+  DisabledByDefault: true
+  SuggestExtensions: false
+  Exclude:
+    - ".git/**/*"
+    - ".idea/**/*"
+    - ".ruby-lsp/**/*"
+    - ".serena/**/*"
+    - ".yardoc/**/*"
+    - "coverage/**/*"
+    - "doc/**/*"
+    - "pkg/**/*"
+    - "tmp/**/*"
+
+Lint/Syntax:
+  Enabled: true
+
+Lint/DuplicateMethods:
+  Enabled: true
+
+Lint/UnreachableCode:
+  Enabled: true
+
+Lint/UselessAssignment:
+  Enabled: true
+
+Layout/TrailingWhitespace:
+  Enabled: true
+
+Layout/TrailingEmptyLines:
+  Enabled: true

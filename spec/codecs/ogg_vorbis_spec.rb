@@ -4,7 +4,7 @@ require "stringio"
 require "tempfile"
 require "open3"
 
-RSpec.describe Wavify::Codecs::OggVorbis do
+RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
   it "loads core APIs when optional OGG gems are absent" do
     script = <<~'RUBY'
       require "stringio"

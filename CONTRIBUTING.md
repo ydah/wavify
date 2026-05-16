@@ -17,9 +17,16 @@ Run the focused specs while developing, then the full suite before committing:
 ```bash
 bundle exec rspec
 bundle exec rake spec:coverage COVERAGE_MINIMUM=90
+bundle exec rake lint
 bundle exec rake docs:examples
 YARD_MINIMUM=85 bundle exec rake docs:check
 bundle exec rake release:check
+```
+
+To verify the pure Ruby core without optional OGG Vorbis gems:
+
+```bash
+BUNDLE_WITHOUT=ogg WAVIFY_SKIP_OGG=1 bundle exec rspec
 ```
 
 ## Fixtures
