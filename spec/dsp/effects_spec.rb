@@ -203,6 +203,47 @@ RSpec.describe Wavify::DSP::Effects do
     end
   end
 
+  describe Wavify::DSP::Effects::Vibrato do
+    it "modulates pitch by changing sample timing while preserving length" do
+      effect = described_class.new(rate: 7.0, depth: 1.0, mix: 1.0)
+      source = Wavify::Audio.tone(frequency: 440, duration: 0.1, format: mono_float, waveform: :sine).buffer
+
+      processed = effect.process(source)
+
+      expect(processed.samples.length).to eq(source.samples.length)
+      differences = source.samples.zip(processed.samples).map { |left, right| (left - right).abs }
+      expect(differences.max).to be > 0.01
+    end
+  end
+
+  describe Wavify::DSP::Effects::Flanger do
+    it "creates a short comb modulation and reports a small tail" do
+      effect = described_class.new(rate: 1.0, depth: 1.0, feedback: 0.2, mix: 0.8)
+      source = Wavify::Audio.tone(frequency: 440, duration: 0.1, format: mono_float, waveform: :sine).buffer
+
+      processed = effect.process(source)
+
+      expect(processed.samples.length).to eq(source.samples.length)
+      expect(effect.tail_duration).to eq(0.008)
+      differences = source.samples.zip(processed.samples).map { |left, right| (left - right).abs }
+      expect(differences.max).to be > 0.0001
+    end
+  end
+
+  describe Wavify::DSP::Effects::Phaser do
+    it "runs a modulated all-pass chain while preserving length" do
+      effect = described_class.new(rate: 1.0, depth: 1.0, feedback: 0.2, mix: 0.8, stages: 4)
+      source = Wavify::Audio.tone(frequency: 880, duration: 0.1, format: mono_float, waveform: :sine).buffer
+
+      processed = effect.process(source)
+
+      expect(processed.samples.length).to eq(source.samples.length)
+      expect(processed.samples).to all(be_finite)
+      differences = source.samples.zip(processed.samples).map { |left, right| (left - right).abs }
+      expect(differences.max).to be > 0.0001
+    end
+  end
+
   describe Wavify::DSP::Effects::Bitcrusher do
     it "quantizes samples and holds values for downsampling" do
       effect = described_class.new(bit_depth: 2, downsample: 2, mix: 1.0)
@@ -330,6 +371,9 @@ RSpec.describe Wavify::DSP::Effects do
         Wavify::DSP::Effects::NoiseGate.new(threshold: -60.0, floor: -90.0),
         Wavify::DSP::Effects::Expander.new(threshold: -20.0, ratio: 4.0, floor: -80.0),
         Wavify::DSP::Effects::Tremolo.new(rate: 10.0, depth: 1.0, mix: 1.0),
+        Wavify::DSP::Effects::Vibrato.new(rate: 5.0, depth: 1.0, mix: 1.0),
+        Wavify::DSP::Effects::Flanger.new(rate: 0.8, depth: 1.0, feedback: 0.5, mix: 1.0),
+        Wavify::DSP::Effects::Phaser.new(rate: 0.8, depth: 1.0, feedback: 0.4, mix: 1.0),
         Wavify::DSP::Effects::AutoPan.new(rate: 4.0, depth: 1.0),
         Wavify::DSP::Effects::StereoWidener.new(width: 2.0),
         Wavify::DSP::Effects::Bitcrusher.new(bit_depth: 3, downsample: 3, mix: 1.0),

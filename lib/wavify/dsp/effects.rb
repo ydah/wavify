@@ -10,6 +10,9 @@ require_relative "effects/limiter"
 require_relative "effects/soft_limiter"
 require_relative "effects/noise_gate"
 require_relative "effects/tremolo"
+require_relative "effects/vibrato"
+require_relative "effects/flanger"
+require_relative "effects/phaser"
 require_relative "effects/bitcrusher"
 require_relative "effects/expander"
 require_relative "effects/auto_pan"
@@ -33,6 +36,9 @@ module Wavify
         soft_limiter: SoftLimiter,
         noise_gate: NoiseGate,
         tremolo: Tremolo,
+        vibrato: Vibrato,
+        flanger: Flanger,
+        phaser: Phaser,
         bitcrusher: Bitcrusher,
         expander: Expander,
         auto_pan: AutoPan,
