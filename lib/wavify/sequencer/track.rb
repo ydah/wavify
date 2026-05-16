@@ -37,8 +37,17 @@ module Wavify
         "aug" => [0, 4, 8]
       ).freeze
 
+      SCALE_INTERVALS = {
+        major: [0, 2, 4, 5, 7, 9, 11],
+        minor: [0, 2, 3, 5, 7, 8, 10],
+        chromatic: (0..11).to_a,
+        pentatonic_major: [0, 2, 4, 7, 9],
+        pentatonic_minor: [0, 3, 5, 7, 10]
+      }.freeze
+
       attr_reader :name, :pattern, :note_sequence, :chord_progression, :waveform, :gain_db, :pan_position,
-                  :pattern_resolution, :note_resolution, :default_octave, :envelope, :effects
+                  :pattern_resolution, :note_resolution, :default_octave, :envelope, :effects, :key_root, :scale,
+                  :chord_voicing
 
       def initialize(name, **options)
         @name = validate_name!(name)
@@ -54,6 +63,9 @@ module Wavify
         @pan_position = validate_pan!(options.fetch(:pan_position, 0.0))
         @envelope = validate_envelope!(options[:envelope])
         @effects = validate_effects!(options.fetch(:effects, []))
+        @key_root = normalize_key_root(options[:key])
+        @scale = normalize_scale(options[:scale])
+        @chord_voicing = normalize_chord_voicing(options[:chord_voicing])
 
         @pattern = coerce_pattern(options[:pattern])
         @note_sequence = coerce_note_sequence(options[:note_sequence])
@@ -84,6 +96,23 @@ module Wavify
       # @return [Track]
       def with_chords(chords, default_octave: @default_octave)
         copy(chord_progression: chords, default_octave: default_octave)
+      end
+
+      # Returns a copy with scale quantization settings.
+      #
+      # @param key [Symbol, String, nil]
+      # @param scale [Symbol, String, nil]
+      # @return [Track]
+      def with_key(key, scale: @scale)
+        copy(key: key, scale: scale)
+      end
+
+      # Returns a copy with chord voicing settings.
+      #
+      # @param voicing [Symbol, String, nil]
+      # @return [Track]
+      def with_chord_voicing(voicing)
+        copy(chord_voicing: voicing)
       end
 
       # Returns a copy with a different oscillator waveform.
@@ -162,7 +191,10 @@ module Wavify
           note_resolution: overrides.fetch(:note_resolution, @note_resolution),
           default_octave: overrides.fetch(:default_octave, @default_octave),
           envelope: overrides.fetch(:envelope, @envelope),
-          effects: overrides.fetch(:effects, @effects)
+          effects: overrides.fetch(:effects, @effects),
+          key: overrides.fetch(:key, @key_root),
+          scale: overrides.fetch(:scale, @scale),
+          chord_voicing: overrides.fetch(:chord_voicing, @chord_voicing)
         )
       end
 
@@ -190,7 +222,8 @@ module Wavify
       end
 
       def self.parse_chord_token(token, default_octave:)
-        match = token.match(/\A([A-Ga-g])([#b]?)(.*)\z/)
+        chord_token, inline_voicing = token.to_s.split("@", 2)
+        match = chord_token.match(/\A([A-Ga-g])([#b]?)(.*)\z/)
         raise InvalidNoteError, "invalid chord token: #{token.inspect}" unless match
 
         root_name = "#{match[1].upcase}#{match[2]}"
@@ -202,6 +235,7 @@ module Wavify
         root_midi = NoteSequence.new("#{root_name}#{default_octave}", default_octave: default_octave).midi_notes.first
         midi_notes = intervals.map { |interval| root_midi + interval }
         midi_notes = apply_chord_inversion(midi_notes, bass_name, root_midi, default_octave) if bass_name
+        midi_notes = apply_chord_voicing(midi_notes, inline_voicing) if inline_voicing
         {
           token: token,
           root_midi: root_midi,
@@ -216,6 +250,23 @@ module Wavify
         [bass, *remaining].sort
       end
 
+      def self.apply_chord_voicing(midi_notes, voicing)
+        case normalize_chord_voicing(voicing)
+        when nil, :root
+          midi_notes
+        when :open
+          midi_notes.each_with_index.map { |midi, index| index.odd? ? midi + 12 : midi }.sort
+        when :drop2
+          return midi_notes if midi_notes.length < 3
+
+          ordered = midi_notes.sort
+          dropped = ordered.delete_at(-2) - 12
+          [dropped, *ordered].sort
+        else
+          midi_notes
+        end
+      end
+
       def self.normalize_chord_suffix(suffix)
         value = suffix.to_s
         return "" if value.empty?
@@ -228,6 +279,23 @@ module Wavify
       end
 
       private_class_method :normalize_chord_suffix
+
+      def quantize_midi_note(midi_note)
+        return midi_note unless @key_root && @scale
+
+        self.class.quantize_midi_note(midi_note, key: @key_root, scale: @scale)
+      end
+
+      def self.quantize_midi_note(midi_note, key:, scale:)
+        key_pitch = NoteSequence::NOTE_OFFSETS.fetch(key.to_s.upcase)
+        intervals = SCALE_INTERVALS.fetch(scale.to_sym)
+        octave = midi_note / 12
+        candidates = ((octave - 1)..(octave + 1)).flat_map do |candidate_octave|
+          base = (candidate_octave * 12) + key_pitch
+          intervals.map { |interval| base + interval }
+        end.select { |candidate| candidate.between?(0, 127) }
+        candidates.min_by { |candidate| [(candidate - midi_note).abs, candidate] } || midi_note
+      end
 
       private
 
@@ -280,6 +348,41 @@ module Wavify
         effects.freeze
       end
 
+      def normalize_key_root(value)
+        return nil if value.nil?
+
+        key = value.to_s.upcase
+        raise SequencerError, "key must be a note name" unless NoteSequence::NOTE_OFFSETS.key?(key)
+
+        key
+      end
+
+      def normalize_scale(value)
+        return nil if value.nil?
+
+        scale = value.to_sym
+        raise SequencerError, "unsupported scale: #{value.inspect}" unless SCALE_INTERVALS.key?(scale)
+
+        scale
+      rescue NoMethodError
+        raise SequencerError, "scale must be Symbol/String"
+      end
+
+      def normalize_chord_voicing(value)
+        self.class.send(:normalize_chord_voicing, value)
+      end
+
+      def self.normalize_chord_voicing(value)
+        return nil if value.nil?
+
+        voicing = value.to_sym
+        return voicing if %i[root open drop2].include?(voicing)
+
+        raise SequencerError, "unsupported chord voicing: #{value.inspect}"
+      rescue NoMethodError
+        raise SequencerError, "chord_voicing must be Symbol/String"
+      end
+
       def coerce_pattern(pattern)
         return nil if pattern.nil?
         return pattern if pattern.is_a?(Pattern)
@@ -301,6 +404,13 @@ module Wavify
         end
 
         self.class.parse_chords(chord_progression, default_octave: @default_octave)
+                   .map { |chord| apply_track_chord_options(chord) }
+      end
+
+      def apply_track_chord_options(chord)
+        midi_notes = chord.fetch(:midi_notes).map { |midi| quantize_midi_note(midi) }
+        midi_notes = self.class.apply_chord_voicing(midi_notes, @chord_voicing) if @chord_voicing
+        chord.merge(midi_notes: midi_notes)
       end
     end
   end

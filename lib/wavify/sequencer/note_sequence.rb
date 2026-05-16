@@ -28,7 +28,7 @@ module Wavify
       }.freeze
 
       # Parsed note event (`midi_note` is `nil` for rests).
-      Event = Struct.new(:index, :token, :midi_note, :duration_denominator, :tie, keyword_init: true) do
+      Event = Struct.new(:index, :token, :midi_note, :duration_denominator, :duration_multiplier, :tie, keyword_init: true) do
         def rest?
           midi_note.nil?
         end
@@ -97,12 +97,13 @@ module Wavify
         raise InvalidNoteError, "note sequence notation must not be empty" if tokens.empty?
 
         tokens.each_with_index.map do |token, index|
-          midi_note, duration_denominator, tie = parse_token(token)
+          midi_note, duration_denominator, duration_multiplier, tie = parse_token(token)
           Event.new(
             index: index,
             token: token,
             midi_note: midi_note,
             duration_denominator: duration_denominator,
+            duration_multiplier: duration_multiplier,
             tie: tie
           )
         end
@@ -111,22 +112,30 @@ module Wavify
       def parse_token(token)
         tie = token.end_with?("~")
         body = tie ? token.delete_suffix("~") : token
-        body, duration_denominator = split_duration_suffix(body)
+        body, duration_denominator, duration_multiplier = split_duration_suffix(body)
 
-        return [nil, duration_denominator, tie] if body == "."
+        return [nil, duration_denominator, duration_multiplier, tie] if body == "."
 
         midi_note = body.match?(/\A-?\d+\z/) ? parse_midi_number(body) : parse_note_name(body)
-        [midi_note, duration_denominator, tie]
+        [midi_note, duration_denominator, duration_multiplier, tie]
       end
 
       def split_duration_suffix(token)
         body, denominator = token.split("/", 2)
-        return [body, nil] unless denominator
+        return [body, nil, 1.0] unless denominator
 
-        value = Integer(denominator)
+        match = denominator.match(/\A(\d+)([.tT]?)\z/)
+        raise InvalidNoteError, "invalid duration suffix: #{token.inspect}" unless match
+
+        value = Integer(match[1])
         raise InvalidNoteError, "duration denominator must be positive: #{token.inspect}" unless value.positive?
 
-        [body, value]
+        multiplier = case match[2]
+                     when "." then 1.5
+                     when "t", "T" then 2.0 / 3.0
+                     else 1.0
+                     end
+        [body, value, multiplier]
       rescue ArgumentError
         raise InvalidNoteError, "invalid duration suffix: #{token.inspect}"
       end

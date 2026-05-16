@@ -76,6 +76,21 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(events[1][:duration]).to be_within(0.0001).of(engine.step_duration_at(1, 8) + engine.step_duration_at(2, 8))
       expect(events[2][:midi_notes]).to eq([64])
     end
+
+    it "uses dotted and triplet note duration suffixes" do
+      track = Wavify::Sequencer::Track.new(:lead, note_sequence: "C4/8. D4/8t", note_resolution: 8)
+      events = engine.timeline_for_track(track, bars: 1).select { |event| event[:kind] == :note }
+
+      expect(events[0][:duration]).to be_within(0.0001).of((engine.bar_duration_seconds / 8.0) * 1.5)
+      expect(events[1][:duration]).to be_within(0.0001).of((engine.bar_duration_seconds / 8.0) * (2.0 / 3.0))
+    end
+
+    it "quantizes note events through track key and scale settings" do
+      track = Wavify::Sequencer::Track.new(:lead, note_sequence: "C#4 D#4", key: :c, scale: :minor)
+      events = engine.timeline_for_track(track, bars: 1).select { |event| event[:kind] == :note }
+
+      expect(events.map { |event| event[:midi_notes].first }).to eq([60, 63])
+    end
   end
 
   describe "#build_timeline" do
@@ -107,6 +122,24 @@ RSpec.describe Wavify::Sequencer::Engine do
       )
 
       expect(timeline.map { |event| event[:bar] }.uniq).to eq([0, 1, 2])
+    end
+
+    it "supports section tempo, meter, and marker metadata" do
+      lead = Wavify::Sequencer::Track.new(:lead, note_sequence: "C4")
+
+      timeline = engine.build_timeline(
+        tracks: [lead],
+        arrangement: [
+          { name: :intro, bars: 1, tracks: [:lead], markers: [:start] },
+          { name: :bridge, bars: 1, tracks: [:lead], tempo: 60, beats_per_bar: 3, markers: [:bridge] }
+        ]
+      )
+
+      markers = timeline.select { |event| event[:kind] == :marker }
+      bridge_note = timeline.find { |event| event[:kind] == :note && event[:bar] == 1 }
+      expect(markers.map { |event| event[:marker] }).to eq(%i[start bridge])
+      expect(bridge_note[:start_time]).to be_within(0.0001).of(2.0)
+      expect(bridge_note[:duration]).to be_within(0.0001).of(3.0 / 8.0)
     end
   end
 

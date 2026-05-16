@@ -10,7 +10,7 @@ module Wavify
     # Immutable compiled song definition returned by {DSL.build_definition}.
     class SongDefinition
       # Arrangement section metadata (`name`, `bars`, active `tracks`).
-      Section = Struct.new(:name, :bars, :tracks, :repeat, keyword_init: true)
+      Section = Struct.new(:name, :bars, :tracks, :repeat, :tempo, :beats_per_bar, :markers, keyword_init: true)
 
       attr_reader :format, :tempo, :beats_per_bar, :swing, :tracks, :sections, :default_bars
 
@@ -72,7 +72,10 @@ module Wavify
             {
               name: repeated_section_name(section.name, repeat_index),
               bars: section.bars,
-              tracks: section.tracks
+              tracks: section.tracks,
+              tempo: section.tempo,
+              beats_per_bar: section.beats_per_bar,
+              markers: section.markers
             }
           end
         end
@@ -83,7 +86,7 @@ module Wavify
       # @param default_bars [Integer]
       # @return [Wavify::Core::Duration]
       def duration(default_bars: @default_bars)
-        Core::Duration.new(total_bars(default_bars: default_bars) * engine.bar_duration_seconds)
+        Core::Duration.new(total_seconds(default_bars: default_bars))
       end
 
       alias length duration
@@ -215,19 +218,20 @@ module Wavify
         events = []
 
         sections.each do |section|
+          section_engine = engine_for_section(section)
           patterns.each do |sample_key, pattern|
             sample_audio = sample_cache[sample_key] ||= load_sample_audio(track, sample_key, work_format)
 
             (0...section.fetch(:bars)).each do |bar_offset|
               absolute_bar = section.fetch(:start_bar) + bar_offset
-              bar_base_time = absolute_bar * engine.bar_duration_seconds
+              bar_base_time = section.fetch(:start_time) + (bar_offset * section_engine.bar_duration_seconds)
 
               pattern.each do |step|
                 next unless step.trigger?
 
-                start_time = bar_base_time + engine.step_start_seconds(step.index, pattern.length)
-                duration = engine.step_duration_at(step.index, pattern.length)
-                engine.send(:expand_pattern_step, step, start_time: start_time, duration: duration).each do |expanded|
+                start_time = bar_base_time + section_engine.step_start_seconds(step.index, pattern.length)
+                duration = section_engine.step_duration_at(step.index, pattern.length)
+                section_engine.send(:expand_pattern_step, step, start_time: start_time, duration: duration).each do |expanded|
                   next if expanded.fetch(:probability).zero?
 
                   events << expanded.merge(sample_key: sample_key, sample_audio: sample_audio)
@@ -258,13 +262,33 @@ module Wavify
       def active_sections_for(track_name, default_bars:)
         if arrangement?
           cursor_bar = 0
+          cursor_time = 0.0
           arrangement.each_with_object([]) do |section, result|
-            result << { bars: section.fetch(:bars), start_bar: cursor_bar } if section.fetch(:tracks).include?(track_name)
+            section_engine = engine_for_section(section)
+            if section.fetch(:tracks).include?(track_name)
+          result << {
+                bars: section.fetch(:bars),
+                start_bar: cursor_bar,
+                start_time: cursor_time,
+                tempo: section.fetch(:tempo),
+                beats_per_bar: section.fetch(:beats_per_bar)
+              }
+            end
             cursor_bar += section.fetch(:bars)
+            cursor_time += section.fetch(:bars) * section_engine.bar_duration_seconds
           end
         else
-          [{ bars: default_bars, start_bar: 0 }]
+          [{ bars: default_bars, start_bar: 0, start_time: 0.0, tempo: @tempo, beats_per_bar: @beats_per_bar }]
         end
+      end
+
+      def engine_for_section(section)
+        Wavify::Sequencer::Engine.new(
+          tempo: section.fetch(:tempo) || @tempo,
+          format: @format,
+          beats_per_bar: section.fetch(:beats_per_bar) || @beats_per_bar,
+          swing: @swing
+        )
       end
 
       def track_render_work_format
@@ -367,6 +391,20 @@ module Wavify
         arrangement.sum { |section| section.fetch(:bars) }
       end
 
+      def total_seconds(default_bars:)
+        return total_bars(default_bars: default_bars) * engine.bar_duration_seconds unless arrangement?
+
+        arrangement.sum do |section|
+          section_engine = Wavify::Sequencer::Engine.new(
+            tempo: section.fetch(:tempo) || @tempo,
+            format: @format,
+            beats_per_bar: section.fetch(:beats_per_bar) || @beats_per_bar,
+            swing: @swing
+          )
+          section.fetch(:bars) * section_engine.bar_duration_seconds
+        end
+      end
+
       def repeated_section_name(name, repeat_index)
         return name if repeat_index.zero?
 
@@ -404,6 +442,8 @@ module Wavify
           "step=#{event.fetch(:step_index)} midi=#{event.fetch(:midi_notes).join(',')}"
         when :chord
           "chord=#{event.fetch(:chord)} midi=#{event.fetch(:midi_notes).join(',')}"
+        when :marker
+          "marker=#{event.fetch(:marker)} section=#{event.fetch(:section)}"
         else
           "step=#{event.fetch(:step_index)}"
         end
@@ -418,9 +458,9 @@ module Wavify
       # Readers are used by {SongDefinition} rendering and sequencer conversion.
       attr_reader :name, :sample_folder, :waveform, :gain_db, :pan_position, :pattern_resolution, :note_resolution,
                   :default_octave, :envelope, :notes_notation, :chords_notation, :effects, :samples,
-                  :sample_options, :named_patterns, :synth_options
+                  :sample_options, :named_patterns, :synth_options, :key_root, :scale, :chord_voicing
 
-      def initialize(name, sample_folder: nil)
+      def initialize(name, sample_folder: nil, key_root: nil, scale: nil)
         @name = name.to_sym
         @sample_folder = sample_folder
         @waveform = :sine
@@ -438,6 +478,9 @@ module Wavify
         @named_patterns = {}
         @primary_pattern = nil
         @synth_options = {}
+        @key_root = key_root
+        @scale = scale
+        @chord_voicing = nil
       end
 
       # Returns the primary pattern notation for sequencer rendering.
@@ -463,9 +506,16 @@ module Wavify
       end
 
       # Stores chord progression notation and optional octave override.
-      def chords!(notation, default_octave: nil)
+      def chords!(notation, default_octave: nil, voicing: nil)
         @chords_notation = notation
         @default_octave = default_octave if default_octave
+        @chord_voicing = voicing.to_sym if voicing
+      end
+
+      # Stores note quantization key/scale settings.
+      def key!(root, scale = :major)
+        @key_root = root
+        @scale = scale
       end
 
       # Registers a sample path keyed by a symbolic name.
@@ -520,7 +570,10 @@ module Wavify
           note_resolution: @note_resolution,
           default_octave: @default_octave,
           envelope: @envelope,
-          effects: effect_processors
+          effects: effect_processors,
+          key: @key_root,
+          scale: @scale,
+          chord_voicing: @chord_voicing
         )
       end
 
@@ -605,8 +658,13 @@ module Wavify
       end
 
       # Defines chord notation.
-      def chords(notation, default_octave: nil)
-        @track.chords!(notation, default_octave: default_octave)
+      def chords(notation, default_octave: nil, voicing: nil)
+        @track.chords!(notation, default_octave: default_octave, voicing: voicing)
+      end
+
+      # Quantizes note and chord pitches to a key/scale.
+      def key(root, scale = :major)
+        @track.key!(root, scale)
       end
 
       # Defines an ADSR envelope and validates required parameters.
@@ -643,14 +701,26 @@ module Wavify
         @sections = []
       end
 
-      def section(name, bars:, tracks:, repeat: 1)
+      def section(name, bars:, tracks:, repeat: 1, tempo: nil, beats_per_bar: nil, markers: [])
         raise Wavify::SequencerError, "bars must be a positive Integer" unless bars.is_a?(Integer) && bars.positive?
         raise Wavify::SequencerError, "repeat must be a positive Integer" unless repeat.is_a?(Integer) && repeat.positive?
+        raise Wavify::SequencerError, "tempo must be a positive Numeric" if tempo && !(tempo.is_a?(Numeric) && tempo.positive?)
+        if beats_per_bar && !(beats_per_bar.is_a?(Integer) && beats_per_bar.positive?)
+          raise Wavify::SequencerError, "beats_per_bar must be a positive Integer"
+        end
 
         names = Array(tracks).map(&:to_sym)
         raise Wavify::SequencerError, "tracks must not be empty" if names.empty?
 
-        @sections << SongDefinition::Section.new(name: name.to_sym, bars: bars, tracks: names, repeat: repeat)
+        @sections << SongDefinition::Section.new(
+          name: name.to_sym,
+          bars: bars,
+          tracks: names,
+          repeat: repeat,
+          tempo: tempo,
+          beats_per_bar: beats_per_bar,
+          markers: Array(markers).map(&:to_sym)
+        )
       end
     end
 
@@ -682,6 +752,8 @@ module Wavify
         @swing = validate_swing!(swing)
         @default_bars = default_bars
         @sample_folder = nil
+        @key_root = nil
+        @scale = nil
         @track_definitions = []
         @arrangement_sections = []
       end
@@ -714,9 +786,23 @@ module Wavify
         @sample_folder = path
       end
 
+      def key(root, scale = :major)
+        @key_root = root
+        @scale = scale
+      end
+
+      def preset(name, **options)
+        case name.to_sym
+        when :lofi_drums
+          lofi_drums_preset(**options)
+        else
+          raise Wavify::SequencerError, "unsupported preset: #{name.inspect}"
+        end
+      end
+
       # Defines a track block and stores its compiled configuration.
       def track(name, &block)
-        definition = TrackDefinition.new(name, sample_folder: @sample_folder)
+        definition = TrackDefinition.new(name, sample_folder: @sample_folder, key_root: @key_root, scale: @scale)
         begin
           TrackBuilder.new(definition).instance_eval(&block) if block
         rescue Wavify::Error => e
@@ -724,6 +810,29 @@ module Wavify
         end
         @track_definitions << definition
         definition
+      end
+
+      def lofi_drums_preset(name: :lofi_drums, sample_folder: @sample_folder)
+        folder = sample_folder
+        kick_path = preset_sample_path(folder, "kick.wav")
+        snare_path = preset_sample_path(folder, "snare.wav")
+        hat_path = preset_sample_path(folder, "hat.wav")
+        track(name) do
+          pattern :kick, "x---x---x---x---"
+          pattern :snare, "----x-------x---"
+          pattern :hat, "x-x-x-x-x-x-x-x-"
+          sample :kick, kick_path, gain: -2, trim: true
+          sample :snare, snare_path, gain: -4, trim: true
+          sample :hat, hat_path, gain: -9, pan: 0.15, trim: true
+          effect :compressor, threshold: -18, ratio: 2.5, attack: 0.005, release: 0.08, makeup_gain: 2
+          gain(-3)
+        end
+      end
+
+      def preset_sample_path(folder, filename)
+        return filename if folder.nil? || folder == @sample_folder
+
+        File.join(folder, filename)
       end
 
       # Defines arrangement sections for selective track playback by section.

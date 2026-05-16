@@ -32,8 +32,18 @@ RSpec.describe Wavify::Sequencer::NoteSequence do
       sequence = described_class.new("C4/8 C4~ C4 .")
 
       expect(sequence[0].duration_denominator).to eq(8)
+      expect(sequence[0].duration_multiplier).to eq(1.0)
       expect(sequence[1]).to be_tie
       expect(sequence[2]).not_to be_tie
+    end
+
+    it "parses dotted and triplet duration suffixes" do
+      sequence = described_class.new("C4/8. D4/8t")
+
+      expect(sequence[0].duration_denominator).to eq(8)
+      expect(sequence[0].duration_multiplier).to eq(1.5)
+      expect(sequence[1].duration_denominator).to eq(8)
+      expect(sequence[1].duration_multiplier).to be_within(0.0001).of(2.0 / 3.0)
     end
   end
 

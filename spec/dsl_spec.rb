@@ -217,6 +217,50 @@ RSpec.describe Wavify::DSL do
       expect(text).to include("lead", "note")
     end
 
+    it "supports global key, chord voicing, section tempo/meter, and markers" do
+      song = described_class.build_definition(format: format, tempo: 120, default_bars: 1) do
+        key :c, :minor
+
+        track :lead do
+          notes "C#4/8. D#4/8t"
+        end
+
+        track :pad do
+          chords ["Cmaj7"], voicing: :drop2
+        end
+
+        arrange do
+          section :intro, bars: 1, tracks: [:lead], markers: [:start]
+          section :bridge, bars: 1, tracks: %i[lead pad], tempo: 60, beats_per_bar: 3, markers: [:bridge]
+        end
+      end
+
+      timeline = song.timeline
+      markers = timeline.select { |event| event[:kind] == "marker" || event[:kind] == :marker }
+      lead_notes = timeline.select { |event| event[:kind] == :note && event[:track] == :lead }
+      pad_chord = timeline.find { |event| event[:kind] == :chord && event[:track] == :pad }
+
+      expect(song.duration.total_seconds).to be_within(0.0001).of(5.0)
+      expect(markers.map { |event| event[:marker] }).to eq(%i[start bridge])
+      expect(lead_notes.first[:midi_notes]).to eq([60])
+      expect(lead_notes.first[:duration]).to be_within(0.0001).of(0.375)
+      expect(pad_chord[:midi_notes]).to eq([55, 60, 63, 70])
+      expect(song.timeline_text).to include("marker=bridge")
+    end
+
+    it "adds the lofi drums preset track definition" do
+      song = described_class.build_definition(format: format, tempo: 90) do
+        sample_folder "samples"
+        preset :lofi_drums
+      end
+
+      drums = song.tracks.fetch(0)
+      expect(drums.name).to eq(:lofi_drums)
+      expect(drums.named_patterns.keys).to eq(%i[kick snare hat])
+      expect(drums.samples[:kick]).to eq(File.join("samples", "kick.wav"))
+      expect(drums.effects.first[:name]).to eq(:compressor)
+    end
+
     it "renders and writes track stems" do
       song = described_class.build_definition(format: format, tempo: 120) do
         track :lead do

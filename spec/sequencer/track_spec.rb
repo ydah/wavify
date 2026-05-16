@@ -47,6 +47,26 @@ RSpec.describe Wavify::Sequencer::Track do
       expect(chord[:midi_notes]).to eq([52, 60, 67, 71])
     end
 
+    it "parses inline chord voicings" do
+      chord = described_class.parse_chords(["Cmaj7@drop2"], default_octave: 4).first
+
+      expect(chord[:midi_notes]).to eq([55, 60, 64, 71])
+    end
+
+    it "quantizes notes and chords to a configured scale" do
+      track = described_class.new(:lead, note_sequence: "C#4 D#4", chord_progression: ["Cmaj7"], key: :c, scale: :minor)
+
+      expect(track.quantize_midi_note(61)).to eq(60)
+      expect(track.quantize_midi_note(63)).to eq(63)
+      expect(track.chord_progression.first[:midi_notes]).to eq([60, 63, 67, 70])
+    end
+
+    it "applies track-level chord voicing" do
+      track = described_class.new(:pad, chord_progression: ["Cmaj7"], chord_voicing: :open)
+
+      expect(track.chord_progression.first[:midi_notes]).to eq([60, 67, 76, 83])
+    end
+
     it "rejects unsupported chord qualities" do
       expect do
         described_class.parse_chords(["C13"])
