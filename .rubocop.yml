@@ -13,6 +13,7 @@ AllCops:
     - "doc/**/*"
     - "pkg/**/*"
     - "tmp/**/*"
+    - "vendor/**/*"
 
 Lint/Syntax:
   Enabled: true
