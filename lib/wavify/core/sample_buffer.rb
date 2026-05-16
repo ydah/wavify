@@ -57,6 +57,95 @@ module Wavify
         alias size length
       end
 
+      # Lazy no-copy view over a contiguous frame range of a sample buffer.
+      class View
+        include Enumerable
+
+        attr_reader :format, :duration
+
+        def initialize(samples, format, start_frame: 0, frame_count: nil)
+          raise InvalidParameterError, "samples must be an Array" unless samples.is_a?(Array)
+          raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Format)
+          raise InvalidParameterError, "start_frame must be a non-negative Integer" unless start_frame.is_a?(Integer) && start_frame >= 0
+
+          max_frames = samples.length / format.channels
+          @samples = samples
+          @format = format
+          @start_frame = [start_frame, max_frames].min
+          requested_count = frame_count.nil? ? max_frames - @start_frame : frame_count
+          raise InvalidParameterError, "frame_count must be a non-negative Integer" unless requested_count.is_a?(Integer) && requested_count >= 0
+
+          @frame_count = [requested_count, max_frames - @start_frame].min
+          @duration = Duration.from_samples(@frame_count, format.sample_rate)
+        end
+
+        # Enumerates interleaved sample values in the view range.
+        #
+        # @yieldparam sample [Numeric]
+        # @return [Enumerator, Array<Numeric>]
+        def each
+          return enum_for(:each) unless block_given?
+
+          start_index = @start_frame * @format.channels
+          length.times { |offset| yield @samples.fetch(start_index + offset) }
+        end
+
+        # Materializes the view's interleaved samples.
+        #
+        # @return [Array<Numeric>]
+        def samples
+          each.to_a.freeze
+        end
+
+        # @return [Integer] number of interleaved samples in the view
+        def length
+          @frame_count * @format.channels
+        end
+
+        alias size length
+
+        # @return [Integer] number of sample frames in the view
+        def sample_frame_count
+          @frame_count
+        end
+
+        # @return [FrameView]
+        def frame_view
+          FrameView.new(@samples, @format.channels, start_frame: @start_frame, frame_count: @frame_count)
+        end
+
+        # Returns another lazy view relative to this view.
+        #
+        # @param start_frame [Integer]
+        # @param frame_length [Integer]
+        # @return [View]
+        def slice(start_frame, frame_length)
+          unless start_frame.is_a?(Integer) && start_frame >= 0
+            raise InvalidParameterError, "start_frame must be a non-negative Integer: #{start_frame.inspect}"
+          end
+          unless frame_length.is_a?(Integer) && frame_length >= 0
+            raise InvalidParameterError, "frame_length must be a non-negative Integer: #{frame_length.inspect}"
+          end
+
+          self.class.new(@samples, @format, start_frame: @start_frame + start_frame, frame_count: frame_length)
+        end
+
+        # Materializes the view as an immutable sample buffer.
+        #
+        # @return [SampleBuffer]
+        def to_sample_buffer
+          SampleBuffer.new(samples, @format)
+        end
+
+        # Converts the materialized view to another format.
+        #
+        # @param new_format [Format]
+        # @return [SampleBuffer]
+        def convert(new_format, **options)
+          to_sample_buffer.convert(new_format, **options)
+        end
+      end
+
       attr_reader :samples, :format, :duration
 
       # @param samples [Array<Numeric>] interleaved sample values
@@ -101,6 +190,15 @@ module Wavify
       # @return [FrameView]
       def frame_view
         FrameView.new(@samples, @format.channels)
+      end
+
+      # Returns a lazy sample-buffer view without copying the selected frames.
+      #
+      # @param start_frame [Integer]
+      # @param frame_length [Integer, nil]
+      # @return [View]
+      def view(start_frame: 0, frame_length: nil)
+        View.new(@samples, @format, start_frame: start_frame, frame_count: frame_length)
       end
 
       # Converts the buffer to another audio format/channels.
@@ -154,9 +252,7 @@ module Wavify
           raise InvalidParameterError, "frame_length must be a non-negative Integer: #{frame_length.inspect}"
         end
 
-        start_index = start_frame * @format.channels
-        sample_length = frame_length * @format.channels
-        self.class.new(@samples.slice(start_index, sample_length) || [], @format)
+        view(start_frame: start_frame, frame_length: frame_length).to_sample_buffer
       end
 
       def concat(other)

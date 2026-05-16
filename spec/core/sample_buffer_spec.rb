@@ -30,6 +30,19 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(view.slice(1, 2).to_a).to eq([[3, 4], [5, 6]])
     end
 
+    it "exposes lazy sample-buffer views that materialize on demand" do
+      buffer = described_class.new([1, 2, 3, 4, 5, 6], pcm16_stereo)
+      view = buffer.view(start_frame: 1, frame_length: 2)
+
+      expect(view).to be_a(Wavify::Core::SampleBuffer::View)
+      expect(view.sample_frame_count).to eq(2)
+      expect(view.length).to eq(4)
+      expect(view.samples).to eq([3, 4, 5, 6])
+      expect(view.samples).to be_frozen
+      expect(view.frame_view.to_a).to eq([[3, 4], [5, 6]])
+      expect(view.slice(1, 1).to_sample_buffer.samples).to eq([5, 6])
+    end
+
     it "reverses frame order while preserving channel order" do
       buffer = described_class.new([1, 2, 3, 4, 5, 6], Wavify::Core::Format.new(channels: 2, sample_rate: 48_000, bit_depth: 16))
       reversed = buffer.reverse

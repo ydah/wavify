@@ -258,16 +258,24 @@ module Wavify
           format = metadata.fetch(:format)
           chunk_sample_count = chunk_size * format.channels
           pending_samples = []
+          pending_offset = 0
 
           each_decoded_frame_samples(io, metadata) do |frame_samples|
             pending_samples.concat(frame_samples)
 
-            while pending_samples.length >= chunk_sample_count
-              yield Core::SampleBuffer.new(pending_samples.shift(chunk_sample_count), format)
+            while (pending_samples.length - pending_offset) >= chunk_sample_count
+              yield Core::SampleBuffer.new(pending_samples.slice(pending_offset, chunk_sample_count), format)
+              pending_offset += chunk_sample_count
+            end
+
+            if pending_offset >= chunk_sample_count * 8
+              pending_samples = pending_samples.slice(pending_offset, pending_samples.length - pending_offset) || []
+              pending_offset = 0
             end
           end
 
-          yield Core::SampleBuffer.new(pending_samples, format) unless pending_samples.empty?
+          remaining = pending_samples.length - pending_offset
+          yield Core::SampleBuffer.new(pending_samples.slice(pending_offset, remaining), format) if remaining.positive?
         ensure
           io.close if close_io && io
         end
@@ -312,6 +320,7 @@ module Wavify
           encode_stats = empty_encode_stats
           header[:md5] = Digest::MD5.new
           pending_samples = []
+          pending_offset = 0
 
           writer = lambda do |chunk|
             raise InvalidParameterError, "stream chunk must be Core::SampleBuffer" unless chunk.is_a?(Core::SampleBuffer)
@@ -324,9 +333,9 @@ module Wavify
               pending_samples.concat(buffer.samples)
               fixed_chunk_sample_count = stream_write_options.fetch(:block_size) * target_format.channels
 
-              while pending_samples.length >= fixed_chunk_sample_count
+              while (pending_samples.length - pending_offset) >= fixed_chunk_sample_count
                 encoded = encode_verbatim_frames(
-                  pending_samples.shift(fixed_chunk_sample_count),
+                  pending_samples.slice(pending_offset, fixed_chunk_sample_count),
                   target_format,
                   start_frame_number: next_frame_number,
                   block_size: stream_write_options.fetch(:block_size),
@@ -336,6 +345,12 @@ module Wavify
                 io.write(encoded.fetch(:bytes))
                 next_frame_number = encoded.fetch(:next_frame_number)
                 merge_encode_stats!(encode_stats, encoded)
+                pending_offset += fixed_chunk_sample_count
+              end
+
+              if pending_offset >= fixed_chunk_sample_count * 8
+                pending_samples = pending_samples.slice(pending_offset, pending_samples.length - pending_offset) || []
+                pending_offset = 0
               end
             elsif stream_write_options[:strategy] == :source_chunk
               encoded = encode_verbatim_frames(
@@ -366,9 +381,10 @@ module Wavify
 
           yield writer
 
-          unless pending_samples.empty?
+          remaining = pending_samples.length - pending_offset
+          if remaining.positive?
             encoded = encode_verbatim_frames(
-              pending_samples,
+              pending_samples.slice(pending_offset, remaining),
               target_format,
               start_frame_number: next_frame_number,
               block_size: stream_write_options.fetch(:block_size),
