@@ -2,7 +2,7 @@
 
 module Wavify
   module Codecs
-    # AIFF codec for PCM audio (AIFC is not currently supported).
+    # AIFF codec for PCM audio and uncompressed AIFF-C variants.
     class Aiff < Base
       # Recognized filename extensions.
       EXTENSIONS = %w[.aiff .aif].freeze
@@ -21,7 +21,7 @@ module Wavify
 
           header = io.read(12)
           io.rewind if io.respond_to?(:rewind)
-          header&.start_with?("FORM") && header[8, 4] == "AIFF"
+          header&.start_with?("FORM") && %w[AIFF AIFC].include?(header[8, 4])
         ensure
           io.close if close_io && io
         end
@@ -103,7 +103,7 @@ module Wavify
           while remaining.positive?
             bytes = [remaining, bytes_per_frame * chunk_size].min
             chunk_data = read_exact(io, bytes, "truncated SSND data")
-            yield Core::SampleBuffer.new(decode_samples(chunk_data, format), format)
+            yield Core::SampleBuffer.new(decode_samples(chunk_data, format, byte_order: info.fetch(:byte_order)), format)
             remaining -= bytes
           end
         ensure
@@ -153,6 +153,9 @@ module Wavify
             format: format,
             sample_frame_count: sample_frame_count,
             duration: Core::Duration.from_samples(sample_frame_count, format.sample_rate),
+            form_type: info[:form_type],
+            compression_type: info[:compression_type],
+            compression_name: info[:compression_name],
             markers: info[:markers],
             instrument: info[:instrument]
           }
@@ -168,14 +171,17 @@ module Wavify
           raise InvalidFormatError, "invalid AIFF header" unless header.start_with?("FORM")
 
           form_type = header[8, 4]
-          raise UnsupportedFormatError, "AIFC is not supported yet" if form_type == "AIFC"
-          raise InvalidFormatError, "invalid AIFF form type" unless form_type == "AIFF"
+          raise InvalidFormatError, "invalid AIFF form type" unless %w[AIFF AIFC].include?(form_type)
 
           info = {
+            form_type: form_type,
             format: nil,
             sample_frame_count: nil,
             sound_data_offset: nil,
             sound_data_size: nil,
+            byte_order: :big,
+            compression_type: form_type == "AIFF" ? "NONE" : nil,
+            compression_name: nil,
             markers: [],
             instrument: nil
           }
@@ -232,6 +238,14 @@ module Wavify
           channels, sample_frames, bit_depth = chunk.unpack("n N n")
           sample_rate = decode_extended80(chunk[8, 10])
           rounded_rate = sample_rate.round
+          if info.fetch(:form_type) == "AIFC"
+            raise InvalidFormatError, "AIFC COMM chunk too small" if chunk.bytesize < 22
+
+            compression_type = chunk.byteslice(18, 4)
+            info[:compression_type] = compression_type
+            info[:compression_name] = parse_pascal_string(chunk.byteslice(22, chunk.bytesize - 22).to_s)
+            info[:byte_order] = byte_order_for_aifc!(compression_type)
+          end
 
           format = Core::Format.new(
             channels: channels,
@@ -247,7 +261,7 @@ module Wavify
         def read_sound_data(io, info, format)
           io.seek(info.fetch(:sound_data_offset), IO::SEEK_SET)
           data = read_exact(io, info.fetch(:sound_data_size), "truncated SSND data")
-          decode_samples(data, format)
+          decode_samples(data, format, byte_order: info.fetch(:byte_order))
         end
 
         def parse_mark_chunk(chunk)
@@ -294,16 +308,32 @@ module Wavify
           }
         end
 
-        def decode_samples(data, format)
+        def byte_order_for_aifc!(compression_type)
+          return :big if compression_type == "NONE"
+          return :little if compression_type == "sowt"
+
+          raise UnsupportedFormatError, "unsupported AIFF-C compression type: #{compression_type.inspect}"
+        end
+
+        def parse_pascal_string(data)
+          return nil if data.empty?
+
+          length = data.getbyte(0).to_i
+          return "" if length.zero?
+
+          data.byteslice(1, length).to_s.force_encoding(Encoding::UTF_8)
+        end
+
+        def decode_samples(data, format, byte_order: :big)
           case format.bit_depth
           when 8
             data.unpack("c*")
           when 16
-            data.unpack("s>*")
+            byte_order == :little ? data.unpack("s<*") : data.unpack("s>*")
           when 24
-            decode_pcm24_be(data)
+            byte_order == :little ? decode_pcm24_le(data) : decode_pcm24_be(data)
           when 32
-            data.unpack("l>*")
+            byte_order == :little ? data.unpack("l<*") : data.unpack("l>*")
           else
             raise UnsupportedFormatError, "unsupported AIFF bit depth: #{format.bit_depth}"
           end
@@ -328,6 +358,15 @@ module Wavify
           bytes = data.unpack("C*")
           bytes.each_slice(3).map do |b0, b1, b2|
             value = (b0 << 16) | (b1 << 8) | b2
+            value -= 0x1000000 if value.anybits?(0x800000)
+            value
+          end
+        end
+
+        def decode_pcm24_le(data)
+          bytes = data.unpack("C*")
+          bytes.each_slice(3).map do |b0, b1, b2|
+            value = b0 | (b1 << 8) | (b2 << 16)
             value -= 0x1000000 if value.anybits?(0x800000)
             value
           end

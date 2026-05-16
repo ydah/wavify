@@ -211,7 +211,7 @@ module Wavify
         # @param block_size [Integer]
         # @return [String, IO]
         def write(io_or_path, sample_buffer, format:, block_size: DEFAULT_ENCODE_BLOCK_SIZE, compression_level: nil,
-                  comments: nil, **codec_options)
+                  comments: nil, stereo_coding: :auto, predictor: :auto, **codec_options)
           validate_no_codec_options!(codec_options, operation: "FLAC write")
           raise InvalidParameterError, "sample_buffer must be Core::SampleBuffer" unless sample_buffer.is_a?(Core::SampleBuffer)
 
@@ -219,11 +219,22 @@ module Wavify
           buffer = sample_buffer.format == target_format ? sample_buffer : sample_buffer.convert(target_format)
           target_block_size = normalize_write_block_size(block_size, compression_level)
           vorbis_comments = normalize_vorbis_comments(comments)
+          normalized_stereo_coding = normalize_stereo_coding!(stereo_coding)
+          normalized_predictor = normalize_predictor!(predictor)
 
           io, close_io = open_output(io_or_path)
           io.rewind if io.respond_to?(:rewind)
           io.truncate(0) if io.respond_to?(:truncate)
-          io.write(encode_verbatim_stream(buffer, target_format, block_size: target_block_size, comments: vorbis_comments))
+          io.write(
+            encode_verbatim_stream(
+              buffer,
+              target_format,
+              block_size: target_block_size,
+              comments: vorbis_comments,
+              stereo_coding: normalized_stereo_coding,
+              predictor: normalized_predictor
+            )
+          )
           io.flush if io.respond_to?(:flush)
           io.rewind if io.respond_to?(:rewind)
           io_or_path
@@ -269,7 +280,7 @@ module Wavify
         # @param block_size_strategy [Symbol] `:per_chunk`, `:fixed`, or `:source_chunk`
         # @return [Enumerator, String, IO]
         def stream_write(io_or_path, format:, block_size: DEFAULT_ENCODE_BLOCK_SIZE, block_size_strategy: :per_chunk,
-                         compression_level: nil, comments: nil, **codec_options)
+                         compression_level: nil, comments: nil, stereo_coding: :auto, predictor: :auto, **codec_options)
           validate_no_codec_options!(codec_options, operation: "FLAC stream_write")
           unless block_given?
             return enum_for(
@@ -279,13 +290,17 @@ module Wavify
               block_size: block_size,
               block_size_strategy: block_size_strategy,
               compression_level: compression_level,
-              comments: comments
+              comments: comments,
+              stereo_coding: stereo_coding,
+              predictor: predictor
             )
           end
 
           target_format = validate_encode_format!(format)
           stream_write_options = normalize_stream_write_options(block_size, block_size_strategy, compression_level)
           vorbis_comments = normalize_vorbis_comments(comments)
+          normalized_stereo_coding = normalize_stereo_coding!(stereo_coding)
+          normalized_predictor = normalize_predictor!(predictor)
           io, close_io = open_output(io_or_path)
           ensure_seekable!(io)
           io.rewind if io.respond_to?(:rewind)
@@ -314,7 +329,9 @@ module Wavify
                   pending_samples.shift(fixed_chunk_sample_count),
                   target_format,
                   start_frame_number: next_frame_number,
-                  block_size: stream_write_options.fetch(:block_size)
+                  block_size: stream_write_options.fetch(:block_size),
+                  stereo_coding: normalized_stereo_coding,
+                  predictor: normalized_predictor
                 )
                 io.write(encoded.fetch(:bytes))
                 next_frame_number = encoded.fetch(:next_frame_number)
@@ -325,7 +342,9 @@ module Wavify
                 buffer.samples,
                 target_format,
                 start_frame_number: next_frame_number,
-                block_size: buffer.sample_frame_count
+                block_size: buffer.sample_frame_count,
+                stereo_coding: normalized_stereo_coding,
+                predictor: normalized_predictor
               )
               io.write(encoded.fetch(:bytes))
               next_frame_number = encoded.fetch(:next_frame_number)
@@ -335,7 +354,9 @@ module Wavify
                 buffer.samples,
                 target_format,
                 start_frame_number: next_frame_number,
-                block_size: stream_write_options.fetch(:block_size)
+                block_size: stream_write_options.fetch(:block_size),
+                stereo_coding: normalized_stereo_coding,
+                predictor: normalized_predictor
               )
               io.write(encoded.fetch(:bytes))
               next_frame_number = encoded.fetch(:next_frame_number)
@@ -350,7 +371,9 @@ module Wavify
               pending_samples,
               target_format,
               start_frame_number: next_frame_number,
-              block_size: stream_write_options.fetch(:block_size)
+              block_size: stream_write_options.fetch(:block_size),
+              stereo_coding: normalized_stereo_coding,
+              predictor: normalized_predictor
             )
             io.write(encoded.fetch(:bytes))
             next_frame_number = encoded.fetch(:next_frame_number)
@@ -497,12 +520,15 @@ module Wavify
           [data.byteslice(offset, length).force_encoding(Encoding::UTF_8), offset + length]
         end
 
-        def encode_verbatim_stream(buffer, format, block_size: DEFAULT_ENCODE_BLOCK_SIZE, comments: nil)
+        def encode_verbatim_stream(buffer, format, block_size: DEFAULT_ENCODE_BLOCK_SIZE, comments: nil,
+                                   stereo_coding: :auto, predictor: :auto)
           encoded_frames = encode_verbatim_frames(
             buffer.samples,
             format,
             start_frame_number: 0,
-            block_size: block_size
+            block_size: block_size,
+            stereo_coding: stereo_coding,
+            predictor: predictor
           )
           md5_hex = pcm_md5_hex(buffer.samples, format)
 
@@ -595,6 +621,24 @@ module Wavify
           normalized.empty? ? nil : normalized
         end
 
+        def normalize_stereo_coding!(stereo_coding)
+          value = stereo_coding.to_sym
+          return value if %i[auto independent mid_side].include?(value)
+
+          raise InvalidParameterError, "stereo_coding must be :auto, :independent, or :mid_side"
+        rescue NoMethodError
+          raise InvalidParameterError, "stereo_coding must be Symbol/String"
+        end
+
+        def normalize_predictor!(predictor)
+          value = predictor.to_sym
+          return value if %i[auto fixed lpc verbatim].include?(value)
+
+          raise InvalidParameterError, "predictor must be :auto, :fixed, :lpc, or :verbatim"
+        rescue NoMethodError
+          raise InvalidParameterError, "predictor must be Symbol/String"
+        end
+
         def normalize_write_block_size(block_size, compression_level)
           level = normalize_compression_level(compression_level)
           return normalize_encode_block_size(block_size) unless level && block_size == DEFAULT_ENCODE_BLOCK_SIZE
@@ -643,7 +687,8 @@ module Wavify
           aggregate[:max_frame_size] = [aggregate[:max_frame_size], current_max_frame].max
         end
 
-        def encode_verbatim_frames(interleaved_samples, format, start_frame_number:, block_size:)
+        def encode_verbatim_frames(interleaved_samples, format, start_frame_number:, block_size:, stereo_coding: :auto,
+                                   predictor: :auto)
           channels = format.channels
           samples_per_frame = channels * normalize_encode_block_size(block_size)
           bytes = +""
@@ -652,7 +697,13 @@ module Wavify
           frame_sizes = []
 
           interleaved_samples.each_slice(samples_per_frame) do |frame_samples|
-            encoded_frame = encode_pcm_frame(frame_samples, format, frame_number: frame_number)
+            encoded_frame = encode_pcm_frame(
+              frame_samples,
+              format,
+              frame_number: frame_number,
+              stereo_coding: stereo_coding,
+              predictor: predictor
+            )
             bytes << encoded_frame
             block_sizes << (frame_samples.length / channels)
             frame_sizes << encoded_frame.bytesize
@@ -669,25 +720,48 @@ module Wavify
           }
         end
 
-        def encode_pcm_frame(interleaved_samples, format, frame_number:)
+        def encode_pcm_frame(interleaved_samples, format, frame_number:, stereo_coding:, predictor:)
           channels = format.channels
           block_size = interleaved_samples.length / channels
           raise InvalidParameterError, "FLAC frame block size must be positive" if block_size <= 0
 
           block_size_code, block_size_extra_bits = encode_block_size_descriptor(block_size)
           channel_samples = deinterleave_samples(interleaved_samples, channels)
+          candidates = frame_channel_candidates(channel_samples, format, stereo_coding)
+
+          encoded_candidates = candidates.map do |candidate|
+            encode_pcm_frame_candidate(
+              candidate,
+              format,
+              block_size: block_size,
+              block_size_code: block_size_code,
+              block_size_extra_bits: block_size_extra_bits,
+              frame_number: frame_number,
+              predictor: predictor
+            )
+          end
+          selected = if stereo_coding == :auto
+                       encoded_candidates.min_by(&:bytesize)
+                     else
+                       encoded_candidates.fetch(0)
+                     end
+          selected
+        end
+
+        def encode_pcm_frame_candidate(candidate, format, block_size:, block_size_code:, block_size_extra_bits:,
+                                       frame_number:, predictor:)
           header_without_crc8 = build_frame_header_bytes(
             block_size: block_size,
             block_size_code: block_size_code,
             block_size_extra_bits: block_size_extra_bits,
-            channels: channels,
+            channel_assignment: candidate.fetch(:channel_assignment),
             frame_number: frame_number
           )
           header_crc8 = flac_crc8(header_without_crc8)
 
           payload_writer = BitWriter.new
-          channel_samples.each do |channel|
-            write_best_subframe(payload_writer, channel, format.bit_depth)
+          candidate.fetch(:channel_samples).each_with_index do |channel, channel_index|
+            write_best_subframe(payload_writer, channel, candidate.fetch(:sample_sizes).fetch(channel_index), predictor: predictor)
           end
           payload_writer.align_to_byte
           payload_bytes = payload_writer.to_s
@@ -698,8 +772,29 @@ module Wavify
           crc16_input + [crc16].pack("n")
         end
 
-        def write_best_subframe(writer, channel_samples, sample_size)
-          selection = select_subframe_encoding(channel_samples, sample_size)
+        def frame_channel_candidates(channel_samples, format, stereo_coding)
+          independent = {
+            channel_assignment: format.channels - 1,
+            channel_samples: channel_samples,
+            sample_sizes: Array.new(format.channels, format.bit_depth)
+          }
+          return [independent] unless format.channels == 2
+          return [independent] if stereo_coding == :independent
+
+          left = channel_samples.fetch(0)
+          right = channel_samples.fetch(1)
+          side = left.zip(right).map { |l, r| l - r }
+          mid = left.zip(right).map { |l, r| (l + r) >> 1 }
+          mid_side = {
+            channel_assignment: 10,
+            channel_samples: [mid, side],
+            sample_sizes: [format.bit_depth, format.bit_depth + 1]
+          }
+          stereo_coding == :mid_side ? [mid_side] : [independent, mid_side]
+        end
+
+        def write_best_subframe(writer, channel_samples, sample_size, predictor:)
+          selection = select_subframe_encoding(channel_samples, sample_size, predictor: predictor)
 
           if selection[:kind] == :fixed
             write_fixed_subframe(
@@ -711,22 +806,45 @@ module Wavify
             return
           end
 
+          if selection[:kind] == :lpc
+            write_lpc_subframe(
+              writer,
+              channel_samples,
+              sample_size,
+              selection: selection
+            )
+            return
+          end
+
           write_verbatim_subframe(writer, channel_samples, sample_size)
         end
 
-        def select_subframe_encoding(channel_samples, sample_size)
+        def select_subframe_encoding(channel_samples, sample_size, predictor:)
           best = {
             kind: :verbatim,
             bit_length: verbatim_subframe_bit_length(channel_samples.length, sample_size)
           }
+          return best if predictor == :verbatim
 
-          max_predictor_order = [4, channel_samples.length - 1].min
-          (0..max_predictor_order).each do |predictor_order|
-            candidate = build_fixed_subframe_encoding(channel_samples, sample_size, predictor_order)
-            next unless candidate
-            next unless candidate.fetch(:bit_length) < best.fetch(:bit_length)
+          if %i[auto fixed].include?(predictor)
+            max_predictor_order = [4, channel_samples.length - 1].min
+            (0..max_predictor_order).each do |predictor_order|
+              candidate = build_fixed_subframe_encoding(channel_samples, sample_size, predictor_order)
+              next unless candidate
+              next unless candidate.fetch(:bit_length) < best.fetch(:bit_length)
 
-            best = candidate
+              best = candidate
+            end
+          end
+
+          if %i[auto lpc].include?(predictor)
+            [1, 2].each do |order|
+              candidate = build_lpc_subframe_encoding(channel_samples, sample_size, order)
+              next unless candidate
+              next unless candidate.fetch(:bit_length) < best.fetch(:bit_length)
+
+              best = candidate
+            end
           end
 
           best
@@ -748,6 +866,53 @@ module Wavify
             residual_encoding: residual_encoding,
             bit_length: 8 + (predictor_order * sample_size) + residual_encoding.fetch(:bit_length)
           }
+        end
+
+        def build_lpc_subframe_encoding(channel_samples, sample_size, predictor_order)
+          return nil if predictor_order >= channel_samples.length
+
+          coefficients = lpc_coefficients_for_order(predictor_order)
+          residuals = lpc_subframe_residuals(channel_samples, coefficients, 0)
+          residual_encoding = choose_residual_encoding(residuals)
+          return nil unless residual_encoding
+
+          coefficient_precision = lpc_coefficient_precision(coefficients)
+          {
+            kind: :lpc,
+            predictor_order: predictor_order,
+            coefficients: coefficients,
+            coefficient_precision: coefficient_precision,
+            qlp_shift: 0,
+            residuals: residuals,
+            residual_encoding: residual_encoding,
+            bit_length: 8 + (predictor_order * sample_size) + 4 + 5 +
+              (predictor_order * coefficient_precision) + residual_encoding.fetch(:bit_length)
+          }
+        end
+
+        def lpc_coefficients_for_order(predictor_order)
+          case predictor_order
+          when 1 then [1]
+          when 2 then [2, -1]
+          else
+            raise UnsupportedFormatError, "unsupported FLAC LPC predictor order: #{predictor_order}"
+          end
+        end
+
+        def lpc_subframe_residuals(samples, coefficients, qlp_shift)
+          predictor_order = coefficients.length
+          samples.drop(predictor_order).each_with_index.map do |sample, index|
+            history_index = predictor_order + index
+            sum = coefficients.each_with_index.sum do |coefficient, coefficient_index|
+              coefficient * samples.fetch(history_index - coefficient_index - 1)
+            end
+            predicted = qlp_shift.negative? ? (sum << -qlp_shift) : (sum >> qlp_shift)
+            sample - predicted
+          end
+        end
+
+        def lpc_coefficient_precision(coefficients)
+          coefficients.map { |coefficient| signed_bit_width(coefficient) }.max.to_i.clamp(1, 15)
         end
 
         def fixed_subframe_residuals(samples, predictor_order)
@@ -833,14 +998,14 @@ module Wavify
           residuals.each { |residual| writer.write_signed_bits(residual, raw_bits) } if raw_bits.positive?
         end
 
-        def build_frame_header_bytes(block_size:, block_size_code:, block_size_extra_bits:, channels:, frame_number:)
+        def build_frame_header_bytes(block_size:, block_size_code:, block_size_extra_bits:, channel_assignment:, frame_number:)
           writer = BitWriter.new
           writer.write_bits(FLAC_SYNC_CODE, 14)
           writer.write_bits(0, 1) # reserved
           writer.write_bits(0, 1) # fixed-blocksize stream
           writer.write_bits(block_size_code, 4)
           writer.write_bits(0, 4) # sample rate from STREAMINFO
-          writer.write_bits(channels - 1, 4) # independent channels
+          writer.write_bits(channel_assignment, 4)
           writer.write_bits(0, 3) # sample size from STREAMINFO
           writer.write_bits(0, 1) # reserved
           write_utf8_uint(writer, frame_number)
@@ -854,6 +1019,21 @@ module Wavify
           writer.write_bits(1, 6) # verbatim subframe type
           writer.write_bits(0, 1) # no wasted bits
           channel_samples.each { |sample| writer.write_signed_bits(sample, sample_size) }
+        end
+
+        def write_lpc_subframe(writer, channel_samples, sample_size, selection:)
+          predictor_order = selection.fetch(:predictor_order)
+          writer.write_bits(0, 1) # padding bit
+          writer.write_bits(32 + predictor_order - 1, 6)
+          writer.write_bits(0, 1) # no wasted bits
+
+          channel_samples.first(predictor_order).each { |sample| writer.write_signed_bits(sample, sample_size) }
+          writer.write_bits(selection.fetch(:coefficient_precision) - 1, 4)
+          writer.write_signed_bits(selection.fetch(:qlp_shift), 5)
+          selection.fetch(:coefficients).each do |coefficient|
+            writer.write_signed_bits(coefficient, selection.fetch(:coefficient_precision))
+          end
+          write_partition0_residuals(writer, selection.fetch(:residual_encoding), selection.fetch(:residuals))
         end
 
         def deinterleave_samples(interleaved_samples, channels)

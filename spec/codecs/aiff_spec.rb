@@ -78,6 +78,31 @@ RSpec.describe Wavify::Codecs::Aiff do
         expect(metadata[:instrument][:sustain_loop]).to eq(mode: 1, begin_marker: 1, end_marker: 1)
       end
     end
+
+    it "reads uncompressed AIFF-C metadata and little-endian PCM samples" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      comm_chunk = described_class.send(:build_comm_chunk, format, 3) + "sowt" + pascal_string("little-endian PCM")
+      ssnd_chunk = [0, 0].pack("N2") + [100, -200, 300].pack("s<*")
+      bytes = build_aiff_bytes(
+        ["COMM", comm_chunk],
+        ["SSND", ssnd_chunk],
+        form_type: "AIFC"
+      )
+
+      Tempfile.create(["wavify-aifc", ".aifc"]) do |file|
+        file.binmode
+        file.write(bytes)
+        file.flush
+
+        metadata = described_class.metadata(file.path)
+        decoded = described_class.read(file.path)
+        expect(metadata[:form_type]).to eq("AIFC")
+        expect(metadata[:compression_type]).to eq("sowt")
+        expect(metadata[:compression_name]).to eq("little-endian PCM")
+        expect(decoded.format).to eq(format)
+        expect(decoded.samples).to eq([100, -200, 300])
+      end
+    end
   end
 
   describe ".stream_read" do
@@ -108,12 +133,12 @@ RSpec.describe Wavify::Codecs::Aiff do
       end
     end
 
-    it "raises on AIFC form" do
+    it "raises on unsupported compressed AIFC form" do
       Tempfile.create(["wavify", ".aiff"]) do |file|
         file.binmode
-        file.write("FORM")
-        file.write([4].pack("N"))
-        file.write("AIFC")
+        format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+        comm_chunk = described_class.send(:build_comm_chunk, format, 0) + "fl32" + pascal_string("float")
+        file.write(build_aiff_bytes(["COMM", comm_chunk], ["SSND", [0, 0].pack("N2")], form_type: "AIFC"))
         file.flush
 
         expect do
@@ -123,8 +148,8 @@ RSpec.describe Wavify::Codecs::Aiff do
     end
   end
 
-  def build_aiff_bytes(*chunks)
-    body = +"AIFF"
+  def build_aiff_bytes(*chunks, form_type: "AIFF")
+    body = +form_type
     chunks.each do |chunk_id, chunk_data|
       body << chunk_id
       body << [chunk_data.bytesize].pack("N")
@@ -132,5 +157,12 @@ RSpec.describe Wavify::Codecs::Aiff do
       body << "\x00" if chunk_data.bytesize.odd?
     end
     +"FORM" << [body.bytesize].pack("N") << body
+  end
+
+  def pascal_string(value)
+    bytes = value.b
+    data = [bytes.bytesize].pack("C") + bytes
+    data << "\x00" if data.bytesize.odd?
+    data
   end
 end

@@ -44,7 +44,7 @@ module Wavify
 
           header = io.read(12)
           io.rewind if io.respond_to?(:rewind)
-          header&.start_with?("RIFF") && header[8, 4] == "WAVE"
+          (header&.start_with?("RIFF") || header&.start_with?("RF64")) && header[8, 4] == "WAVE"
         ensure
           io.close if close_io && io
         end
@@ -175,7 +175,10 @@ module Wavify
             loops: normalized_smpl_loops(info[:smpl]),
             cue: info[:cue],
             cue_points: info[:cue]&.fetch(:points) || [],
-            info: info[:info]
+            info: info[:info],
+            bext: info[:bext],
+            broadcast_extension: info[:bext],
+            rf64: info[:rf64]
           }
         ensure
           io.close if close_io && io
@@ -232,7 +235,10 @@ module Wavify
         def parse_chunk_directory(io)
           io.rewind
           header = read_exact(io, 12, "missing RIFF/WAVE header")
-          raise InvalidFormatError, "invalid WAV header" unless header.start_with?("RIFF") && header[8, 4] == "WAVE"
+          container_id = header[0, 4]
+          unless %w[RIFF RF64].include?(container_id) && header[8, 4] == "WAVE"
+            raise InvalidFormatError, "invalid WAV header"
+          end
 
           info = {
             format: nil,
@@ -242,7 +248,9 @@ module Wavify
             fact_sample_length: nil,
             smpl: nil,
             cue: nil,
-            info: nil
+            info: nil,
+            bext: nil,
+            rf64: container_id == "RF64" ? {} : nil
           }
 
           until io.eof?
@@ -252,6 +260,7 @@ module Wavify
 
             chunk_id = chunk_header[0, 4]
             chunk_size = chunk_header[4, 4].unpack1("V")
+            consumed_size = chunk_size
 
             case chunk_id
             when "fmt "
@@ -259,8 +268,13 @@ module Wavify
               info[:format] = parse_fmt_chunk(chunk_data)
             when "data"
               info[:data_offset] = io.pos
-              info[:data_size] = chunk_size
-              skip_bytes(io, chunk_size)
+              data_size = rf64_chunk_size(info, :data_size, chunk_size)
+              consumed_size = data_size
+              info[:data_size] = data_size
+              skip_bytes(io, data_size)
+            when "ds64"
+              chunk_data = read_exact(io, chunk_size, "truncated ds64 chunk")
+              info[:rf64] = parse_ds64_chunk(chunk_data)
             when "fact"
               chunk_data = read_exact(io, chunk_size, "truncated fact chunk")
               info[:fact_sample_length] = chunk_data.unpack1("V") if chunk_data.bytesize >= 4
@@ -270,6 +284,9 @@ module Wavify
             when "cue "
               chunk_data = read_exact(io, chunk_size, "truncated cue chunk")
               info[:cue] = parse_cue_chunk(chunk_data)
+            when "bext"
+              chunk_data = read_exact(io, chunk_size, "truncated bext chunk")
+              info[:bext] = parse_bext_chunk(chunk_data)
             when "LIST"
               chunk_data = read_exact(io, chunk_size, "truncated LIST chunk")
               list_info = parse_list_chunk(chunk_data)
@@ -278,15 +295,24 @@ module Wavify
               skip_bytes(io, chunk_size)
             end
 
-            skip_padding_byte(io, chunk_size)
+            skip_padding_byte(io, consumed_size)
           end
 
           raise InvalidFormatError, "fmt chunk missing" unless info[:format]
           raise InvalidFormatError, "data chunk missing" unless info[:data_offset] && info[:data_size]
 
           validate_data_chunk!(io, info)
-          info[:sample_frame_count] = info[:data_size] / info[:format].block_align
+          info[:sample_frame_count] = info.dig(:rf64, :sample_frame_count) || (info[:data_size] / info[:format].block_align)
           info
+        end
+
+        def rf64_chunk_size(info, key, chunk_size)
+          return chunk_size unless chunk_size == 0xFFFF_FFFF
+
+          rf64_size = info.dig(:rf64, key)
+          raise InvalidFormatError, "RF64 #{key} requires ds64 chunk" unless rf64_size
+
+          rf64_size
         end
 
         def validate_data_chunk!(io, info)
@@ -424,6 +450,62 @@ module Wavify
           end
 
           { cue_count: cue_count, points: points }
+        end
+
+        def parse_ds64_chunk(chunk)
+          raise InvalidFormatError, "ds64 chunk too small" if chunk.bytesize < 28
+
+          riff_size, data_size, sample_frame_count = chunk.byteslice(0, 24).unpack("Q< Q< Q<")
+          table_count = chunk.byteslice(24, 4).unpack1("V")
+          table = {}
+          offset = 28
+          table_count.times do
+            break if offset + 12 > chunk.bytesize
+
+            chunk_id = chunk.byteslice(offset, 4)
+            size = chunk.byteslice(offset + 4, 8).unpack1("Q<")
+            table[chunk_id] = size
+            offset += 12
+          end
+
+          {
+            riff_size: riff_size,
+            data_size: data_size,
+            sample_frame_count: sample_frame_count,
+            table: table
+          }
+        end
+
+        def parse_bext_chunk(chunk)
+          return nil if chunk.bytesize < 602
+
+          coding_history = chunk.bytesize > 602 ? chunk.byteslice(602, chunk.bytesize - 602).to_s.delete_suffix("\x00") : ""
+          {
+            description: wav_string(chunk.byteslice(0, 256)),
+            originator: wav_string(chunk.byteslice(256, 32)),
+            originator_reference: wav_string(chunk.byteslice(288, 32)),
+            origination_date: wav_string(chunk.byteslice(320, 10)),
+            origination_time: wav_string(chunk.byteslice(330, 8)),
+            time_reference: chunk.byteslice(338, 8).unpack1("Q<"),
+            version: chunk.byteslice(346, 2).unpack1("v"),
+            umid: chunk.byteslice(348, 64).unpack1("H*"),
+            loudness_value: bext_loudness_value(chunk, 412),
+            loudness_range: bext_loudness_value(chunk, 414),
+            max_true_peak_level: bext_loudness_value(chunk, 416),
+            max_momentary_loudness: bext_loudness_value(chunk, 418),
+            max_short_term_loudness: bext_loudness_value(chunk, 420),
+            coding_history: coding_history
+          }
+        end
+
+        def wav_string(bytes)
+          bytes.to_s.delete_suffix("\x00").split("\x00", 2).first.to_s.force_encoding(Encoding::UTF_8)
+        end
+
+        def bext_loudness_value(chunk, offset)
+          return nil if chunk.bytesize < offset + 2
+
+          chunk.byteslice(offset, 2).unpack1("s<")
         end
 
         def parse_list_chunk(chunk)

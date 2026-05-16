@@ -680,6 +680,35 @@ RSpec.describe Wavify::Codecs::Flac do
       expect(metadata[:max_block_size]).to eq(1024)
       expect(metadata[:comments]).to eq("artist" => "Wavify")
     end
+
+    it "accepts mid-side stereo coding and round-trips samples" do
+      format = Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      samples = [101, 98, 115, 110, 130, 123, 145, 139]
+      buffer = Wavify::Core::SampleBuffer.new(samples, format)
+      io = StringIO.new(+"")
+
+      described_class.write(io, buffer, format: format, stereo_coding: :mid_side, block_size: 4)
+
+      frame = io.string.byteslice(4 + 4 + 34, io.string.bytesize - (4 + 4 + 34))
+      channel_assignment = frame.getbyte(3) >> 4
+      expect(channel_assignment).to eq(10)
+      expect(described_class.read(io).samples).to eq(samples)
+    end
+
+    it "accepts LPC predictor encoding and round-trips samples" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      samples = [100, 105, 110, 115, 120, 125, 130, 135]
+      buffer = Wavify::Core::SampleBuffer.new(samples, format)
+      io = StringIO.new(+"")
+
+      described_class.write(io, buffer, format: format, predictor: :lpc, block_size: samples.length)
+
+      frame = io.string.byteslice(4 + 4 + 34, io.string.bytesize - (4 + 4 + 34))
+      first_subframe_header_byte = frame.getbyte(7)
+      subframe_type = (first_subframe_header_byte >> 1) & 0x3F
+      expect(subframe_type).to be_between(32, 63)
+      expect(described_class.read(io).samples).to eq(samples)
+    end
   end
 
   describe ".stream_write" do

@@ -175,6 +175,68 @@ RSpec.describe Wavify::Codecs::Wav do
         ])
       end
     end
+
+    it "parses Broadcast WAV bext metadata" do
+      fmt_chunk = [1, 1, 48_000, 48_000, 1, 8].pack("v v V V v v")
+      bext_chunk = build_bext_chunk(
+        description: "Field recording",
+        originator: "Wavify",
+        originator_reference: "take-001",
+        date: "2026-05-16",
+        time: "12:34:56",
+        time_reference: 1234,
+        coding_history: "A=PCM,F=48000,W=8,M=mono"
+      )
+      data_chunk = [128, 129].pack("C*")
+      bytes = build_wave_bytes(
+        ["fmt ", fmt_chunk],
+        ["bext", bext_chunk],
+        ["data", data_chunk]
+      )
+
+      Tempfile.create(["wavify-bext", ".wav"]) do |file|
+        file.binmode
+        file.write(bytes)
+        file.flush
+
+        metadata = described_class.metadata(file.path)
+        expect(metadata[:bext]).to include(
+          description: "Field recording",
+          originator: "Wavify",
+          originator_reference: "take-001",
+          origination_date: "2026-05-16",
+          origination_time: "12:34:56",
+          time_reference: 1234,
+          version: 1,
+          coding_history: "A=PCM,F=48000,W=8,M=mono"
+        )
+        expect(metadata[:broadcast_extension]).to eq(metadata[:bext])
+      end
+    end
+
+    it "reads small RF64 files using ds64 chunk sizes" do
+      fmt_chunk = [1, 1, 8_000, 8_000, 1, 8].pack("v v V V v v")
+      data_chunk = [128, 129, 130, 131].pack("C*")
+      bytes = build_rf64_bytes(
+        data_size: data_chunk.bytesize,
+        sample_frame_count: data_chunk.bytesize,
+        chunks: [
+          ["fmt ", fmt_chunk],
+          ["data", data_chunk]
+        ]
+      )
+
+      Tempfile.create(["wavify-rf64", ".wav"]) do |file|
+        file.binmode
+        file.write(bytes)
+        file.flush
+
+        metadata = described_class.metadata(file.path)
+        decoded = described_class.read(file.path)
+        expect(metadata[:rf64]).to include(data_size: 4, sample_frame_count: 4)
+        expect(decoded.samples).to eq([0, 1, 2, 3])
+      end
+    end
   end
 
   describe "chunk parsing behavior" do
@@ -263,5 +325,36 @@ RSpec.describe Wavify::Codecs::Wav do
     bytes << [body.bytesize].pack("V")
     bytes << body
     bytes
+  end
+
+  def build_rf64_bytes(data_size:, sample_frame_count:, chunks:)
+    ds64 = [0, data_size, sample_frame_count, 0].pack("Q< Q< Q< V")
+    body = +"WAVE"
+    body << "ds64" << [ds64.bytesize].pack("V") << ds64
+    chunks.each do |chunk_id, chunk_data|
+      declared_size = chunk_id == "data" ? 0xFFFF_FFFF : chunk_data.bytesize
+      body << chunk_id
+      body << [declared_size].pack("V")
+      body << chunk_data
+      body << "\x00" if chunk_data.bytesize.odd?
+    end
+
+    +"RF64" << [0xFFFF_FFFF].pack("V") << body
+  end
+
+  def build_bext_chunk(description:, originator:, originator_reference:, date:, time:, time_reference:, coding_history:)
+    fixed = +""
+    fixed << description.ljust(256, "\x00")
+    fixed << originator.ljust(32, "\x00")
+    fixed << originator_reference.ljust(32, "\x00")
+    fixed << date.ljust(10, "\x00")
+    fixed << time.ljust(8, "\x00")
+    fixed << [time_reference].pack("Q<")
+    fixed << [1].pack("v")
+    fixed << ("\x00" * 64)
+    fixed << [0, 0, 0, 0, 0].pack("s<5")
+    fixed << ("\x00" * 180)
+    fixed << coding_history
+    fixed
   end
 end
