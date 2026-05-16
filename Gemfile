@@ -17,3 +17,5 @@ group :ogg do
   gem "ogg-ruby", ">= 0.1"
   gem "vorbis", ">= 0.1"
 end
+
+gem "rbs", "~> 4.0"

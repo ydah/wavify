@@ -10,6 +10,15 @@ require "rbconfig"
 RSpec::Core::RakeTask.new(:spec)
 RuboCop::RakeTask.new(:lint)
 
+namespace :types do
+  desc "Validate RBS signatures"
+  task :validate do
+    ruby = RbConfig.ruby
+    success = system(ruby, "-S", "bundle", "exec", "rbs", "validate")
+    abort("RBS validation failed") unless success
+  end
+end
+
 namespace :spec do
   desc "Generate audio fixtures from YAML definitions"
   task :create_fixtures do

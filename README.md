@@ -306,6 +306,7 @@ Run tests:
 ```bash
 bundle exec rspec
 bundle exec rake spec:coverage COVERAGE_MINIMUM=90
+bundle exec rake types:validate
 ```
 
 Generate/check docs:

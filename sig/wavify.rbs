@@ -4,6 +4,21 @@ module Wavify
   def self.ms: (Numeric value) -> Core::Duration
   def self.seconds: (Numeric value) -> Core::Duration
 
+  module Adapters
+    class AdapterSpec
+      attr_reader name: Symbol
+      attr_reader kind: Symbol
+      attr_reader gem_name: String
+      attr_reader require_path: String
+      attr_reader formats: Array[String]
+      attr_reader summary: String
+    end
+
+    def self.known: () -> Array[AdapterSpec]
+    def self.find: (String | Symbol name) -> AdapterSpec?
+    def self.load: (String | Symbol name) -> true
+  end
+
   class Audio
     attr_reader buffer: Core::SampleBuffer
 
@@ -43,6 +58,22 @@ module Wavify
     end
 
     class SampleBuffer
+      class View
+        include Enumerable[Numeric]
+
+        attr_reader format: Format
+        attr_reader duration: Duration
+
+        def samples: () -> Array[Numeric]
+        def length: () -> Integer
+        def size: () -> Integer
+        def sample_frame_count: () -> Integer
+        def frame_view: () -> SampleBuffer::FrameView
+        def slice: (Integer start_frame, Integer frame_length) -> View
+        def to_sample_buffer: () -> SampleBuffer
+        def convert: (Format new_format, ?dither: bool, ?dither_seed: Integer?, ?resampler: Symbol) -> SampleBuffer
+      end
+
       attr_reader samples: Array[Numeric]
       attr_reader format: Format
       attr_reader duration: Duration
@@ -50,9 +81,18 @@ module Wavify
       def initialize: (Array[Numeric] samples, Format format) -> void
       def sample_frame_count: () -> Integer
       def frame_view: () -> SampleBuffer::FrameView
+      def view: (?start_frame: Integer, ?frame_length: Integer?) -> View
       def convert: (Format new_format, ?dither: bool, ?dither_seed: Integer?, ?resampler: Symbol) -> SampleBuffer
       def slice: (Integer start_frame, Integer frame_length) -> SampleBuffer
       def concat: (SampleBuffer other) -> SampleBuffer
+    end
+  end
+
+  module DSP
+    module Effects
+      class Compressor
+        def initialize: (?threshold: Numeric, ?ratio: Numeric, ?attack: Numeric, ?release: Numeric, ?makeup_gain: Numeric, ?knee: Numeric, ?sidechain: Audio | Core::SampleBuffer?) -> void
+      end
     end
   end
 end

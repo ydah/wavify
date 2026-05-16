@@ -41,6 +41,9 @@ jobs:
       - name: Run docs check
         if: matrix.ruby == '3.4'
         run: YARD_MINIMUM=85 bundle exec rake docs:check
+      - name: Validate RBS signatures
+        if: matrix.ruby == '3.4'
+        run: bundle exec rake types:validate
       - name: Run release check
         if: matrix.ruby == '3.4'
         run: bundle exec rake release:check
