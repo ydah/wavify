@@ -9,6 +9,54 @@ module Wavify
     class SampleBuffer
       include Enumerable
 
+      # Lazy no-copy view over interleaved samples as sample frames.
+      class FrameView
+        include Enumerable
+
+        attr_reader :channels, :frame_count
+
+        def initialize(samples, channels, start_frame: 0, frame_count: nil)
+          raise InvalidParameterError, "samples must be an Array" unless samples.is_a?(Array)
+          raise InvalidParameterError, "channels must be a positive Integer" unless channels.is_a?(Integer) && channels.positive?
+          raise InvalidParameterError, "start_frame must be a non-negative Integer" unless start_frame.is_a?(Integer) && start_frame >= 0
+
+          max_frames = samples.length / channels
+          @samples = samples
+          @channels = channels
+          @start_frame = [start_frame, max_frames].min
+          requested_count = frame_count.nil? ? max_frames - @start_frame : frame_count
+          raise InvalidParameterError, "frame_count must be a non-negative Integer" unless requested_count.is_a?(Integer) && requested_count >= 0
+
+          @frame_count = [requested_count, max_frames - @start_frame].min
+        end
+
+        def each
+          return enum_for(:each) unless block_given?
+
+          @frame_count.times { |index| yield self[index] }
+        end
+
+        def [](index)
+          raise InvalidParameterError, "frame index must be an Integer" unless index.is_a?(Integer)
+
+          normalized = index.negative? ? @frame_count + index : index
+          return nil unless normalized.between?(0, @frame_count - 1)
+
+          sample_index = (@start_frame + normalized) * @channels
+          @samples.slice(sample_index, @channels).dup
+        end
+
+        def slice(start_frame, frame_length)
+          self.class.new(@samples, @channels, start_frame: @start_frame + start_frame, frame_count: frame_length)
+        end
+
+        def length
+          @frame_count
+        end
+
+        alias size length
+      end
+
       attr_reader :samples, :format, :duration
 
       # @param samples [Array<Numeric>] interleaved sample values
@@ -46,6 +94,13 @@ module Wavify
       # @return [Integer] number of audio frames
       def sample_frame_count
         @samples.length / @format.channels
+      end
+
+      # Returns a lazy sample-frame view without copying the full buffer.
+      #
+      # @return [FrameView]
+      def frame_view
+        FrameView.new(@samples, @format.channels)
       end
 
       # Converts the buffer to another audio format/channels.
@@ -147,10 +202,6 @@ module Wavify
           max = (2**(bit_depth - 1)) - 1
           sample.to_i.clamp(min, max)
         end
-      end
-
-      def frame_view
-        @samples.each_slice(@format.channels).map(&:dup)
       end
 
       def to_normalized_float(sample, format)

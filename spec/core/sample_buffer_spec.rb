@@ -18,6 +18,18 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(buffer.map { |sample| sample * 2 }).to eq([2, 4, 6, 8])
     end
 
+    it "exposes a lazy frame view without allowing sample mutation" do
+      buffer = described_class.new([1, 2, 3, 4, 5, 6], pcm16_stereo)
+      view = buffer.frame_view
+
+      expect(view.length).to eq(3)
+      expect(view[0]).to eq([1, 2])
+      expect(view[-1]).to eq([5, 6])
+      view[0][0] = 99
+      expect(buffer.samples.first).to eq(1)
+      expect(view.slice(1, 2).to_a).to eq([[3, 4], [5, 6]])
+    end
+
     it "reverses frame order while preserving channel order" do
       buffer = described_class.new([1, 2, 3, 4, 5, 6], Wavify::Core::Format.new(channels: 2, sample_rate: 48_000, bit_depth: 16))
       reversed = buffer.reverse
@@ -182,6 +194,32 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(converted.format).to eq(target_format)
       expect(converted.sample_frame_count).to eq(2)
       expect(converted.samples).to eq([0.0, -0.5])
+    end
+
+    it "keeps randomized conversion invariants" do
+      rng = Random.new(12_345)
+      25.times do
+        channels = rng.rand(1..4)
+        frames = rng.rand(0..20)
+        source_rate = [8_000, 16_000, 44_100].sample(random: rng)
+        target_rate = [8_000, 22_050, 48_000].sample(random: rng)
+        source_format = Wavify::Core::Format.new(channels: channels, sample_rate: source_rate, bit_depth: 32, sample_format: :float)
+        target_format = Wavify::Core::Format.new(
+          channels: rng.rand(1..4),
+          sample_rate: target_rate,
+          bit_depth: 32,
+          sample_format: :float
+        )
+        samples = Array.new(frames * channels) { rng.rand(-1.0..1.0) }
+        source = described_class.new(samples, source_format)
+
+        converted = source.convert(target_format)
+        expected_frames = frames.zero? ? 0 : ((frames * target_rate.to_f) / source_rate).round
+        expect(converted.format).to eq(target_format)
+        expect(converted.sample_frame_count).to eq(expected_frames)
+        expect(converted.samples).to all(be_between(-1.0, 1.0))
+        expect(source.samples).to eq(samples)
+      end
     end
   end
 

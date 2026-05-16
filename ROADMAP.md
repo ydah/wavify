@@ -1,38 +1,32 @@
 # Roadmap
 
-This roadmap keeps Wavify focused on pure Ruby audio workflows.
+Wavify keeps the core gem focused on pure Ruby audio processing, immutable transforms, streaming, DSP, codec I/O, and a compact sequencing DSL.
 
-## v0.2 Correctness and Trust
+## Core
 
-- Keep sample-rate conversion explicit and tested.
-- Keep write-side codec options aligned with read/stream options.
-- Expose metadata and codec registry helpers.
-- Document current limitations and recommended streaming workflows.
-- Run specs, coverage, docs, examples, and release checks in CI.
+- Keep sample-rate conversion, channel conversion, metadata, and streaming behavior covered by regression tests.
+- Prefer pure Ruby implementations that work in scripts and CI without mandatory FFmpeg or SoX.
+- Keep optional native dependencies behind codec adapters.
 
-## v0.3 Streaming and DSP Polish
+## Codec Ecosystem
 
-- Refine the processor protocol around `process`, `reset`, `flush`, `tail_duration`, `latency`, and `lookahead`.
-- Add focused DSP processors such as limiter, soft limiter, noise gate, tremolo, and bitcrusher.
-- Keep fade curve options and bit-depth dither covered by focused tests.
-- Keep streaming and offline behavior covered by comparison tests.
+- Keep WAV, AIFF/AIFF-C PCM, FLAC, raw PCM, and optional OGG Vorbis in the core gem.
+- Build MP3, AAC, FFmpeg, MIDI, and spectrogram support as adapter gems instead of adding mandatory dependencies.
+- Continue expanding metadata coverage where it does not require decoding the full payload.
 
-## v0.4 Sequencer Identity
+## Sequencer
 
-- Keep swing, velocity, arrangement repeat, timeline export, and improved DSL error context cohesive.
-- Add stems rendering when the track model is stable enough.
-- Keep the DSL compact and Ruby-native.
+- Keep the DSL small enough to read as Ruby.
+- Add notation only when it maps cleanly to timeline events.
+- Prefer timeline export, stems, and sample transforms over DAW-scale editing features.
 
-## v0.5 Ecosystem
+## Performance
 
-- Expand the small CLI beyond `info`, `convert`, `tone`, `normalize`, `trim`, `formats`, and `doctor` only when workflows justify it.
-- Keep MP3/AAC/FFmpeg support in optional adapters.
-- Grow codec/effect plugin APIs only after real adapter use cases appear.
-- Publish benchmark snapshots from stable benchmark scripts.
+- Use `SampleBuffer#frame_view` and streaming APIs in hot paths.
+- Track benchmark reports with `bench:baseline` and scheduled benchmark smoke runs.
+- Treat large-file workflows as streaming-first.
 
-## Not Planned for Core
+## Release Quality
 
-- Mandatory FFmpeg or SoX dependency.
-- Full DAW-style UI or plugin host behavior.
-- Native extensions as a requirement for core DSP.
-- Large fixture files packaged in the gem.
+- Keep coverage, docs checks, example smoke tests, release checks, and lint in CI.
+- Avoid packaging generated files, fixtures, and editor metadata.

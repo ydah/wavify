@@ -125,9 +125,9 @@ stream.write_to("output.flac", codec_options: { block_size_strategy: :fixed, blo
 
 | Format | Read | Write | Stream Read | Stream Write | Notes |
 |--------|------|-------|-------------|--------------|-------|
-| WAV | ✅ | ✅ | ✅ | ✅ | PCM + float WAV, including extensible WAV |
-| AIFF | ✅ | ✅ | ✅ | ✅ | PCM only (AIFC unsupported) |
-| FLAC | ✅ | ✅ | ✅ | ✅ | Pure Ruby implementation |
+| WAV | ✅ | ✅ | ✅ | ✅ | PCM + float WAV, extensible WAV, BWF metadata, RF64 read metadata |
+| AIFF | ✅ | ✅ | ✅ | ✅ | PCM AIFF plus uncompressed AIFF-C `NONE` / `sowt` reads |
+| FLAC | ✅ | ✅ | ✅ | ✅ | Pure Ruby implementation with comments, mid-side, and LPC write options |
 | OGG Vorbis | ✅ | ✅ | ✅ | ✅ | Optional `ogg-ruby` + `vorbis` gems |
 | Raw PCM/Float | ✅* | ✅ | ✅* | ✅ | `format:` is required for read/stream-read/metadata |
 
@@ -178,16 +178,22 @@ Use `Wavify.build` for one-shot rendering/writing, or `Wavify::DSL.build_definit
 ```ruby
 song = Wavify::DSL.build_definition(format: Wavify::Core::Format::CD_QUALITY, tempo: 116, swing: 0.55, default_bars: 2) do
   sample_folder "samples"
+  key :c, :minor
 
   track :kick do
     synth :sine
-    notes "C2 . . . C2 . . .", resolution: 16
+    notes "C2/8. . C2/8t .", resolution: 16
     envelope attack: 0.001, decay: 0.05, sustain: 0.0, release: 0.06
     gain(-4)
   end
 
+  track :pad do
+    chords ["Cmaj7/E@drop2"], voicing: :open
+  end
+
   arrange do
-    section :intro, bars: 1, tracks: %i[kick]
+    section :intro, bars: 1, tracks: %i[kick], markers: [:start]
+    section :bridge, bars: 1, tracks: %i[kick pad], tempo: 92, beats_per_bar: 3, markers: [:bridge]
   end
 end
 
@@ -200,8 +206,11 @@ mix.write("song.wav")
 ```
 
 Pattern steps support rests (`-`/`.`), normal triggers (`x`, velocity `0.8`), accents (`X`, velocity `1.0`), explicit velocity suffixes (`x0.5`), probability metadata (`x?50`), and ratchets (`x:3`).
+Note tokens support fixed durations (`C4/8`), dotted values (`C4/8.`), triplets (`C4/8t`), and ties (`D4~ D4`).
+Use `key :c, :minor` for simple scale quantization, slash chords for inversions, and `@drop2` / `@open` or `voicing:` for chord voicings.
+Arrangement sections can carry `tempo:`, `beats_per_bar:`, and `markers:`.
 Swing values start at `0.5` for straight timing; values such as `0.55` delay off-beat steps on even grids.
-Sample tracks can use `sample_folder`, per-sample `pitch:` semitones, and `Wavify::DSL.validate` for pre-render checks.
+Sample tracks can use `sample_folder`, per-sample `pitch:` semitones, `preset :lofi_drums`, and `Wavify::DSL.validate` for pre-render checks.
 
 ## DSP
 
@@ -270,6 +279,7 @@ wavify doctor
 - `docs/sequencer.md`
 - `docs/limitations.md`
 - `docs/performance.md`
+- `ROADMAP.md`
 - YARD docs can be generated with `bundle exec rake docs:yard`.
 
 ## Limitations

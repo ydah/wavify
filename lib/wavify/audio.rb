@@ -205,7 +205,7 @@ module Wavify
 
     # @return [Array<Array<Numeric>>] sample frames
     def frames
-      @buffer.samples.each_slice(format.channels).map(&:dup)
+      @buffer.frame_view.map(&:dup)
     end
 
     # Enumerates sample frames.
@@ -217,8 +217,8 @@ module Wavify
     def each_frame
       return enum_for(:each_frame) unless block_given?
 
-      @buffer.samples.each_slice(format.channels).with_index do |frame, frame_index|
-        yield frame.dup, frame_index
+      @buffer.frame_view.each.with_index do |frame, frame_index|
+        yield frame, frame_index
       end
       self
     end

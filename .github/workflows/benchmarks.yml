@@ -1,0 +1,28 @@
+name: Benchmarks
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+jobs:
+  benchmark-smoke:
+    runs-on: ubuntu-latest
+    env:
+      WAV_IO_ITERATIONS: "2"
+      WAV_IO_DURATION: "0.05"
+      DSP_BENCH_ITERATIONS: "2"
+      DSP_BENCH_DURATION: "0.05"
+      FLAC_BENCH_ITERATIONS: "2"
+      FLAC_BENCH_DURATION: "0.05"
+      STREAM_BENCH_DURATION: "0.05"
+      BENCH_DIR: "tmp/benchmarks/ci"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Run benchmark smoke reports
+        run: bundle exec rake bench:baseline

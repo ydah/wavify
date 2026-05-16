@@ -22,10 +22,11 @@ bundle exec rake bench:compare
 
 Current optimization priorities:
 
-- Avoid unnecessary frame array materialization in hot paths.
+- Use `SampleBuffer#frame_view` when frame iteration is needed without materializing every frame upfront.
 - Keep immutable public APIs while allowing internal buffer reuse where safe.
 - Prefer streaming pipelines for large inputs.
 - Keep pure Ruby codecs measurable with stable benchmark scripts.
 
 Set `BENCH_JSON=path/to/report.json` when running an individual benchmark to write a machine-readable report.
 Use `bench:baseline` to write reports under `tmp/benchmarks/baseline`, then `bench:compare` to compare a later run with `BENCH_THRESHOLD` (default `1.2`).
+The scheduled benchmark workflow runs a short smoke baseline so benchmark scripts stay healthy in CI without making pull requests slow.

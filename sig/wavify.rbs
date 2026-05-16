@@ -1,0 +1,58 @@
+module Wavify
+  VERSION: String
+
+  def self.ms: (Numeric value) -> Core::Duration
+  def self.seconds: (Numeric value) -> Core::Duration
+
+  class Audio
+    attr_reader buffer: Core::SampleBuffer
+
+    def self.read: (String | IO path_or_io, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?strict: bool, ?filename: String?) -> Audio
+    def self.metadata: (String | IO path_or_io, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?strict: bool, ?filename: String?) -> Hash[Symbol, untyped]
+    def self.info: (String | IO path_or_io, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?strict: bool, ?filename: String?) -> Hash[Symbol, untyped]
+    def self.mix: (*Audio audios, ?strategy: Symbol, ?gains: Array[Numeric]?, ?align: Symbol) -> Audio
+    def self.silence: (Numeric duration_seconds, format: Core::Format) -> Audio
+
+    def format: () -> Core::Format
+    def duration: () -> Core::Duration
+    def sample_frame_count: () -> Integer
+    def channels: () -> Integer
+    def sample_rate: () -> Integer
+    def write: (String | IO path, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?overwrite: bool) -> Audio
+    def convert: (Core::Format new_format, ?dither: bool, ?dither_seed: Integer?, ?resampler: Symbol) -> Audio
+    def resample: (sample_rate: Integer, ?resampler: Symbol) -> Audio
+    def stats: () -> Hash[Symbol, untyped]
+  end
+
+  module Core
+    class Duration
+      attr_reader total_seconds: Float
+
+      def initialize: (Numeric seconds) -> void
+      def self.parse: (String value) -> Duration
+    end
+
+    class Format
+      attr_reader channels: Integer
+      attr_reader sample_rate: Integer
+      attr_reader bit_depth: Integer
+      attr_reader sample_format: Symbol
+
+      def initialize: (channels: Integer, sample_rate: Integer, bit_depth: Integer, ?sample_format: Symbol) -> void
+      def with: (?channels: Integer, ?sample_rate: Integer, ?bit_depth: Integer, ?sample_format: Symbol) -> Format
+    end
+
+    class SampleBuffer
+      attr_reader samples: Array[Numeric]
+      attr_reader format: Format
+      attr_reader duration: Duration
+
+      def initialize: (Array[Numeric] samples, Format format) -> void
+      def sample_frame_count: () -> Integer
+      def frame_view: () -> SampleBuffer::FrameView
+      def convert: (Format new_format, ?dither: bool, ?dither_seed: Integer?, ?resampler: Symbol) -> SampleBuffer
+      def slice: (Integer start_frame, Integer frame_length) -> SampleBuffer
+      def concat: (SampleBuffer other) -> SampleBuffer
+    end
+  end
+end

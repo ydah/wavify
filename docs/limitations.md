@@ -5,7 +5,7 @@ Wavify intentionally stays small and Ruby-first.
 - MP3, AAC, and M4A are not part of core. Use an external adapter or a separate conversion step.
 - FFmpeg and SoX are not mandatory runtime dependencies.
 - OGG Vorbis support is optional and depends on `ogg-ruby` and `vorbis`, which require native build support.
-- AIFF-C is not supported.
+- AIFF-C support is limited to uncompressed PCM variants (`NONE` and `sowt`).
 - Raw PCM/float has no embedded metadata. Pass `format:` when reading, streaming, or inspecting metadata.
 - Streaming WAV/AIFF/FLAC writes require seekable output IO because headers are finalized after writing samples.
 - Resampling defaults to linear interpolation. Use `resampler: :windowed_sinc` for higher-quality offline conversion when speed is less important.
