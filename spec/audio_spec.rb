@@ -275,11 +275,20 @@ RSpec.describe Wavify::Audio do
       expect(normalized.peak_amplitude).to be < 1.0
     end
 
+    it "normalizes by approximate LUFS when requested" do
+      source = described_class.new(Wavify::Core::SampleBuffer.new([0.25, -0.25, 0.25, -0.25], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
+
+      normalized = source.normalize(target_db: -12.0, mode: :lufs)
+
+      expect(normalized.lufs).to be_within(0.001).of(-12.0)
+      expect(normalized.stats[:lufs]).to be_within(0.001).of(-12.0)
+    end
+
     it "rejects unsupported normalization modes" do
       source = described_class.new(Wavify::Core::SampleBuffer.new([0.1], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
 
       expect do
-        source.normalize(mode: :lufs)
+        source.normalize(mode: :bogus)
       end.to raise_error(Wavify::InvalidParameterError, /mode/)
     end
   end

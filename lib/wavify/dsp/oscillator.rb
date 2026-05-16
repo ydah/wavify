@@ -5,15 +5,26 @@ module Wavify
     # Oscillator and noise source generator.
     class Oscillator
       # Supported waveform symbols.
-      WAVEFORMS = %i[sine square sawtooth triangle white_noise pink_noise].freeze
+      WAVEFORMS = %i[sine square sawtooth triangle pulse white_noise pink_noise].freeze
 
-      def initialize(waveform:, frequency:, amplitude: 1.0, phase: 0.0, random: Random.new)
+      def initialize(waveform:, frequency:, amplitude: 1.0, phase: 0.0, pulse_width: 0.5, detune: 0.0, unison: 1,
+                     random: Random.new)
         @waveform = validate_waveform!(waveform)
         @frequency = validate_frequency!(frequency)
         @amplitude = validate_amplitude!(amplitude)
-        @phase = phase.to_f
+        @initial_phase = phase.to_f
+        @phase = @initial_phase
+        @pulse_width = validate_pulse_width!(pulse_width)
+        @detune = validate_detune!(detune)
+        @unison = validate_unison!(unison)
         @random = random
         reset_pink_noise!
+      end
+
+      def reset_phase(phase = @initial_phase)
+        @phase = phase.to_f
+        reset_pink_noise!
+        self
       end
 
       # Generates a finite sample buffer in the requested format.
@@ -78,21 +89,108 @@ module Wavify
         amplitude.to_f
       end
 
+      def validate_pulse_width!(pulse_width)
+        unless pulse_width.is_a?(Numeric) && pulse_width.respond_to?(:finite?) && pulse_width.finite? && pulse_width.between?(0.01, 0.99)
+          raise InvalidParameterError, "pulse_width must be a finite Numeric in 0.01..0.99"
+        end
+
+        pulse_width.to_f
+      end
+
+      def validate_detune!(detune)
+        raise InvalidParameterError, "detune must be a finite Numeric" unless detune.is_a?(Numeric) && detune.respond_to?(:finite?) && detune.finite?
+
+        detune.to_f
+      end
+
+      def validate_unison!(unison)
+        voices = Integer(unison)
+        raise InvalidParameterError, "unison must be positive" unless voices.positive?
+
+        voices
+      rescue ArgumentError, TypeError
+        raise InvalidParameterError, "unison must be an Integer"
+      end
+
       def validate_format!(format)
         raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
       end
 
       def sample_at(index, sample_rate)
+        raw = if noise_waveform?
+                noise_sample
+              else
+                oscillator_voice_frequencies.sum do |frequency|
+                  oscillator_sample(index, sample_rate, frequency)
+                end / @unison
+              end
+        (raw * @amplitude).clamp(-1.0, 1.0)
+      end
+
+      def oscillator_sample(index, sample_rate, frequency)
         t = @phase + (index.to_f / sample_rate)
+        phase = (frequency * t) % 1.0
+        phase_step = frequency / sample_rate.to_f
+        phase_step = 0.5 if phase_step > 0.5
+
+        case @waveform
+        when :sine then Math.sin(2.0 * Math::PI * phase)
+        when :square then polyblep_square(phase, phase_step, 0.5)
+        when :pulse then polyblep_square(phase, phase_step, @pulse_width)
+        when :sawtooth then polyblep_saw(phase, phase_step)
+        when :triangle then naive_triangle(phase)
+        end
+      end
+
+      def noise_waveform?
+        @waveform == :white_noise || @waveform == :pink_noise
+      end
+
+      def noise_sample
         raw = case @waveform
-              when :sine then Math.sin(2.0 * Math::PI * @frequency * t)
-              when :square then Math.sin(2.0 * Math::PI * @frequency * t) >= 0 ? 1.0 : -1.0
-              when :sawtooth then (2.0 * ((@frequency * t) % 1.0)) - 1.0
-              when :triangle then (2.0 * ((2.0 * ((@frequency * t) % 1.0)) - 1.0).abs) - 1.0
               when :white_noise then @random.rand(-1.0..1.0)
               when :pink_noise then next_pink_noise
               end
-        (raw * @amplitude).clamp(-1.0, 1.0)
+        raw || 0.0
+      end
+
+      def oscillator_voice_frequencies
+        return [@frequency] if @unison == 1 || @detune.zero?
+
+        center = (@unison - 1) / 2.0
+        Array.new(@unison) do |voice|
+          cents = (voice - center) * @detune
+          @frequency * (2.0**(cents / 1200.0))
+        end
+      end
+
+      def polyblep_saw(phase, phase_step)
+        ((2.0 * phase) - 1.0) - polyblep(phase, phase_step)
+      end
+
+      def polyblep_square(phase, phase_step, pulse_width)
+        value = phase < pulse_width ? 1.0 : -1.0
+        value += polyblep(phase, phase_step)
+        value -= polyblep((phase - pulse_width) % 1.0, phase_step)
+        value
+      end
+
+      def naive_triangle(phase)
+        (2.0 * ((2.0 * phase) - 1.0).abs) - 1.0
+      end
+
+      def polyblep(phase, phase_step)
+        return 0.0 if phase_step <= 0.0
+
+        if phase < phase_step
+          t = phase / phase_step
+          (t + t) - (t * t) - 1.0
+        elsif phase > 1.0 - phase_step
+          t = (phase - 1.0) / phase_step
+          (t * t) + (t + t) + 1.0
+        else
+          0.0
+        end
       end
 
       # Lightweight pink-noise approximation (Paul Kellet filter).

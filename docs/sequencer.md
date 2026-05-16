@@ -35,6 +35,7 @@ end
 ```
 
 Pattern velocity suffixes are normalized `0.0..1.0` values. `x` defaults to `0.8`, `X` defaults to `1.0`, and explicit values such as `x0.35` are passed through the sequencer timeline and sample-track renderer.
+Use `x?50` for probability metadata and `x:3` for ratchets. Note tokens can use duration suffixes such as `C4/8` and simple ties such as `D4~ D4`.
 Swing starts at `0.5` for straight timing and applies to off-beat steps on even pattern/note grids.
 `sample_folder` resolves `sample :kick` to `kick.wav` under that folder, and `pitch:` shifts samples by semitones using resample-based playback speed changes. Use `Wavify::DSL.validate(format: ...)` to catch notation, track, and arrangement errors before rendering.
 Use `Wavify::DSL.effect(:name, MyEffect)` to make custom processors available to track-level `effect :name` calls.

@@ -10,7 +10,7 @@ module Wavify
 
     MIX_STRATEGIES = %i[clip normalize headroom soft_limit].freeze
     MIX_ALIGNMENTS = %i[start center end].freeze
-    NORMALIZE_MODES = %i[peak rms].freeze
+    NORMALIZE_MODES = %i[peak rms lufs].freeze
     FADE_CURVES = %i[linear exp log].freeze
     SOFT_LIMIT_THRESHOLD = 0.8
 
@@ -118,12 +118,13 @@ module Wavify
     # @param frequency [Numeric] oscillator frequency in Hz
     # @param duration [Numeric] duration in seconds
     # @param format [Core::Format] output format
-    # @param waveform [Symbol] `:sine`, `:square`, `:triangle`, `:sawtooth`, `:white_noise`
+    # @param waveform [Symbol] `:sine`, `:square`, `:triangle`, `:sawtooth`, `:pulse`, `:white_noise`
     # @return [Audio]
-    def self.tone(frequency:, duration:, format:, waveform: :sine)
+    def self.tone(frequency:, duration:, format:, waveform: :sine, **oscillator_options)
       oscillator = DSP::Oscillator.new(
         waveform: waveform,
-        frequency: frequency
+        frequency: frequency,
+        **oscillator_options
       )
       new(oscillator.generate(duration, format: format))
     end
@@ -449,6 +450,14 @@ module Wavify
       end
 
       transform_samples do |samples, _format|
+        if normalize_mode == :lufs
+          current_lufs = integrated_loudness(samples)
+          next samples unless current_lufs.finite?
+
+          factor = 10.0**((target_db.to_f - current_lufs) / 20.0)
+          next samples.map { |sample| (sample * factor).clamp(-1.0, 1.0) }
+        end
+
         current = normalize_reference_amplitude(samples, normalize_mode)
         next samples if current.zero?
 
@@ -685,6 +694,12 @@ module Wavify
       amplitude_to_dbfs(rms_amplitude)
     end
 
+    # @return [Float] approximate integrated loudness in LUFS
+    def lufs
+      float_buffer = @buffer.convert(float_work_format(@buffer.format))
+      integrated_loudness(float_buffer.samples)
+    end
+
     # @return [Hash] basic audio statistics
     def stats
       {
@@ -695,6 +710,7 @@ module Wavify
         rms_amplitude: rms_amplitude,
         peak_dbfs: peak_dbfs,
         rms_dbfs: rms_dbfs,
+        lufs: lufs,
         clipped: clipped?,
         silent: silent?
       }
@@ -837,6 +853,15 @@ module Wavify
 
         Math.sqrt(samples.sum { |sample| sample * sample } / samples.length)
       end
+    end
+
+    def integrated_loudness(samples)
+      return -Float::INFINITY if samples.empty?
+
+      mean_square = samples.sum { |sample| sample * sample } / samples.length
+      return -Float::INFINITY if mean_square <= 0.0
+
+      -0.691 + (10.0 * Math.log10(mean_square))
     end
 
     def human_sample_rate

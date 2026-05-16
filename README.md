@@ -85,9 +85,10 @@ Immutable transforms (each also has `!` in-place variants):
 Utility methods:
 
 - `convert`, `split(at:)`, `duration`, `sample_frame_count`, `channels`, `sample_rate`, `frames`, `each_frame`
-- `peak_amplitude`, `rms_amplitude`, `peak_dbfs`, `rms_dbfs`, `stats`, `silent?`, `clipped?`, `dc_offset`, `zero_crossing_rate`
+- `peak_amplitude`, `rms_amplitude`, `peak_dbfs`, `rms_dbfs`, `lufs`, `stats`, `silent?`, `clipped?`, `dc_offset`, `zero_crossing_rate`
 
 Mix strategies are `:clip` (default), `:normalize`, `:headroom`, and `:soft_limit`. `gains:` accepts one dB value per source, and `align:` can be `:start`, `:center`, or `:end`.
+Normalize modes are `:peak`, `:rms`, and `:lufs`.
 Use `bit_depth(16, dither: true)` when reducing PCM bit depth and you want simple TPDF dither.
 
 Duration helpers:
@@ -198,7 +199,7 @@ mix = song.render
 mix.write("song.wav")
 ```
 
-Pattern steps support rests (`-`/`.`), normal triggers (`x`, velocity `0.8`), accents (`X`, velocity `1.0`), and explicit normalized velocity suffixes such as `x0.5` or `X0.9`.
+Pattern steps support rests (`-`/`.`), normal triggers (`x`, velocity `0.8`), accents (`X`, velocity `1.0`), explicit velocity suffixes (`x0.5`), probability metadata (`x?50`), and ratchets (`x:3`).
 Swing values start at `0.5` for straight timing; values such as `0.55` delay off-beat steps on even grids.
 Sample tracks can use `sample_folder`, per-sample `pitch:` semitones, and `Wavify::DSL.validate` for pre-render checks.
 
@@ -206,10 +207,11 @@ Sample tracks can use `sample_folder`, per-sample `pitch:` semitones, and `Wavif
 
 Built-in modules:
 
-- Oscillator waveforms: `:sine`, `:square`, `:sawtooth`, `:triangle`, `:white_noise`, `:pink_noise`
+- Oscillator waveforms: `:sine`, `:square`, `:sawtooth`, `:triangle`, `:pulse`, `:white_noise`, `:pink_noise`
 - Envelope (AHDSR with optional segment curves)
+- Automation and LFO modulation helpers
 - Biquad filters (lowpass/highpass/bandpass/notch/peaking/shelves)
-- Effects: `Delay`, `Reverb`, `Chorus`, `Distortion`, `Compressor`, `Limiter`, `SoftLimiter`, `NoiseGate`, `Expander`, `Tremolo`, `AutoPan`, `StereoWidener`, `Bitcrusher`, `EQ`
+- Effects: `Delay`, `Reverb`, `Chorus`, `Vibrato`, `Flanger`, `Phaser`, `Distortion`, `Compressor`, `Limiter`, `SoftLimiter`, `NoiseGate`, `Expander`, `Tremolo`, `AutoPan`, `StereoWidener`, `Bitcrusher`, `EQ`
 - Preset chains: `MasteringChain`, `PodcastChain`
 
 Register custom processors for pipelines and DSL tracks:

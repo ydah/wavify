@@ -24,6 +24,28 @@ RSpec.describe Wavify::DSP::Oscillator do
         expect(left).to eq(right)
       end
     end
+
+    it "generates pulse waves with configurable width" do
+      narrow = described_class.new(waveform: :pulse, frequency: 100, pulse_width: 0.25)
+      wide = described_class.new(waveform: :pulse, frequency: 100, pulse_width: 0.75)
+
+      narrow_buffer = narrow.generate(0.01, format: mono_float)
+      wide_buffer = wide.generate(0.01, format: mono_float)
+
+      expect(narrow_buffer.samples).not_to eq(wide_buffer.samples)
+      expect(narrow_buffer.samples).to all(be_between(-1.0, 1.0))
+    end
+
+    it "supports detuned unison voices" do
+      plain = described_class.new(waveform: :sawtooth, frequency: 220)
+      detuned = described_class.new(waveform: :sawtooth, frequency: 220, detune: 8.0, unison: 3)
+
+      plain_buffer = plain.generate(0.02, format: mono_float)
+      detuned_buffer = detuned.generate(0.02, format: mono_float)
+
+      expect(detuned_buffer.samples).not_to eq(plain_buffer.samples)
+      expect(detuned_buffer.samples).to all(be_between(-1.0, 1.0))
+    end
   end
 
   describe "#each_sample" do
@@ -36,12 +58,32 @@ RSpec.describe Wavify::DSP::Oscillator do
       expect(values.max).to be <= 0.8
       expect(values.min).to be >= -0.8
     end
+
+    it "can reset phase for repeatable oscillator output" do
+      oscillator = described_class.new(waveform: :sine, frequency: 100, phase: 0.1)
+      first = oscillator.generate(0.005, format: mono_float).samples
+
+      oscillator.reset_phase
+      second = oscillator.generate(0.005, format: mono_float).samples
+
+      expect(second).to eq(first)
+    end
   end
 
   describe "validation" do
     it "raises on unsupported waveform" do
       expect do
-        described_class.new(waveform: :pulse, frequency: 440)
+        described_class.new(waveform: :unknown, frequency: 440)
+      end.to raise_error(Wavify::InvalidParameterError)
+    end
+
+    it "raises on invalid pulse width and unison" do
+      expect do
+        described_class.new(waveform: :pulse, frequency: 440, pulse_width: 1.2)
+      end.to raise_error(Wavify::InvalidParameterError)
+
+      expect do
+        described_class.new(waveform: :sawtooth, frequency: 440, unison: 0)
       end.to raise_error(Wavify::InvalidParameterError)
     end
   end
