@@ -86,6 +86,15 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(differences.max).to be <= 1
     end
 
+    it "preserves asymmetric PCM full-scale endpoints through float conversion" do
+      mono_pcm = pcm16_stereo.with(channels: 1)
+      mono_float = float_stereo.with(channels: 1)
+      source = described_class.new([-32_768, 32_767], mono_pcm)
+
+      expect(source.convert(mono_float).samples).to eq([-1.0, 1.0])
+      expect(source.convert(mono_float).convert(mono_pcm).samples).to eq(source.samples)
+    end
+
     it "can add deterministic dither when converting to lower-depth PCM" do
       mono_float = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
       pcm8 = mono_float.with(bit_depth: 8, sample_format: :pcm)

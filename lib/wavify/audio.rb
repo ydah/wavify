@@ -724,10 +724,37 @@ module Wavify
       peak_amplitude <= threshold
     end
 
+    # Detects likely digital clipping by looking for consecutive full-scale
+    # samples on the same channel. A single legal full-scale PCM sample is not
+    # sufficient evidence that the source was clipped.
+    #
+    # @param consecutive_frames [Integer] full-scale frames required per channel
     # @return [Boolean]
-    def clipped?
+    def clipped?(consecutive_frames: 2)
+      unless consecutive_frames.is_a?(Integer) && consecutive_frames.positive?
+        raise InvalidParameterError, "consecutive_frames must be a positive Integer"
+      end
+
       float_buffer = @buffer.convert(float_work_format(@buffer.format))
-      float_buffer.samples.any? { |sample| sample <= -1.0 || sample >= 1.0 }
+      clipped_channels = Array.new(float_buffer.format.channels) { { polarity: nil, count: 0 } }
+
+      float_buffer.samples.each_slice(float_buffer.format.channels) do |frame|
+        frame.each_with_index do |sample, channel|
+          state = clipped_channels.fetch(channel)
+          polarity = sample <= -1.0 ? -1 : (1 if sample >= 1.0)
+          unless polarity
+            state[:polarity] = nil
+            state[:count] = 0
+            next
+          end
+
+          state[:count] = state[:polarity] == polarity ? state[:count] + 1 : 1
+          state[:polarity] = polarity
+          return true if state[:count] >= consecutive_frames
+        end
+      end
+
+      false
     end
 
     # @return [Float] average sample offset in normalized float space
@@ -889,7 +916,7 @@ module Wavify
         channels = format.channels
         sample_frames = samples.length / channels
         fade_frames = [(fade_seconds * format.sample_rate).round, sample_frames].min
-        return samples if fade_frames.zero?
+        next samples if fade_frames.zero?
 
         result = samples.dup
         start_frame = sample_frames - fade_frames

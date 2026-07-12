@@ -303,8 +303,10 @@ module Wavify
       def to_normalized_float(sample, format)
         return sample.to_f.clamp(-1.0, 1.0) if format.sample_format == :float
 
-        max = ((2**(format.bit_depth - 1)) - 1).to_f
-        (sample.to_f / max).clamp(-1.0, 1.0)
+        positive_scale = ((2**(format.bit_depth - 1)) - 1).to_f
+        negative_scale = (2**(format.bit_depth - 1)).to_f
+        scale = sample.negative? ? negative_scale : positive_scale
+        (sample.to_f / scale).clamp(-1.0, 1.0)
       end
 
       def from_normalized_float(sample, format, dither_rng: nil)
@@ -330,7 +332,8 @@ module Wavify
       def float_to_pcm(sample, bit_depth)
         max = (2**(bit_depth - 1)) - 1
         min = -(2**(bit_depth - 1))
-        (sample * max).round.clamp(min, max)
+        scale = sample.negative? ? -min : max
+        (sample * scale).round.clamp(min, max)
       end
 
       def convert_channels(frames, target_channels)

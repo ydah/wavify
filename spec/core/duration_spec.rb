@@ -22,9 +22,11 @@ RSpec.describe Wavify::Core::Duration do
     end
 
     it "raises on invalid text" do
-      expect do
-        described_class.parse("1:99")
-      end.to raise_error(Wavify::InvalidParameterError)
+      ["1:99", "0:99", "1:-5", "-1", "NaN", "Infinity"].each do |value|
+        expect do
+          described_class.parse(value)
+        end.to raise_error(Wavify::InvalidParameterError), value
+      end
     end
   end
 

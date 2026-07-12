@@ -44,6 +44,13 @@ RSpec.describe Wavify::Audio do
       expect(faded.buffer.samples.last.abs).to be < 0.1
     end
 
+    it "keeps zero-duration fades chainable" do
+      audio = audio_with([0.25, -0.25])
+
+      expect(audio.fade_in(0)).to be_a(described_class)
+      expect(audio.fade_out(0).gain(0).buffer.samples).to eq(audio.buffer.samples)
+    end
+
     it "supports exponential and logarithmic fade curves" do
       audio = audio_with([1.0, 1.0, 1.0, 1.0])
 
@@ -128,13 +135,20 @@ RSpec.describe Wavify::Audio do
     it "reports stats, silence, clipping, dc offset, and zero crossings" do
       audio = audio_with([0.5, 0.5, -0.5, -0.5])
       silent = audio_with([0.0, 0.0])
-      clipped = audio_with([1.0, -1.0])
+      clipped = audio_with([1.0, 0.0, 1.0, 0.0])
 
       expect(audio.stats[:sample_frame_count]).to eq(2)
       expect(silent.silent?).to eq(true)
       expect(clipped.clipped?).to eq(true)
       expect(audio.dc_offset).to eq(0.0)
       expect(audio.zero_crossing_rate).to eq(1.0)
+    end
+
+    it "does not classify an isolated full-scale PCM sample as clipped" do
+      pcm16 = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      audio = audio_with([32_767, 0, -32_768], pcm16)
+
+      expect(audio.clipped?).to eq(false)
     end
 
     it "removes dc offset" do
