@@ -83,6 +83,30 @@ RSpec.describe Wavify::Codecs::Registry do
       expect(Wavify::Codecs.detect(io, filename: "clip.raw")).to eq(Wavify::Codecs::Raw)
     end
 
+    it "does not consume non-rewindable IO during detection" do
+      io_class = Class.new do
+        attr_reader :read_count
+
+        def initialize
+          @read_count = 0
+        end
+
+        def read(*)
+          @read_count += 1
+          "RIFF\x24\x00\x00\x00WAVE"
+        end
+      end
+      hinted = io_class.new
+      unhinted = io_class.new
+
+      expect(described_class.detect_for_read(hinted, filename: "clip.wav")).to eq(Wavify::Codecs::Wav)
+      expect(hinted.read_count).to eq(0)
+      expect do
+        described_class.detect_for_read(unhinted)
+      end.to raise_error(Wavify::InvalidParameterError, /rewindable IO/)
+      expect(unhinted.read_count).to eq(0)
+    end
+
     it "checks filename hints against magic bytes in strict mode" do
       io = StringIO.new("RIFF\x24\x00\x00\x00WAVE")
 

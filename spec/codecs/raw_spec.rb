@@ -40,6 +40,14 @@ RSpec.describe Wavify::Codecs::Raw do
       end
     end
 
+    it "rejects raw input that ends mid-frame" do
+      io = StringIO.new("\x00\x00\x00")
+
+      expect do
+        described_class.read(io, format: format)
+      end.to raise_error(Wavify::InvalidFormatError, /frame size/)
+    end
+
     it "roundtrips multiple raw sample encodings" do
       cases = [
         {
@@ -139,25 +147,52 @@ RSpec.describe Wavify::Codecs::Raw do
   end
 
   describe ".metadata" do
-    it "works with read-only io objects that do not expose #size" do
+    it "measures seekable IO without consuming its current position" do
       raw_bytes = [1, 2, 3, 4].pack("s<*")
       io_class = Class.new do
         def initialize(bytes)
-          @bytes = bytes
-          @read = false
+          @io = StringIO.new(bytes)
         end
 
-        def read(_size = nil)
-          return nil if @read
-
-          @read = true
-          @bytes
-        end
+        def pos = @io.pos
+        def seek(...) = @io.seek(...)
+        def read(...) = @io.read(...)
       end
 
-      metadata = described_class.metadata(io_class.new(raw_bytes), format: format.with(channels: 1))
+      io = io_class.new(raw_bytes)
+      metadata = described_class.metadata(io, format: format.with(channels: 1))
       expect(metadata[:sample_frame_count]).to eq(4)
       expect(metadata[:duration].total_seconds).to be_within(1e-9).of(4.0 / 44_100)
+      expect(io.pos).to eq(0)
+    end
+
+    it "does not consume non-seekable IO to calculate metadata" do
+      io_class = Class.new do
+        attr_reader :read_count
+
+        def initialize
+          @read_count = 0
+        end
+
+        def read(*)
+          @read_count += 1
+          "\x00\x00"
+        end
+      end
+      io = io_class.new
+
+      expect do
+        described_class.metadata(io, format: format.with(channels: 1))
+      end.to raise_error(Wavify::InvalidParameterError, /size or seek/)
+      expect(io.read_count).to eq(0)
+    end
+
+    it "rejects metadata sizes that end mid-frame" do
+      io = StringIO.new("\x00\x00\x00")
+
+      expect do
+        described_class.metadata(io, format: format)
+      end.to raise_error(Wavify::InvalidFormatError, /frame size/)
     end
 
     it "raises a friendly error when input file is missing" do

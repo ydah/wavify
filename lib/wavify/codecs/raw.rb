@@ -29,6 +29,7 @@ module Wavify
           target_format = validate_format!(format)
           io, close_io = open_input(io_or_path)
           data = io.read || "".b
+          validate_frame_alignment!(data.bytesize, target_format)
           samples = decode_samples(data, target_format)
           Core::SampleBuffer.new(samples, target_format)
         ensure
@@ -119,7 +120,8 @@ module Wavify
         def metadata(io_or_path, format:)
           target_format = validate_format!(format)
           io, close_io = open_input(io_or_path)
-          byte_size = io.respond_to?(:size) ? io.size : io.read&.bytesize.to_i
+          byte_size = byte_size_without_consuming!(io)
+          validate_frame_alignment!(byte_size, target_format)
           sample_frames = byte_size / target_format.block_align
 
           {
@@ -137,6 +139,26 @@ module Wavify
           raise InvalidFormatError, "format is required for raw pcm codec" unless format.is_a?(Core::Format)
 
           format
+        end
+
+        def validate_frame_alignment!(byte_size, format)
+          return if (byte_size % format.block_align).zero?
+
+          raise InvalidFormatError, "raw data size does not align with format frame size"
+        end
+
+        def byte_size_without_consuming!(io)
+          return io.size if io.respond_to?(:size)
+
+          if io.respond_to?(:pos) && io.respond_to?(:seek)
+            original_position = io.pos
+            io.seek(0, IO::SEEK_END)
+            byte_size = io.pos
+            io.seek(original_position, IO::SEEK_SET)
+            return byte_size
+          end
+
+          raise InvalidParameterError, "raw metadata requires IO with size or seek support"
         end
 
         def decode_samples(data, format)

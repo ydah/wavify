@@ -57,7 +57,17 @@ module Wavify
         # @return [Class] codec class
         def detect_for_read(io_or_path, strict: false, filename: nil)
           extension_codec = detect_by_extension(io_or_path, filename: filename)
-          magic_codec = detect_by_magic(io_or_path)
+          magic_codec = if non_rewindable_io?(io_or_path)
+                          if strict
+                            raise InvalidParameterError, "strict codec detection requires rewindable IO"
+                          end
+                          unless extension_codec
+                            raise InvalidParameterError,
+                                  "codec detection requires rewindable IO; pass filename: as a codec hint"
+                          end
+                        else
+                          detect_by_magic(io_or_path)
+                        end
           if strict && extension_codec && magic_codec && extension_codec != magic_codec
             raise InvalidFormatError,
                   "codec mismatch: extension implies #{extension_codec.name}, magic bytes imply #{magic_codec.name}"
@@ -142,6 +152,10 @@ module Wavify
           nil
         ensure
           io.close if close_io && io
+        end
+
+        def non_rewindable_io?(io_or_path)
+          io_or_path.respond_to?(:read) && !io_or_path.respond_to?(:rewind)
         end
 
         def ensure_io(io_or_path)
