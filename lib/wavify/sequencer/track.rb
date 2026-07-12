@@ -11,7 +11,7 @@ module Wavify
         "MAJ" => [0, 4, 7],
         "MAJ7" => [0, 4, 7, 11],
         "7" => [0, 4, 7, 10],
-        "M7" => [0, 3, 7, 10],
+        "M7" => [0, 4, 7, 11],
         "MIN" => [0, 3, 7],
         "MIN7" => [0, 3, 7, 10],
         "MIN9" => [0, 3, 7, 10, 14],
@@ -270,6 +270,7 @@ module Wavify
       def self.normalize_chord_suffix(suffix)
         value = suffix.to_s
         return "" if value.empty?
+        return value.upcase if value.start_with?("M")
 
         if value.start_with?("m") && !value.start_with?("maj")
           "m#{value[1..]}"

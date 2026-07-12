@@ -41,6 +41,13 @@ RSpec.describe Wavify::Sequencer::Track do
       expect(progression[2][:midi_notes]).to eq([55, 59, 62, 65])
     end
 
+    it "preserves uppercase major chord suffixes" do
+      progression = described_class.parse_chords(%w[CM CM7], default_octave: 4)
+
+      expect(progression[0][:midi_notes]).to eq([60, 64, 67])
+      expect(progression[1][:midi_notes]).to eq([60, 64, 67, 71])
+    end
+
     it "parses slash chord inversions" do
       chord = described_class.parse_chords(["Cmaj7/E"], default_octave: 4).first
 

@@ -7,13 +7,15 @@ module Wavify
       # Supported waveform symbols.
       WAVEFORMS = %i[sine square sawtooth triangle pulse white_noise pink_noise].freeze
 
+      # @param phase [Numeric] initial phase in cycles (`0.0..1.0` wraps)
       def initialize(waveform:, frequency:, amplitude: 1.0, phase: 0.0, pulse_width: 0.5, detune: 0.0, unison: 1,
                      random: Random.new)
         @waveform = validate_waveform!(waveform)
         @frequency = validate_frequency!(frequency)
         @amplitude = validate_amplitude!(amplitude)
-        @initial_phase = phase.to_f
+        @initial_phase = validate_phase!(phase)
         @phase = @initial_phase
+        @sample_position = 0
         @pulse_width = validate_pulse_width!(pulse_width)
         @detune = validate_detune!(detune)
         @unison = validate_unison!(unison)
@@ -22,7 +24,8 @@ module Wavify
       end
 
       def reset_phase(phase = @initial_phase)
-        @phase = phase.to_f
+        @phase = validate_phase!(phase)
+        @sample_position = 0
         reset_pink_noise!
         self
       end
@@ -42,9 +45,14 @@ module Wavify
         samples = Array.new(sample_frames * format.channels)
 
         sample_frames.times do |frame_index|
-          value = sample_at(frame_index, format.sample_rate)
           base_index = frame_index * format.channels
-          format.channels.times { |channel| samples[base_index + channel] = value }
+          if noise_waveform?
+            format.channels.times { |channel| samples[base_index + channel] = scaled_noise_sample }
+          else
+            value = sample_at(@sample_position, format.sample_rate)
+            format.channels.times { |channel| samples[base_index + channel] = value }
+          end
+          @sample_position += 1
         end
 
         Core::SampleBuffer.new(samples, format)
@@ -58,10 +66,10 @@ module Wavify
         validate_format!(format)
 
         Enumerator.new do |yielder|
-          index = 0
           loop do
-            yielder << sample_at(index, format.sample_rate)
-            index += 1
+            value = noise_waveform? ? scaled_noise_sample : sample_at(@sample_position, format.sample_rate)
+            @sample_position += 1
+            yielder << value
           end
         end
       end
@@ -87,6 +95,14 @@ module Wavify
         raise InvalidParameterError, "amplitude must be Numeric in 0.0..1.0" unless amplitude.is_a?(Numeric) && amplitude.between?(0.0, 1.0)
 
         amplitude.to_f
+      end
+
+      def validate_phase!(phase)
+        unless phase.is_a?(Numeric) && phase.respond_to?(:finite?) && phase.finite?
+          raise InvalidParameterError, "phase must be a finite Numeric"
+        end
+
+        phase.to_f % 1.0
       end
 
       def validate_pulse_width!(pulse_width)
@@ -117,19 +133,15 @@ module Wavify
       end
 
       def sample_at(index, sample_rate)
-        raw = if noise_waveform?
-                noise_sample
-              else
-                oscillator_voice_frequencies.sum do |frequency|
-                  oscillator_sample(index, sample_rate, frequency)
-                end / @unison
-              end
+        frequencies = oscillator_voice_frequencies
+        raw = frequencies.sum do |frequency|
+          oscillator_sample(index, sample_rate, frequency)
+        end / frequencies.length
         (raw * @amplitude).clamp(-1.0, 1.0)
       end
 
       def oscillator_sample(index, sample_rate, frequency)
-        t = @phase + (index.to_f / sample_rate)
-        phase = (frequency * t) % 1.0
+        phase = (@phase + (frequency * index.to_f / sample_rate)) % 1.0
         phase_step = frequency / sample_rate.to_f
         phase_step = 0.5 if phase_step > 0.5
 
@@ -152,6 +164,10 @@ module Wavify
               when :pink_noise then next_pink_noise
               end
         raw || 0.0
+      end
+
+      def scaled_noise_sample
+        (noise_sample * @amplitude).clamp(-1.0, 1.0)
       end
 
       def oscillator_voice_frequencies

@@ -46,6 +46,30 @@ RSpec.describe Wavify::DSP::Oscillator do
       expect(detuned_buffer.samples).not_to eq(plain_buffer.samples)
       expect(detuned_buffer.samples).to all(be_between(-1.0, 1.0))
     end
+
+    it "does not attenuate unison voices when detune is zero" do
+      plain = described_class.new(waveform: :sine, frequency: 100)
+      unison = described_class.new(waveform: :sine, frequency: 100, detune: 0.0, unison: 4)
+
+      expect(unison.generate(0.02, format: mono_float).samples).to eq(plain.generate(0.02, format: mono_float).samples)
+    end
+
+    it "continues phase across consecutive generation calls" do
+      chunked = described_class.new(waveform: :sine, frequency: 100, phase: 0.25)
+      continuous = described_class.new(waveform: :sine, frequency: 100, phase: 0.25)
+
+      chunks = chunked.generate(0.005, format: mono_float).samples + chunked.generate(0.005, format: mono_float).samples
+
+      expect(chunks).to eq(continuous.generate(0.01, format: mono_float).samples)
+    end
+
+    it "generates independent noise values for each channel" do
+      stereo = mono_float.with(channels: 2)
+      oscillator = described_class.new(waveform: :white_noise, frequency: 1, random: Random.new(123))
+      buffer = oscillator.generate(0.001, format: stereo)
+
+      expect(buffer.samples.each_slice(2).any? { |left, right| left != right }).to eq(true)
+    end
   end
 
   describe "#each_sample" do
@@ -84,6 +108,10 @@ RSpec.describe Wavify::DSP::Oscillator do
 
       expect do
         described_class.new(waveform: :sawtooth, frequency: 440, unison: 0)
+      end.to raise_error(Wavify::InvalidParameterError)
+
+      expect do
+        described_class.new(waveform: :sine, frequency: 440, phase: Float::INFINITY)
       end.to raise_error(Wavify::InvalidParameterError)
     end
   end
