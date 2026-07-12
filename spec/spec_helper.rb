@@ -18,7 +18,8 @@ end
 require "wavify"
 
 RSpec.configure do |config|
-  config.filter_run_excluding ogg: true if ENV["WAVIFY_SKIP_OGG"] == "1"
+  skip_ogg = ENV["WAVIFY_SKIP_OGG"] == "1" || !Wavify::Codecs::OggVorbis.available?
+  config.filter_run_excluding ogg: true if skip_ogg
 
   # Enable flags like --only-failures and --next-failure
   config.example_status_persistence_file_path = ".rspec_status"

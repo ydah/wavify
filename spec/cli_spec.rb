@@ -21,6 +21,18 @@ RSpec.describe Wavify::CLI do
     expect(stderr).to eq("")
   end
 
+  it "returns success for help and version" do
+    help_status, help_stdout, help_stderr = run_cli(["--help"])
+    version_status, version_stdout, version_stderr = run_cli(["--version"])
+
+    expect(help_status).to eq(0)
+    expect(help_stdout).to include("usage:")
+    expect(help_stderr).to eq("")
+    expect(version_status).to eq(0)
+    expect(version_stdout).to include(Wavify::VERSION)
+    expect(version_stderr).to eq("")
+  end
+
   it "prints file info" do
     Tempfile.create(["wavify-cli", ".wav"]) do |file|
       buffer = Wavify::Core::SampleBuffer.new([0, 0, 0], format)
@@ -54,6 +66,21 @@ RSpec.describe Wavify::CLI do
         expect(status).to eq(0)
         expect(stdout).to include("converted:")
         expect(Wavify::Audio.metadata(output.path)[:format].sample_rate).to eq(16_000)
+      end
+    end
+  end
+
+  it "accepts options before positional arguments" do
+    Tempfile.create(["wavify-cli-source", ".wav"]) do |source|
+      Tempfile.create(["wavify-cli-output", ".wav"]) do |output|
+        buffer = Wavify::Core::SampleBuffer.new([0, 100, -100], format)
+        Wavify::Codecs::Wav.write(source.path, buffer)
+
+        status, stdout, stderr = run_cli(["normalize", "--target", "-3", source.path, output.path])
+
+        expect(status).to eq(0)
+        expect(stdout).to include("normalized:")
+        expect(stderr).to eq("")
       end
     end
   end
@@ -121,6 +148,16 @@ RSpec.describe Wavify::CLI do
     expect(status).to eq(1)
     expect(stdout).to include("usage:")
     expect(stderr).to include("unknown command")
+  end
+
+  it "reports unexpected failures without raising a raw backtrace" do
+    allow(Wavify::Codecs).to receive(:supported_formats).and_raise(RuntimeError, "boom")
+
+    status, stdout, stderr = run_cli(["formats"])
+
+    expect(status).to eq(1)
+    expect(stdout).to eq("")
+    expect(stderr).to include("unexpected error (RuntimeError): boom")
   end
 
   it "prints dependency availability in doctor output" do

@@ -5,7 +5,7 @@ require "tempfile"
 require "open3"
 
 RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
-  it "loads core APIs when optional OGG gems are absent" do
+  it "loads core APIs when optional OGG gems are absent", ogg: false do
     script = <<~'RUBY'
       require "stringio"
 
