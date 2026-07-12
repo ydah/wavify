@@ -9,6 +9,7 @@ module Wavify
       WAV_FORMAT_PCM = 0x0001 # :nodoc:
       WAV_FORMAT_FLOAT = 0x0003 # :nodoc:
       WAV_FORMAT_EXTENSIBLE = 0xFFFE # :nodoc:
+      RIFF_MAX_SIZE = 0xFFFF_FFFF # :nodoc:
 
       GUID_TAIL = [0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71].pack("C*").freeze # :nodoc:
       PCM_SUBFORMAT_GUID = ([WAV_FORMAT_PCM, 0x0000, 0x0010].pack("V v v") + GUID_TAIL).freeze # :nodoc:
@@ -178,7 +179,9 @@ module Wavify
             info: info[:info],
             bext: info[:bext],
             broadcast_extension: info[:bext],
-            rf64: info[:rf64]
+            rf64: info[:rf64],
+            container_bit_depth: info[:container_bit_depth],
+            valid_bits_per_sample: info[:valid_bits_per_sample]
           }
         ensure
           io.close if close_io && io
@@ -217,6 +220,7 @@ module Wavify
 
         def finalize_stream_header(io, header, total_data_bytes, total_sample_frames)
           file_end = io.pos
+          validate_riff_sizes!(total_data_bytes, total_sample_frames, file_end)
 
           io.seek(header.fetch(:data_size_offset), IO::SEEK_SET)
           io.write([total_data_bytes].pack("V"))
@@ -242,6 +246,8 @@ module Wavify
 
           info = {
             format: nil,
+            container_bit_depth: nil,
+            valid_bits_per_sample: nil,
             data_offset: nil,
             data_size: nil,
             sample_frame_count: nil,
@@ -265,7 +271,10 @@ module Wavify
             case chunk_id
             when "fmt "
               chunk_data = read_exact(io, chunk_size, "truncated fmt chunk")
-              info[:format] = parse_fmt_chunk(chunk_data)
+              fmt_info = parse_fmt_chunk(chunk_data)
+              info[:format] = fmt_info.fetch(:format)
+              info[:container_bit_depth] = fmt_info.fetch(:container_bit_depth)
+              info[:valid_bits_per_sample] = fmt_info.fetch(:valid_bits_per_sample)
             when "data"
               info[:data_offset] = io.pos
               data_size = rf64_chunk_size(info, :data_size, chunk_size)
@@ -302,7 +311,12 @@ module Wavify
           raise InvalidFormatError, "data chunk missing" unless info[:data_offset] && info[:data_size]
 
           validate_data_chunk!(io, info)
-          info[:sample_frame_count] = info.dig(:rf64, :sample_frame_count) || (info[:data_size] / info[:format].block_align)
+          rf64_frame_count = info.dig(:rf64, :sample_frame_count)
+          info[:sample_frame_count] = if rf64_frame_count&.positive?
+                                        rf64_frame_count
+                                      else
+                                        info[:data_size] / info[:format].block_align
+                                      end
           info
         end
 
@@ -338,7 +352,8 @@ module Wavify
         def parse_fmt_chunk(chunk)
           raise InvalidFormatError, "fmt chunk is too small" if chunk.bytesize < 16
 
-          audio_format, channels, sample_rate, byte_rate, block_align, bit_depth = chunk.unpack("v v V V v v")
+          audio_format, channels, sample_rate, byte_rate, block_align, container_bit_depth = chunk.unpack("v v V V v v")
+          valid_bits = container_bit_depth
 
           if audio_format == WAV_FORMAT_EXTENSIBLE
             raise InvalidFormatError, "fmt extensible chunk is too small" if chunk.bytesize < 40
@@ -347,9 +362,12 @@ module Wavify
             raise InvalidFormatError, "invalid extensible fmt chunk size" if extension_size < 22 || chunk.bytesize < (18 + extension_size)
 
             valid_bits = chunk[18, 2].unpack1("v")
+            valid_bits = container_bit_depth if valid_bits.zero?
+            if valid_bits > container_bit_depth
+              raise InvalidFormatError, "valid bits per sample exceeds container bit depth"
+            end
             sub_format_guid = chunk[24, 16]
             audio_format = sub_format_guid.unpack1("v")
-            bit_depth = valid_bits if valid_bits.positive?
           end
 
           sample_format = case audio_format
@@ -362,7 +380,7 @@ module Wavify
           format = Core::Format.new(
             channels: channels,
             sample_rate: sample_rate,
-            bit_depth: bit_depth,
+            bit_depth: container_bit_depth,
             sample_format: sample_format
           )
 
@@ -372,7 +390,11 @@ module Wavify
             raise InvalidFormatError, "fmt chunk has inconsistent byte_rate/block_align"
           end
 
-          format
+          {
+            format: format,
+            container_bit_depth: container_bit_depth,
+            valid_bits_per_sample: valid_bits
+          }
         end
 
         def parse_smpl_chunk(chunk)
@@ -479,7 +501,7 @@ module Wavify
         def parse_bext_chunk(chunk)
           return nil if chunk.bytesize < 602
 
-          coding_history = chunk.bytesize > 602 ? chunk.byteslice(602, chunk.bytesize - 602).to_s.delete_suffix("\x00") : ""
+          coding_history = chunk.bytesize > 602 ? strip_trailing_nuls(chunk.byteslice(602, chunk.bytesize - 602)) : ""
           {
             description: wav_string(chunk.byteslice(0, 256)),
             originator: wav_string(chunk.byteslice(256, 32)),
@@ -499,7 +521,7 @@ module Wavify
         end
 
         def wav_string(bytes)
-          bytes.to_s.delete_suffix("\x00").split("\x00", 2).first.to_s.force_encoding(Encoding::UTF_8)
+          strip_trailing_nuls(bytes).split("\x00", 2).first.to_s.force_encoding(Encoding::UTF_8)
         end
 
         def bext_loudness_value(chunk, offset)
@@ -520,7 +542,7 @@ module Wavify
             offset += 8
             break if offset + size > chunk.bytesize
 
-            value = chunk.byteslice(offset, size).delete_suffix("\x00").force_encoding(Encoding::UTF_8)
+            value = strip_trailing_nuls(chunk.byteslice(offset, size)).force_encoding(Encoding::UTF_8)
             result[:raw][tag] = value
             semantic_key = INFO_TAGS[tag]
             result[semantic_key] = value if semantic_key
@@ -652,6 +674,16 @@ module Wavify
           io.write([chunk_data.bytesize].pack("V"))
           io.write(chunk_data)
           io.write("\x00") if chunk_data.bytesize.odd?
+        end
+
+        def validate_riff_sizes!(data_bytes, sample_frames, file_end)
+          return if data_bytes <= RIFF_MAX_SIZE && sample_frames <= RIFF_MAX_SIZE && (file_end - 8) <= RIFF_MAX_SIZE
+
+          raise UnsupportedFormatError, "WAV output exceeds RIFF 32-bit size limits; RF64 writing is not supported"
+        end
+
+        def strip_trailing_nuls(bytes)
+          bytes.to_s.sub(/\x00+\z/, "")
         end
 
         def skip_padding_byte(io, chunk_size)

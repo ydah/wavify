@@ -237,6 +237,57 @@ RSpec.describe Wavify::Codecs::Wav do
         expect(decoded.samples).to eq([0, 1, 2, 3])
       end
     end
+
+    it "derives RF64 frame count when ds64 leaves it as zero" do
+      fmt_chunk = [1, 1, 8_000, 16_000, 2, 16].pack("v v V V v v")
+      data = [0, 1, 2].pack("s<*")
+      bytes = build_rf64_bytes(
+        data_size: data.bytesize,
+        sample_frame_count: 0,
+        chunks: [["fmt ", fmt_chunk], ["data", data]]
+      )
+
+      Tempfile.create(["wavify-rf64-zero-count", ".wav"]) do |file|
+        file.binmode
+        file.write(bytes)
+        file.flush
+
+        expect(described_class.metadata(file.path)[:sample_frame_count]).to eq(3)
+      end
+    end
+
+    it "accepts extensible PCM with fewer valid bits than its container" do
+      guid_tail = [0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71].pack("C*")
+      pcm_guid = [1, 0, 0x10].pack("V v v") + guid_tail
+      fmt_chunk = [0xFFFE, 1, 8_000, 32_000, 4, 32, 22, 24, 4].pack("v v V V v v v v V") + pcm_guid
+      bytes = build_wave_bytes(["fmt ", fmt_chunk], ["data", [0, 0x7FFFFF00].pack("l<*")])
+
+      Tempfile.create(["wavify-valid-bits", ".wav"]) do |file|
+        file.binmode
+        file.write(bytes)
+        file.flush
+
+        metadata = described_class.metadata(file.path)
+        expect(metadata[:format].bit_depth).to eq(32)
+        expect(metadata[:container_bit_depth]).to eq(32)
+        expect(metadata[:valid_bits_per_sample]).to eq(24)
+        expect(described_class.read(file.path).samples).to eq([0, 0x7FFFFF00])
+      end
+    end
+
+    it "strips repeated NUL padding from WAV strings" do
+      fmt_chunk = [1, 1, 8_000, 8_000, 1, 8].pack("v v V V v v")
+      list_data = "INFO" + "INAM" + [8].pack("V") + "Title\x00\x00\x00"
+      bytes = build_wave_bytes(["fmt ", fmt_chunk], ["LIST", list_data], ["data", "\x80"])
+
+      Tempfile.create(["wavify-info-padding", ".wav"]) do |file|
+        file.binmode
+        file.write(bytes)
+        file.flush
+
+        expect(described_class.metadata(file.path).dig(:info, :title)).to eq("Title")
+      end
+    end
   end
 
   describe "chunk parsing behavior" do
@@ -309,6 +360,12 @@ RSpec.describe Wavify::Codecs::Wav do
           described_class.read(file.path)
         end.to raise_error(Wavify::InvalidFormatError)
       end
+    end
+
+    it "raises explicitly when RIFF output sizes overflow" do
+      expect do
+        described_class.send(:validate_riff_sizes!, 0x1_0000_0000, 1, 16)
+      end.to raise_error(Wavify::UnsupportedFormatError, /RF64 writing/)
     end
   end
 
