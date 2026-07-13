@@ -15,6 +15,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 - Enabled the RuboCop Lint department and tightened gem package/release checks.
 - Improved streaming reuse rules, DSP state handling, codec validation, and full-buffer analysis allocations.
+- Moved general `InvalidParameterError` failures out of the DSP-specific error hierarchy.
 
 ### Fixed
 

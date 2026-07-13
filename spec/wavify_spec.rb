@@ -9,6 +9,11 @@ RSpec.describe Wavify do
     expect(Wavify::Error).to be < StandardError
   end
 
+  it "keeps general parameter errors outside the DSP hierarchy" do
+    expect(Wavify::InvalidParameterError).to be < Wavify::Error
+    expect(Wavify::InvalidParameterError).not_to be < Wavify::DSPError
+  end
+
   it "builds duration helper values without monkey-patching Numeric" do
     expect(described_class.seconds(2).total_seconds).to eq(2.0)
     expect(described_class.ms(250).total_seconds).to eq(0.25)

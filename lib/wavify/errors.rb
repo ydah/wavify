@@ -20,10 +20,10 @@ module Wavify
   # Raised when a streaming operation cannot proceed.
   class StreamError < ProcessingError; end
 
-  # Base class for DSP parameter/processing errors.
+  # Base class for DSP processing errors.
   class DSPError < Error; end
   # Raised when method parameters are invalid.
-  class InvalidParameterError < DSPError; end
+  class InvalidParameterError < Error; end
 
   # Base class for sequencer and DSL-related errors.
   class SequencerError < Error; end
