@@ -221,13 +221,21 @@ module Wavify
 
         resampler = normalize_resampler!(resampler)
         dither_rng = dither_applicable?(new_format, dither) ? Random.new(dither_seed) : nil
+        if @format.channels == new_format.channels && @format.sample_rate == new_format.sample_rate
+          converted_samples = @samples.map do |sample|
+            normalized = to_normalized_float(sample, @format)
+            from_normalized_float(normalized, new_format, dither_rng: dither_rng)
+          end
+          return self.class.new(converted_samples, new_format)
+        end
+
         frames = frame_view.map do |frame|
           frame.map { |sample| to_normalized_float(sample, @format) }
         end
 
         converted_frames = convert_channels(frames, new_format.channels)
         converted_frames = resample_frames(converted_frames, new_format.sample_rate, resampler: resampler)
-        converted_samples = converted_frames.flatten.map do |sample|
+        converted_samples = converted_frames.flatten(1).map do |sample|
           from_normalized_float(sample, new_format, dither_rng: dither_rng)
         end
 

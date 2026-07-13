@@ -747,17 +747,25 @@ module Wavify
 
     # @return [Hash] basic audio statistics
     def stats
+      float_buffer = @buffer.convert(float_work_format(@buffer.format))
+      samples = float_buffer.samples
+      peak = samples.map(&:abs).max || 0.0
+      rms = if samples.empty?
+              0.0
+            else
+              Math.sqrt(samples.sum { |sample| sample * sample } / samples.length)
+            end
       {
         format: format,
         duration: duration,
         sample_frame_count: sample_frame_count,
-        peak_amplitude: peak_amplitude,
-        rms_amplitude: rms_amplitude,
-        peak_dbfs: peak_dbfs,
-        rms_dbfs: rms_dbfs,
-        lufs: lufs,
-        clipped: clipped?,
-        silent: silent?
+        peak_amplitude: peak,
+        rms_amplitude: rms,
+        peak_dbfs: amplitude_to_dbfs(peak),
+        rms_dbfs: amplitude_to_dbfs(rms),
+        lufs: integrated_loudness(samples),
+        clipped: clipped_samples?(samples, float_buffer.format.channels, consecutive_frames: 2),
+        silent: peak.zero?
       }
     end
 
@@ -781,25 +789,7 @@ module Wavify
       end
 
       float_buffer = @buffer.convert(float_work_format(@buffer.format))
-      clipped_channels = Array.new(float_buffer.format.channels) { { polarity: nil, count: 0 } }
-
-      float_buffer.samples.each_slice(float_buffer.format.channels) do |frame|
-        frame.each_with_index do |sample, channel|
-          state = clipped_channels.fetch(channel)
-          polarity = sample <= -1.0 ? -1 : (1 if sample >= 1.0)
-          unless polarity
-            state[:polarity] = nil
-            state[:count] = 0
-            next
-          end
-
-          state[:count] = state[:polarity] == polarity ? state[:count] + 1 : 1
-          state[:polarity] = polarity
-          return true if state[:count] >= consecutive_frames
-        end
-      end
-
-      false
+      clipped_samples?(float_buffer.samples, float_buffer.format.channels, consecutive_frames: consecutive_frames)
     end
 
     # @return [Float] average sample offset in normalized float space
@@ -846,6 +836,28 @@ module Wavify
     end
 
     private
+
+    def clipped_samples?(samples, channels, consecutive_frames:)
+      clipped_channels = Array.new(channels) { { polarity: nil, count: 0 } }
+
+      samples.each_slice(channels) do |frame|
+        frame.each_with_index do |sample, channel|
+          state = clipped_channels.fetch(channel)
+          polarity = sample <= -1.0 ? -1 : (1 if sample >= 1.0)
+          unless polarity
+            state[:polarity] = nil
+            state[:count] = 0
+            next
+          end
+
+          state[:count] = state[:polarity] == polarity ? state[:count] + 1 : 1
+          state[:polarity] = polarity
+          return true if state[:count] >= consecutive_frames
+        end
+      end
+
+      false
+    end
 
     def self.normalize_codec_options!(codec_options)
       return {} if codec_options.nil?

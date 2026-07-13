@@ -144,6 +144,14 @@ RSpec.describe Wavify::Audio do
       expect(audio.zero_crossing_rate).to eq(1.0)
     end
 
+    it "converts to analysis format only once when collecting stats" do
+      buffer = Wavify::Core::SampleBuffer.new([0.5, -0.5], float_stereo)
+      audio = described_class.new(buffer)
+      expect(buffer).to receive(:convert).once.and_call_original
+
+      audio.stats
+    end
+
     it "does not classify an isolated full-scale PCM sample as clipped" do
       pcm16 = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
       audio = audio_with([32_767, 0, -32_768], pcm16)
