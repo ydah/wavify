@@ -32,7 +32,7 @@ Use `Wavify::Effects::MasteringChain.new` for a compact EQ/compressor/limiter pa
 
 `Compressor` supports `makeup_gain:`, `knee:` in dB, and `sidechain:` with an `Audio` or `SampleBuffer` detector signal. Its detector gain is stereo-linked to preserve image stability. `Reverb` supports `pre_delay:` on the wet path and `width:` for stereo wet width. `Limiter` is a zero-latency hard clipper; it has no envelope or lookahead. `SoftLimiter` uses a rounded curve when less abrupt peak control is desired. `NoiseGate` and `Expander` attenuate low-level noise, `Tremolo`, `AutoPan`, `Vibrato`, `Flanger`, and `Phaser` apply LFO modulation, `StereoWidener` adjusts mid/side width, `EQ` chains filters, and `Bitcrusher` reduces bit depth or holds samples for downsampling effects.
 `Audio#fade_in`, `Audio#fade_out`, and `Audio#fade` support `curve: :linear`, `:exp`, and `:log`.
-Use `audio.bit_depth(16, dither: true)` for simple TPDF dither when reducing PCM bit depth; pass `dither_seed:` for deterministic test output.
+Use `audio.with_bit_depth(16, dither: true)` for simple TPDF dither when reducing PCM bit depth; pass `dither_seed:` for deterministic test output.
 Use `audio.resample(sample_rate: 48_000, resampler: :windowed_sinc)` when quality matters more than speed.
 Use `Wavify::DSP::Automation` for linear parameter curves over time.
 

@@ -723,9 +723,8 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
           { interleaved_multistream: false }
         ]
       end
-      allow(described_class).to receive(:stream_read).and_wrap_original do |_original, io_or_path, chunk_size:, decode_mode:, &blk|
+      allow(described_class).to receive(:stream_read).and_wrap_original do |_original, io_or_path, chunk_size:, &blk|
         expect(chunk_size).to eq(256)
-        expect(decode_mode).to eq(:strict)
         case io_or_path
         when StringIO
           if io_or_path.string == "a".b
@@ -753,8 +752,7 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
       handled = described_class.send(
         :stream_chained_vorbis_if_needed,
         "dummy.ogg",
-        chunk_size: 256,
-        decode_mode: :strict
+        chunk_size: 256
       ) do |chunk|
         yielded << chunk
       end
@@ -920,11 +918,8 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
   end
 
   describe "decoding behavior" do
-    it "returns placeholder-decoded audio on read when decode_mode is placeholder" do
-      buffer = described_class.read(
-        "spec/fixtures/audio/stereo_vorbis_44100.ogg",
-        decode_mode: :placeholder
-      )
+    it "returns fully decoded audio on read" do
+      buffer = described_class.read("spec/fixtures/audio/stereo_vorbis_44100.ogg")
 
       metadata = described_class.metadata("spec/fixtures/audio/stereo_vorbis_44100.ogg")
       expect(buffer).to be_a(Wavify::Core::SampleBuffer)
@@ -934,14 +929,13 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
       expect(buffer.samples.any? { |sample| sample != 0.0 }).to eq(true)
     end
 
-    it "streams placeholder-decoded audio chunks when decode_mode is placeholder" do
+    it "streams fully decoded audio chunks" do
       metadata = described_class.metadata("spec/fixtures/audio/stereo_vorbis_44100.ogg")
       chunks = []
 
       described_class.stream_read(
         "spec/fixtures/audio/stereo_vorbis_44100.ogg",
-        chunk_size: 256,
-        decode_mode: :placeholder
+        chunk_size: 256
       ) do |chunk|
         chunks << chunk
       end
@@ -1187,12 +1181,6 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
       expect do
         described_class.stream_read("spec/fixtures/audio/stereo_vorbis_44100.ogg", chunk_size: 0) { |_chunk| nil }
       end.to raise_error(Wavify::InvalidParameterError, /chunk_size/)
-    end
-
-    it "validates decode_mode before preflight" do
-      expect do
-        described_class.read("spec/fixtures/audio/stereo_vorbis_44100.ogg", decode_mode: :bogus)
-      end.to raise_error(Wavify::InvalidParameterError, /decode_mode/)
     end
 
     it "surfaces format errors during read preflight" do

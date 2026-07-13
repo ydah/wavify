@@ -64,14 +64,10 @@ module Wavify
         #   OGG logical streams are concatenated and normalized to the first
         #   logical stream format (including resampling). Interleaved
         #   multi-stream OGG logical streams are mixed.
-        #   `decode_mode:` is accepted for API compatibility but has no
-        #   effect; libvorbis always performs full decode.
-        def read(io_or_path, format: nil, decode_mode: :strict)
+        def read(io_or_path, format: nil)
           ensure_available!
-          raise InvalidParameterError, "decode_mode must be :strict or :placeholder, got #{decode_mode.inspect}" unless %i[strict
-                                                                                                                           placeholder].include?(decode_mode)
 
-          if (chained_decoded = decode_chained_vorbis_read_if_needed(io_or_path, decode_mode: decode_mode, target_format: format))
+          if (chained_decoded = decode_chained_vorbis_read_if_needed(io_or_path, target_format: format))
             return chained_decoded
           end
 
@@ -99,15 +95,12 @@ module Wavify
         #   OGG logical streams are concatenated and normalized to the first
         #   logical stream format during streaming (including resampling).
         #   Interleaved multi-stream OGG logical streams are mixed.
-        #   `decode_mode:` is accepted for API compatibility but has no effect.
-        def stream_read(io_or_path, chunk_size: 4096, decode_mode: :strict, &block)
-          return enum_for(__method__, io_or_path, chunk_size: chunk_size, decode_mode: decode_mode) unless block_given?
+        def stream_read(io_or_path, chunk_size: 4096, &block)
+          return enum_for(__method__, io_or_path, chunk_size: chunk_size) unless block_given?
           ensure_available!
           raise InvalidParameterError, "chunk_size must be a positive Integer" unless chunk_size.is_a?(Integer) && chunk_size.positive?
-          raise InvalidParameterError, "decode_mode must be :strict or :placeholder, got #{decode_mode.inspect}" unless %i[strict
-                                                                                                                           placeholder].include?(decode_mode)
 
-          return nil if stream_chained_vorbis_if_needed(io_or_path, chunk_size: chunk_size, decode_mode: decode_mode, &block)
+          return nil if stream_chained_vorbis_if_needed(io_or_path, chunk_size: chunk_size, &block)
 
           decode_context = build_vorbis_decode_context(io_or_path)
           run_vorbis_decode_pipeline(decode_context, streaming: true, chunk_size: chunk_size, &block)
@@ -836,26 +829,26 @@ module Wavify
         # Chained / interleaved stream decoding (high-level helpers)
         # ---------------------------------------------------------------------------
 
-        def decode_chained_vorbis_read_if_needed(io_or_path, decode_mode:, target_format: nil)
+        def decode_chained_vorbis_read_if_needed(io_or_path, target_format: nil)
           chained_streams, physical_ogg_info = read_ogg_logical_stream_chains_from_input(io_or_path, with_info: true)
           return nil unless chained_streams.length > 1
 
           if physical_ogg_info[:interleaved_multistream]
             decoded_buffers = chained_streams.map do |stream|
-              read(StringIO.new(stream.fetch(:bytes)), decode_mode: decode_mode)
+              read(StringIO.new(stream.fetch(:bytes)))
             end
 
             return mix_vorbis_sample_buffers(decoded_buffers, target_format: target_format)
           end
 
           decoded_buffers = chained_streams.map do |stream|
-            read(StringIO.new(stream.fetch(:bytes)), format: target_format, decode_mode: decode_mode)
+            read(StringIO.new(stream.fetch(:bytes)), format: target_format)
           end
 
           concatenate_vorbis_sample_buffers(decoded_buffers, target_format: target_format)
         end
 
-        def stream_chained_vorbis_if_needed(io_or_path, chunk_size:, decode_mode:, &block)
+        def stream_chained_vorbis_if_needed(io_or_path, chunk_size:, &block)
           chained_streams, physical_ogg_info = read_ogg_logical_stream_chains_from_input(io_or_path, with_info: true)
           return false unless chained_streams.length > 1
 
@@ -867,7 +860,6 @@ module Wavify
             return stream_interleaved_vorbis_logical_streams_mixed!(
               chained_streams,
               chunk_size: chunk_size,
-              decode_mode: decode_mode,
               target_format: target_format,
               stream_metadatas: stream_metadatas, &block
             )
@@ -882,7 +874,7 @@ module Wavify
           unless same_sample_rate
             chained_streams.each do |stream|
               normalized = normalize_vorbis_logical_stream_buffer_for_target(
-                read(StringIO.new(stream.fetch(:bytes)), decode_mode: decode_mode),
+                read(StringIO.new(stream.fetch(:bytes))),
                 target_format
               )
               each_sample_buffer_frame_slice(normalized, chunk_size, &block)
@@ -892,7 +884,7 @@ module Wavify
 
           chained_format = nil
           chained_streams.each do |stream|
-            stream_read(StringIO.new(stream.fetch(:bytes)), chunk_size: chunk_size, decode_mode: decode_mode) do |chunk|
+            stream_read(StringIO.new(stream.fetch(:bytes)), chunk_size: chunk_size) do |chunk|
               chained_format ||= chunk.format
               yield(chunk.format == chained_format ? chunk : chunk.convert(chained_format))
             end
@@ -1036,7 +1028,6 @@ module Wavify
         def stream_interleaved_vorbis_logical_streams_mixed!(
           chained_streams,
           chunk_size:,
-          decode_mode:,
           target_format: nil,
           stream_metadatas: nil, &block
         )
@@ -1045,7 +1036,6 @@ module Wavify
               __method__,
               chained_streams,
               chunk_size: chunk_size,
-              decode_mode: decode_mode,
               target_format: target_format,
               stream_metadatas: stream_metadatas
             )
@@ -1069,8 +1059,7 @@ module Wavify
                 streams,
                 stream_metadatas: metadatas,
                 target_format: resolved_target_format,
-                chunk_size: chunk_size,
-                decode_mode: decode_mode, &block
+                chunk_size: chunk_size, &block
               )
             end
           end
@@ -1078,8 +1067,7 @@ module Wavify
           enumerators = streams.map do |stream|
             stream_read(
               StringIO.new(stream.fetch(:bytes)),
-              chunk_size: chunk_size,
-              decode_mode: decode_mode
+              chunk_size: chunk_size
             )
           end
           loop do
@@ -1101,8 +1089,7 @@ module Wavify
           chained_streams,
           stream_metadatas:,
           target_format:,
-          chunk_size:,
-          decode_mode:
+          chunk_size:
         )
           unless block_given?
             return enum_for(
@@ -1110,8 +1097,7 @@ module Wavify
               chained_streams,
               stream_metadatas: stream_metadatas,
               target_format: target_format,
-              chunk_size: chunk_size,
-              decode_mode: decode_mode
+              chunk_size: chunk_size
             )
           end
 
@@ -1125,8 +1111,7 @@ module Wavify
             {
               enumerator: stream_read(
                 StringIO.new(stream.fetch(:bytes)),
-                chunk_size: chunk_size,
-                decode_mode: decode_mode
+                chunk_size: chunk_size
               ),
               source_eof: false,
               pending_samples: [],

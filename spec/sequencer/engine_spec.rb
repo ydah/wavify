@@ -199,12 +199,12 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(audio.clipped?).to eq(false)
     end
 
-    it "returns silence when only pattern tracks are provided" do
+    it "rejects trigger-only synth tracks instead of silently rendering no audio" do
       drums = Wavify::Sequencer::Track.new(:drums, pattern: "x---x---")
 
-      audio = engine.render(tracks: [drums], default_bars: 1)
-
-      expect(audio.sample_frame_count).to eq(0)
+      expect do
+        engine.render(tracks: [drums], default_bars: 1)
+      end.to raise_error(Wavify::SequencerError, /sample-backed DSL track/)
     end
   end
 end

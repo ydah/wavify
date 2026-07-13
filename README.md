@@ -50,7 +50,7 @@ audio = Wavify::Audio.tone(
   format: format
 )
 
-audio.fade_in(0.02, curve: :exp).fade_out(0.05, curve: :log).bit_depth(16, dither: true).write("tone.wav")
+audio.fade_in(0.02, curve: :exp).fade_out(0.05, curve: :log).with_bit_depth(16, dither: true).write("tone.wav")
 ```
 
 Codec-specific write options are forwarded with `codec_options:`:
@@ -89,7 +89,7 @@ Utility methods:
 
 Mix strategies are `:clip` (default), `:normalize`, `:headroom`, and `:soft_limit`. `gains:` accepts one dB value per source, and `align:` can be `:start`, `:center`, or `:end`.
 Normalize modes are `:peak`, `:rms`, and `:lufs`.
-Use `bit_depth(16, dither: true)` when reducing PCM bit depth and you want simple TPDF dither.
+Use `with_bit_depth(16, dither: true)` when reducing PCM bit depth and you want simple TPDF dither.
 
 Duration helpers:
 
@@ -170,7 +170,6 @@ Wavify::Adapters.known
 - `read` / `stream_read` support sequential chained streams and interleaved multi-stream OGG.
 - Interleaved multi-stream decode is mixed into one output stream.
 - If interleaved streams have different sample rates, they are resampled to the first logical stream's sample rate before mix.
-- `decode_mode: :strict` and `decode_mode: :placeholder` are accepted for API compatibility.
 - OGG support is optional; `wavify doctor` reports whether the native gems are installed.
 - MP3, AAC, FFmpeg, MIDI, and spectrogram support are adapter-gem boundaries; use `Wavify::Adapters.load(:ffmpeg)` after installing a matching adapter gem.
 

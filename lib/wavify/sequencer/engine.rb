@@ -196,6 +196,9 @@ module Wavify
       def render_track_audio(track, bars:, start_bar: 0, start_time: nil)
         events = timeline_for_track(track, bars: bars, start_bar: start_bar, start_time: start_time)
         note_events = events.select { |event| %i[note chord].include?(event[:kind]) }
+        if note_events.empty? && events.any? { |event| event[:kind] == :trigger }
+          raise SequencerError, "trigger patterns require a sample-backed DSL track; synth tracks must use notes or chords"
+        end
         return nil if note_events.empty?
 
         track_format = @format.channels == 2 ? @format : @format.with(channels: 2)

@@ -35,11 +35,8 @@ RSpec.describe Wavify::Audio do
       end
     end
 
-    it "reads OGG Vorbis through registry with codec-specific placeholder decode options", :ogg do
-      audio = described_class.read(
-        "spec/fixtures/audio/stereo_vorbis_44100.ogg",
-        codec_options: { decode_mode: :placeholder }
-      )
+    it "reads OGG Vorbis through the registry", :ogg do
+      audio = described_class.read("spec/fixtures/audio/stereo_vorbis_44100.ogg")
 
       expect(audio).to be_a(described_class)
       expect(audio.format.channels).to eq(2)
@@ -180,12 +177,11 @@ RSpec.describe Wavify::Audio do
       end
     end
 
-    it "passes codec-specific stream_read options through Core::Stream", :ogg do
+    it "streams OGG Vorbis through Core::Stream", :ogg do
       metadata = Wavify::Codecs::OggVorbis.metadata("spec/fixtures/audio/stereo_vorbis_44100.ogg")
       stream = described_class.stream(
         "spec/fixtures/audio/stereo_vorbis_44100.ogg",
-        chunk_size: 256,
-        codec_options: { decode_mode: :placeholder }
+        chunk_size: 256
       )
 
       chunks = stream.each_chunk.to_a
@@ -355,14 +351,14 @@ RSpec.describe Wavify::Audio do
       expect(source.bit_depth).to eq(16)
       expect(source.to_stereo.channels).to eq(2)
       expect(source.resample(sample_rate: 48_000).sample_rate).to eq(48_000)
-      expect(source.bit_depth(24).bit_depth).to eq(24)
+      expect(source.with_bit_depth(24).bit_depth).to eq(24)
     end
 
     it "passes dither options through shortcut bit-depth conversion" do
       pcm_format = format.with(channels: 1, bit_depth: 16)
       source = described_class.new(Wavify::Core::SampleBuffer.new(Array.new(32, 0), pcm_format))
 
-      converted = source.bit_depth(8, dither: true, dither_seed: 7)
+      converted = source.with_bit_depth(8, dither: true, dither_seed: 7)
 
       expect(converted.bit_depth).to eq(8)
       expect(converted.buffer.samples.uniq).not_to eq([0])
@@ -436,14 +432,13 @@ RSpec.describe Wavify::Audio do
     end
   end
 
-  describe "#loop" do
+  describe "#repeat" do
     it "repeats audio content the requested number of times" do
       source = described_class.new(Wavify::Core::SampleBuffer.new([10, -10, 20, -20], format))
-      looped = source.loop(times: 3)
+      repeated = source.repeat(times: 3)
 
-      expect(looped.sample_frame_count).to eq(6)
-      expect(looped.buffer.samples).to eq([10, -10, 20, -20] * 3)
-      expect(source.repeat(times: 3)).to eq(looped)
+      expect(repeated.sample_frame_count).to eq(6)
+      expect(repeated.buffer.samples).to eq([10, -10, 20, -20] * 3)
       expect(source.buffer.samples).to eq([10, -10, 20, -20])
     end
   end

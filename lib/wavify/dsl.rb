@@ -130,11 +130,23 @@ module Wavify
       def render(default_bars: @default_bars, stems: false)
         return render_stems(default_bars: default_bars) if stems
 
-        sequencer_audio = engine.render(
-          tracks: sequencer_tracks,
-          arrangement: arrangement? ? arrangement : nil,
-          default_bars: default_bars
-        )
+        playable_tracks = sequencer_tracks.select { |track| sequencer_track_playable?(track) }
+        sequencer_audio = if playable_tracks.empty?
+                            Wavify::Audio.silence(0, format: @format)
+                          else
+                            playable_names = playable_tracks.map(&:name)
+                            playable_arrangement = if arrangement?
+                                                     arrangement.filter_map do |section|
+                                                       active_tracks = section.fetch(:tracks) & playable_names
+                                                       section.merge(tracks: active_tracks) unless active_tracks.empty?
+                                                     end
+                                                   end
+                            engine.render(
+                              tracks: playable_tracks,
+                              arrangement: playable_arrangement,
+                              default_bars: default_bars
+                            )
+                          end
         sample_audio = render_sample_tracks(default_bars: default_bars)
 
         return sequencer_audio unless sample_audio
@@ -191,11 +203,20 @@ module Wavify
 
       def render_sequencer_track_stem(track, default_bars:)
         arrangement_for_stem = arrangement? ? arrangement_for_track(track.name) : nil
+        sequencer_track = track.to_sequencer_track
+        unless sequencer_track.note_sequence || sequencer_track.chord_progression
+          return Wavify::Audio.silence(0, format: @format)
+        end
+
         engine.render(
-          tracks: [track.to_sequencer_track],
+          tracks: [sequencer_track],
           arrangement: arrangement_for_stem,
           default_bars: default_bars
         )
+      end
+
+      def sequencer_track_playable?(track)
+        track.note_sequence || track.chord_progression
       end
 
       def render_sample_tracks(default_bars:)

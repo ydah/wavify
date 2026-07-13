@@ -217,19 +217,14 @@ module Wavify
       format.sample_rate
     end
 
-    # @param value [Integer, nil] optional target bit depth
-    # @param dither [Boolean] add TPDF dither when converting to PCM
-    # @param dither_seed [Integer, nil] deterministic seed for dither noise
-    # @return [Integer, Audio]
-    def bit_depth(value = nil, dither: false, dither_seed: nil)
-      return format.bit_depth if value.nil?
-
-      convert(format.with(bit_depth: value), dither: dither, dither_seed: dither_seed)
+    # @return [Integer]
+    def bit_depth
+      format.bit_depth
     end
 
-    # Explicit conversion alias that avoids the getter/converter overload.
+    # Converts to another bit depth while keeping the remaining format fields.
     def with_bit_depth(value, dither: false, dither_seed: nil)
-      bit_depth(value, dither: dither, dither_seed: dither_seed)
+      convert(format.with(bit_depth: value), dither: dither, dither_seed: dither_seed)
     end
 
     # @return [Array<Array<Numeric>>] sample frames
@@ -430,7 +425,7 @@ module Wavify
     #
     # @param times [Integer] repetition count
     # @return [Audio]
-    def loop(times:)
+    def repeat(times:)
       raise InvalidParameterError, "times must be a non-negative Integer" unless times.is_a?(Integer) && times >= 0
 
       return self.class.new(Core::SampleBuffer.new([], @buffer.format)) if times.zero?
@@ -438,18 +433,14 @@ module Wavify
       self.class.new(Core::SampleBuffer.new(@buffer.samples * times, @buffer.format))
     end
 
-    alias repeat loop
-
-    # In-place variant of {#loop}.
+    # In-place variant of {#repeat}.
     #
     # @param times [Integer]
     # @return [Audio] self
-    def loop!(times:)
-      replace_buffer!(self.loop(times: times).buffer)
+    def repeat!(times:)
+      replace_buffer!(repeat(times: times).buffer)
       self
     end
-
-    alias repeat! loop!
 
     # Reverses sample frame order.
     #
