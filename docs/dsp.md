@@ -36,4 +36,4 @@ Use `audio.with_bit_depth(16, dither: true)` for simple TPDF dither when reducin
 Use `audio.resample(sample_rate: 48_000, resampler: :windowed_sinc)` when quality matters more than speed.
 Use `Wavify::DSP::Automation` for linear parameter curves over time.
 
-`Audio#lufs` is an inexpensive mean-square estimate with a calibration offset, not a BS.1770 measurement: it does not apply K-weighting or loudness gating. The triangle oscillator is also a direct waveform and may alias at high frequencies; square and sawtooth use polyBLEP correction.
+`Audio#lufs` and `normalize(mode: :lufs)` use BS.1770 K-weighting, 400 ms blocks, an absolute −70 LUFS gate, and a relative −10 LU gate. The triangle oscillator is a direct waveform and may alias at high frequencies; square and sawtooth use polyBLEP correction.

@@ -487,9 +487,9 @@ module Wavify
         raise InvalidParameterError, "target_db must be a finite Numeric"
       end
 
-      transform_samples do |samples, _format|
+      transform_samples do |samples, work_format|
         if normalize_mode == :lufs
-          current_lufs = integrated_loudness(samples)
+          current_lufs = integrated_loudness(samples, work_format)
           next samples unless current_lufs.finite?
 
           factor = 10.0**((target_db.to_f - current_lufs) / 20.0)
@@ -732,10 +732,10 @@ module Wavify
       amplitude_to_dbfs(rms_amplitude)
     end
 
-    # @return [Float] approximate integrated loudness in LUFS
+    # @return [Float] BS.1770 integrated loudness in LUFS
     def lufs
       float_buffer = @buffer.convert(float_work_format(@buffer.format))
-      integrated_loudness(float_buffer.samples)
+      integrated_loudness(float_buffer.samples, float_buffer.format)
     end
 
     # @return [Hash] basic audio statistics
@@ -756,7 +756,7 @@ module Wavify
         rms_amplitude: rms,
         peak_dbfs: amplitude_to_dbfs(peak),
         rms_dbfs: amplitude_to_dbfs(rms),
-        lufs: integrated_loudness(samples),
+        lufs: integrated_loudness(samples, float_buffer.format),
         clipped: clipped_samples?(samples, float_buffer.format.channels, consecutive_frames: 2),
         silent: peak.zero?
       }
@@ -937,13 +937,12 @@ module Wavify
       end
     end
 
-    def integrated_loudness(samples)
-      return -Float::INFINITY if samples.empty?
-
-      mean_square = samples.sum { |sample| sample * sample } / samples.length
-      return -Float::INFINITY if mean_square <= 0.0
-
-      -0.691 + (10.0 * Math.log10(mean_square))
+    def integrated_loudness(samples, format)
+      DSP::LoudnessMeter.integrated(
+        samples,
+        sample_rate: format.sample_rate,
+        channels: format.channels
+      )
     end
 
     def human_sample_rate

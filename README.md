@@ -293,7 +293,7 @@ wavify doctor
 - Streaming writes for header-based formats require seekable output IO.
 - Non-rewindable IO stream sources are single-use; path and rewindable IO sources can be enumerated repeatedly.
 - Resampling defaults to linear interpolation; pass `resampler: :windowed_sinc` for higher-quality offline conversion.
-- LUFS values are lightweight mean-square estimates rather than BS.1770 measurements, and `Limiter` is a zero-latency hard clipper.
+- LUFS measurement and normalization use BS.1770 K-weighting with absolute and relative gating. `Limiter` is a zero-latency hard clipper.
 
 ## Development
 

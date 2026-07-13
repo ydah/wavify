@@ -314,7 +314,7 @@ RSpec.describe Wavify::Audio do
       expect(normalized.peak_amplitude).to be < 1.0
     end
 
-    it "normalizes by approximate LUFS when requested" do
+    it "normalizes by BS.1770 integrated LUFS when requested" do
       source = described_class.new(Wavify::Core::SampleBuffer.new([0.25, -0.25, 0.25, -0.25], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
 
       normalized = source.normalize(target_db: -12.0, mode: :lufs)
