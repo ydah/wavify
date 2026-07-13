@@ -55,7 +55,7 @@ Wavify::Adapters.load(:ffmpeg)
 - WAV supports PCM and float WAV, including extensible WAV.
 - WAV metadata exposes `info:` from LIST/INFO chunks, normalized `loops:` from `smpl`, `cue_points`, Broadcast WAV `bext`, and RF64 `ds64` sizes.
 - AIFF supports PCM AIFF plus uncompressed AIFF-C `NONE` and `sowt` reads and writes.
-- FLAC is implemented in pure Ruby. Write options include `compression_level:`, `comments:`, `stereo_coding:`, and `predictor:`. Predictor/Rice searches are intentionally simpler than libFLAC, so encoded files can be larger than files from a native production encoder.
+- FLAC is implemented in pure Ruby. Write options include `compression_level:`, `comments:`, `stereo_coding:`, and `predictor:`. LPC mode derives coefficients with autocorrelation and Levinson–Durbin analysis, then searches Rice partition orders per block.
 - OGG Vorbis uses optional `ogg-ruby` and `vorbis` gems. Use `Wavify::Codecs.available_formats` or `wavify doctor` to check whether they are installed.
 - Raw PCM/float requires `format:` for read, stream read, and metadata.
 

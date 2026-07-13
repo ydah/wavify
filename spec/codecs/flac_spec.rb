@@ -756,6 +756,35 @@ RSpec.describe Wavify::Codecs::Flac do
       expect(subframe_type).to be_between(32, 63)
       expect(described_class.read(io).samples).to eq(samples)
     end
+
+    it "derives LPC coefficients from the input autocorrelation" do
+      samples = Array.new(256) do |index|
+        ((10_000 * Math.sin(2.0 * Math::PI * index / 32.0)) +
+          (3_000 * Math.sin(2.0 * Math::PI * index / 7.0))).round
+      end
+
+      coefficients = described_class.send(:levinson_durbin_coefficients, samples, 4)
+      quantized = described_class.send(:quantized_lpc_coefficients, samples, 4, 16)
+
+      expect(coefficients.length).to eq(4)
+      expect(coefficients).to all(be_finite)
+      expect(quantized.fetch(:coefficients).length).to eq(4)
+      expect(quantized.fetch(:qlp_shift)).to be_between(-16, 15)
+    end
+
+    it "selects multiple Rice partitions when residual statistics change" do
+      residuals = Array.new(32, 0) + Array.new(32) { |index| index.even? ? 1_000 : -1_000 }
+
+      encoding = described_class.send(
+        :choose_residual_encoding,
+        residuals,
+        block_size: 64,
+        predictor_order: 0
+      )
+
+      expect(encoding.fetch(:partition_order)).to be > 0
+      expect(encoding.fetch(:partitions).length).to eq(1 << encoding.fetch(:partition_order))
+    end
   end
 
   describe ".stream_write" do

@@ -854,7 +854,7 @@ module Wavify
           end
 
           if %i[auto lpc].include?(predictor)
-            [1, 2].each do |order|
+            (1..[8, channel_samples.length - 1].min).each do |order|
               candidate = build_lpc_subframe_encoding(channel_samples, sample_size, order)
               next unless candidate
               next unless candidate.fetch(:bit_length) < best.fetch(:bit_length)
@@ -872,7 +872,11 @@ module Wavify
 
         def build_fixed_subframe_encoding(channel_samples, sample_size, predictor_order)
           residuals = fixed_subframe_residuals(channel_samples, predictor_order)
-          residual_encoding = choose_residual_encoding(residuals)
+          residual_encoding = choose_residual_encoding(
+            residuals,
+            block_size: channel_samples.length,
+            predictor_order: predictor_order
+          )
           return nil unless residual_encoding
 
           {
@@ -887,18 +891,26 @@ module Wavify
         def build_lpc_subframe_encoding(channel_samples, sample_size, predictor_order)
           return nil if predictor_order >= channel_samples.length
 
-          coefficients = lpc_coefficients_for_order(predictor_order)
-          residuals = lpc_subframe_residuals(channel_samples, coefficients, 0)
-          residual_encoding = choose_residual_encoding(residuals)
+          coefficient_data = quantized_lpc_coefficients(channel_samples, predictor_order, sample_size)
+          return nil unless coefficient_data
+
+          coefficients = coefficient_data.fetch(:coefficients)
+          qlp_shift = coefficient_data.fetch(:qlp_shift)
+          coefficient_precision = coefficient_data.fetch(:precision)
+          residuals = lpc_subframe_residuals(channel_samples, coefficients, qlp_shift)
+          residual_encoding = choose_residual_encoding(
+            residuals,
+            block_size: channel_samples.length,
+            predictor_order: predictor_order
+          )
           return nil unless residual_encoding
 
-          coefficient_precision = lpc_coefficient_precision(coefficients)
           {
             kind: :lpc,
             predictor_order: predictor_order,
             coefficients: coefficients,
             coefficient_precision: coefficient_precision,
-            qlp_shift: 0,
+            qlp_shift: qlp_shift,
             residuals: residuals,
             residual_encoding: residual_encoding,
             bit_length: 8 + (predictor_order * sample_size) + 4 + 5 +
@@ -906,13 +918,49 @@ module Wavify
           }
         end
 
-        def lpc_coefficients_for_order(predictor_order)
-          case predictor_order
-          when 1 then [1]
-          when 2 then [2, -1]
-          else
-            raise UnsupportedFormatError, "unsupported FLAC LPC predictor order: #{predictor_order}"
+        def quantized_lpc_coefficients(samples, predictor_order, sample_size)
+          coefficients = levinson_durbin_coefficients(samples, predictor_order)
+          return nil unless coefficients
+
+          precision = [sample_size, 15].min
+          maximum = coefficients.map(&:abs).max
+          return nil unless maximum&.positive?
+
+          max_integer = (1 << (precision - 1)) - 1
+          qlp_shift = Math.log2(max_integer / maximum).floor.clamp(-16, 15)
+          quantized = coefficients.map { |coefficient| (coefficient * (2.0**qlp_shift)).round }
+          return nil unless quantized.all? { |coefficient| signed_bit_width(coefficient) <= precision }
+
+          { coefficients: quantized, precision: precision, qlp_shift: qlp_shift }
+        end
+
+        def levinson_durbin_coefficients(samples, predictor_order)
+          return nil if samples.length <= predictor_order
+
+          autocorrelation = Array.new(predictor_order + 1) do |lag|
+            (lag...samples.length).sum { |index| samples.fetch(index).to_f * samples.fetch(index - lag) }
           end
+          error = autocorrelation.fetch(0)
+          return nil unless error.positive?
+
+          coefficients = []
+          predictor_order.times do |index|
+            correction = index.times.sum do |coefficient_index|
+              coefficients.fetch(coefficient_index) * autocorrelation.fetch(index - coefficient_index)
+            end
+            reflection = (autocorrelation.fetch(index + 1) - correction) / error
+            return nil unless reflection.finite? && reflection.abs < 1.0
+
+            previous = coefficients.dup
+            index.times do |coefficient_index|
+              coefficients[coefficient_index] = previous.fetch(coefficient_index) -
+                                                (reflection * previous.fetch(index - coefficient_index - 1))
+            end
+            coefficients[index] = reflection
+            error *= 1.0 - (reflection * reflection)
+            return nil unless error.positive?
+          end
+          coefficients
         end
 
         def lpc_subframe_residuals(samples, coefficients, qlp_shift)
@@ -927,10 +975,6 @@ module Wavify
           end
         end
 
-        def lpc_coefficient_precision(coefficients)
-          coefficients.map { |coefficient| signed_bit_width(coefficient) }.max.to_i.clamp(1, 15)
-        end
-
         def fixed_subframe_residuals(samples, predictor_order)
           history = samples.first(predictor_order).dup
 
@@ -942,26 +986,61 @@ module Wavify
           end
         end
 
-        def choose_residual_encoding(residuals)
-          rice_candidates = (0..14).map do |parameter|
+        def choose_residual_encoding(residuals, block_size:, predictor_order:)
+          max_partition_order = [Math.log2(block_size).floor, 6].min
+          candidates = (0..max_partition_order).filter_map do |partition_order|
+            partition_count = 1 << partition_order
+            next unless (block_size % partition_count).zero?
+
+            partition_size = block_size / partition_count
+            next if partition_size < predictor_order
+
+            partitions = residual_partitions(
+              residuals,
+              partition_count: partition_count,
+              partition_size: partition_size,
+              predictor_order: predictor_order
+            )
+            next unless partitions
+
+            encodings = partitions.map { |partition| choose_rice_partition_encoding(partition) }
             {
-              kind: :rice,
-              parameter: parameter,
-              bit_length: rice_partition0_bit_length(residuals, parameter)
+              kind: :partitioned,
+              partition_order: partition_order,
+              partitions: partitions.zip(encodings),
+              bit_length: 6 + encodings.sum { |encoding| encoding.fetch(:bit_length) }
             }
           end
-
-          escape_candidate = escape_residual_encoding(residuals)
-          candidates = rice_candidates
-          candidates << escape_candidate if escape_candidate
           candidates.min_by { |candidate| candidate.fetch(:bit_length) }
         end
 
-        def rice_partition0_bit_length(residuals, parameter)
-          residuals.reduce(6 + 4) do |bits, residual|
+        def residual_partitions(residuals, partition_count:, partition_size:, predictor_order:)
+          offset = 0
+          partitions = Array.new(partition_count) do |partition_index|
+            length = partition_size - (partition_index.zero? ? predictor_order : 0)
+            partition = residuals.slice(offset, length)
+            return nil unless partition&.length == length
+
+            offset += length
+            partition
+          end
+          offset == residuals.length ? partitions : nil
+        end
+
+        def choose_rice_partition_encoding(residuals)
+          rice_candidates = (0..14).map do |parameter|
+            { kind: :rice, parameter: parameter, bit_length: 4 + rice_data_bit_length(residuals, parameter) }
+          end
+          escape = escape_residual_encoding(residuals)
+          rice_candidates << escape if escape
+          rice_candidates.min_by { |candidate| candidate.fetch(:bit_length) }
+        end
+
+        def rice_data_bit_length(residuals, parameter)
+          residuals.sum do |residual|
             unsigned = residual >= 0 ? (residual << 1) : ((-residual << 1) - 1)
             quotient = unsigned >> parameter
-            bits + quotient + 1 + parameter
+            quotient + 1 + parameter
           end
         end
 
@@ -972,7 +1051,7 @@ module Wavify
           {
             kind: :escape,
             raw_bits: raw_bits,
-            bit_length: 6 + 4 + 5 + (residuals.length * raw_bits)
+            bit_length: 4 + 5 + (residuals.length * raw_bits)
           }
         end
 
@@ -987,31 +1066,30 @@ module Wavify
         def write_fixed_subframe(writer, channel_samples, sample_size, selection:)
           predictor_order = selection.fetch(:predictor_order)
           residual_encoding = selection.fetch(:residual_encoding)
-          residuals = selection.fetch(:residuals)
 
           writer.write_bits(0, 1) # padding bit
           writer.write_bits(8 + predictor_order, 6)
           writer.write_bits(0, 1) # no wasted bits
 
           channel_samples.first(predictor_order).each { |sample| writer.write_signed_bits(sample, sample_size) }
-          write_partition0_residuals(writer, residual_encoding, residuals)
+          write_residuals(writer, residual_encoding)
         end
 
-        def write_partition0_residuals(writer, residual_encoding, residuals)
-          if residual_encoding[:kind] == :rice
-            writer.write_bits(0, 2) # Rice
-            writer.write_bits(0, 4) # partition order = 0
-            writer.write_bits(residual_encoding.fetch(:parameter), 4)
-            residuals.each { |residual| writer.write_rice_signed(residual, residual_encoding.fetch(:parameter)) }
-            return
-          end
-
+        def write_residuals(writer, residual_encoding)
           writer.write_bits(0, 2) # Rice coding method family
-          writer.write_bits(0, 4) # partition order = 0
-          writer.write_bits(0xF, 4) # escape code
-          raw_bits = residual_encoding.fetch(:raw_bits)
-          writer.write_bits(raw_bits, 5)
-          residuals.each { |residual| writer.write_signed_bits(residual, raw_bits) } if raw_bits.positive?
+          writer.write_bits(residual_encoding.fetch(:partition_order), 4)
+          residual_encoding.fetch(:partitions).each do |residuals, partition|
+            if partition[:kind] == :rice
+              writer.write_bits(partition.fetch(:parameter), 4)
+              residuals.each { |residual| writer.write_rice_signed(residual, partition.fetch(:parameter)) }
+              next
+            end
+
+            writer.write_bits(0xF, 4) # escape code
+            raw_bits = partition.fetch(:raw_bits)
+            writer.write_bits(raw_bits, 5)
+            residuals.each { |residual| writer.write_signed_bits(residual, raw_bits) } if raw_bits.positive?
+          end
         end
 
         def build_frame_header_bytes(block_size:, block_size_code:, block_size_extra_bits:, channel_assignment:, frame_number:)
@@ -1049,7 +1127,7 @@ module Wavify
           selection.fetch(:coefficients).each do |coefficient|
             writer.write_signed_bits(coefficient, selection.fetch(:coefficient_precision))
           end
-          write_partition0_residuals(writer, selection.fetch(:residual_encoding), selection.fetch(:residuals))
+          write_residuals(writer, selection.fetch(:residual_encoding))
         end
 
         def deinterleave_samples(interleaved_samples, channels)
