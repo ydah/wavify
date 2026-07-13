@@ -26,6 +26,7 @@ module Wavify
         @tee_targets = []
         @take_duration_seconds = nil
         @drop_duration_seconds = nil
+        @enumerated = false
       end
 
       # Adds a processor to the stream pipeline.
@@ -125,11 +126,16 @@ module Wavify
       #
       # @return [Audio]
       def to_audio
-        chunks = each_chunk.to_a
-        output_format = chunks.first&.format || @last_output_format || @format
+        output_format = nil
+        samples = []
+        each_chunk do |chunk|
+          output_format ||= chunk.format
+          converted = chunk.format == output_format ? chunk : chunk.convert(output_format)
+          samples.concat(converted.samples)
+        end
+        output_format ||= @last_output_format || @format
         raise InvalidFormatError, "stream format is unknown" unless output_format.is_a?(Format)
 
-        samples = chunks.flat_map { |chunk| chunk.format == output_format ? chunk.samples : chunk.convert(output_format).samples }
         Audio.new(SampleBuffer.new(samples, output_format))
       end
 
@@ -200,6 +206,7 @@ module Wavify
       def each_chunk
         return enum_for(:each_chunk) unless block_given?
 
+        prepare_source_for_enumeration!
         reset_pipeline!
         @last_output_format = nil
         drop_frames = nil
@@ -231,12 +238,21 @@ module Wavify
 
           with_stream_context("stream flush", codec: @codec, target: @source) do
             flush_pipeline do |chunk|
+              if take_frames
+                remaining_frames = take_frames - taken_frames
+                next if remaining_frames <= 0
+
+                chunk = chunk.slice(0, [chunk.sample_frame_count, remaining_frames].min)
+                taken_frames += chunk.sample_frame_count
+              end
               @last_output_format = chunk.format
               write_tee_chunks(chunk, tee_writers)
               yield chunk
             end
           end
         end
+      rescue UserCodeError => e
+        raise e.original
       end
 
       alias each each_chunk
@@ -294,6 +310,8 @@ module Wavify
             rms_dbfs: amplitude_to_dbfs(rms)
           )
           chunk
+        rescue StandardError => e
+          raise UserCodeError, e
         end
 
         private
@@ -328,6 +346,18 @@ module Wavify
           stats[:progress] = @processed_frames.to_f / @total_frames if @total_frames&.positive?
           @callback.call(stats)
           chunk
+        rescue StandardError => e
+          raise UserCodeError, e
+        end
+      end
+
+      class UserCodeError < StandardError
+        attr_reader :original
+
+        def initialize(original)
+          @original = original
+          super(original.message)
+          set_backtrace(original.backtrace)
         end
       end
 
@@ -345,6 +375,10 @@ module Wavify
         else
           processor.apply(chunk)
         end
+      rescue UserCodeError
+        raise
+      rescue StandardError => e
+        raise UserCodeError, e
       end
 
       def reset_pipeline!
@@ -529,6 +563,8 @@ module Wavify
 
       def with_stream_context(operation, codec:, target:)
         yield
+      rescue UserCodeError
+        raise
       rescue StreamError
         raise
       rescue StandardError => e
@@ -553,6 +589,17 @@ module Wavify
         return target.path if target.respond_to?(:path)
 
         target.class.name || target.class.to_s
+      end
+
+      def prepare_source_for_enumeration!
+        if @enumerated && !@source.is_a?(String)
+          unless @source.respond_to?(:rewind)
+            raise StreamError, "IO stream source cannot be enumerated more than once because it is not rewindable"
+          end
+
+          @source.rewind
+        end
+        @enumerated = true
       end
     end
   end

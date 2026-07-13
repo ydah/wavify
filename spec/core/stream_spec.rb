@@ -137,6 +137,49 @@ RSpec.describe Wavify::Core::Stream do
     source&.unlink
   end
 
+  it "rewinds reusable IO sources between enumerations" do
+    io = StringIO.new([1, 2, 3, 4].pack("s<*"))
+    raw_format = format.with(channels: 1, sample_format: :pcm, bit_depth: 16)
+    stream = described_class.new(
+      io,
+      codec: Wavify::Codecs::Raw,
+      format: raw_format,
+      chunk_size: 2,
+      codec_read_options: { format: raw_format }
+    )
+
+    expect(stream.to_audio.buffer.samples).to eq([1, 2, 3, 4])
+    expect(stream.to_audio.buffer.samples).to eq([1, 2, 3, 4])
+  end
+
+  it "raises before reusing a non-rewindable IO source" do
+    io_class = Class.new do
+      def initialize(bytes)
+        @bytes = bytes
+        @read = false
+      end
+
+      def read(*)
+        return nil if @read
+
+        @read = true
+        @bytes
+      end
+    end
+    raw_format = format.with(channels: 1, sample_format: :pcm, bit_depth: 16)
+    stream = described_class.new(
+      io_class.new([1, 2].pack("s<*")),
+      codec: Wavify::Codecs::Raw,
+      format: raw_format,
+      codec_read_options: { format: raw_format }
+    )
+
+    stream.to_audio
+    expect do
+      stream.to_audio
+    end.to raise_error(Wavify::StreamError, /cannot be enumerated more than once/)
+  end
+
   it "reports chunk meters and cumulative progress without changing audio" do
     source = write_source_wav([0.25, -0.5, 0.5, -0.25])
     meters = []
@@ -152,6 +195,19 @@ RSpec.describe Wavify::Core::Stream do
     expect(meters.map { |stats| stats[:peak_amplitude] }).to all(be_within(0.0001).of(0.5))
     expect(progresses.map { |stats| stats[:sample_frame_count] }).to eq([2, 4])
     expect(progresses.last[:progress]).to eq(1.0)
+  ensure
+    source&.unlink
+  end
+
+  it "preserves exceptions raised by user processors" do
+    error_class = Class.new(StandardError)
+    source = write_source_wav([0.1, 0.2])
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
+    stream.meter { raise error_class, "meter failed" }
+
+    expect do
+      stream.to_a
+    end.to raise_error(error_class, "meter failed")
   ensure
     source&.unlink
   end
@@ -265,6 +321,23 @@ RSpec.describe Wavify::Core::Stream do
     samples = stream.each_chunk.flat_map(&:samples)
 
     expect(samples).to eq([0.5, 1.0])
+  ensure
+    source&.unlink
+  end
+
+  it "applies take_duration to flushed processor tails" do
+    tail_processor = Class.new do
+      def process(chunk) = chunk
+
+      def flush(format:)
+        Wavify::Core::SampleBuffer.new(Array.new(8, 0), format)
+      end
+    end.new
+    source = write_source_wav([0.1, 0.2])
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
+    stream.pipe(tail_processor).take_duration(3.0 / format.sample_rate)
+
+    expect(stream.to_audio.sample_frame_count).to eq(3)
   ensure
     source&.unlink
   end
