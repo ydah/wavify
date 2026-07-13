@@ -6,6 +6,8 @@ module Wavify
     class Oscillator
       # Supported waveform symbols.
       WAVEFORMS = %i[sine square sawtooth triangle pulse white_noise pink_noise].freeze
+      TRIANGLE_TABLE_SIZE = 2_048
+      TRIANGLE_MAX_HARMONIC = 255
 
       # @param phase [Numeric] initial phase in cycles (`0.0..1.0` wraps)
       def initialize(waveform:, frequency:, amplitude: 1.0, phase: 0.0, pulse_width: 0.5, detune: 0.0, unison: 1,
@@ -20,6 +22,7 @@ module Wavify
         @detune = validate_detune!(detune)
         @unison = validate_unison!(unison)
         @random = random
+        @triangle_tables = {}
         reset_pink_noise!
       end
 
@@ -150,7 +153,7 @@ module Wavify
         when :square then polyblep_square(phase, phase_step, 0.5)
         when :pulse then polyblep_square(phase, phase_step, @pulse_width)
         when :sawtooth then polyblep_saw(phase, phase_step)
-        when :triangle then naive_triangle(phase)
+        when :triangle then bandlimited_triangle(phase, frequency, sample_rate)
         end
       end
 
@@ -191,8 +194,26 @@ module Wavify
         value
       end
 
-      def naive_triangle(phase)
-        (2.0 * ((2.0 * phase) - 1.0).abs) - 1.0
+      def bandlimited_triangle(phase, frequency, sample_rate)
+        table = triangle_wavetable(frequency, sample_rate)
+        position = phase * TRIANGLE_TABLE_SIZE
+        left_index = position.floor % TRIANGLE_TABLE_SIZE
+        right_index = (left_index + 1) % TRIANGLE_TABLE_SIZE
+        fraction = position - position.floor
+        table.fetch(left_index) + ((table.fetch(right_index) - table.fetch(left_index)) * fraction)
+      end
+
+      def triangle_wavetable(frequency, sample_rate)
+        key = [frequency, sample_rate]
+        @triangle_tables[key] ||= begin
+          highest = [((sample_rate / 2.0) / frequency).floor, TRIANGLE_MAX_HARMONIC].min
+          harmonics = (1..highest).step(2).to_a
+          scale = 8.0 / (Math::PI * Math::PI)
+          Array.new(TRIANGLE_TABLE_SIZE) do |index|
+            phase = index.to_f / TRIANGLE_TABLE_SIZE
+            scale * harmonics.sum { |harmonic| Math.cos(2.0 * Math::PI * harmonic * phase) / (harmonic * harmonic) }
+          end.freeze
+        end
       end
 
       def polyblep(phase, phase_step)

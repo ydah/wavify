@@ -31,6 +31,41 @@ module Wavify
           end
         end
 
+        # Applies every effect using its offline entrypoint when available.
+        def apply(buffer)
+          raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
+
+          @effects.reduce(buffer) do |current, effect|
+            result = if effect.respond_to?(:apply)
+                       effect.apply(current)
+                     elsif effect.respond_to?(:process)
+                       effect.process(current)
+                     else
+                       effect.call(current)
+                     end
+            result.is_a?(Wavify::Audio) ? result.buffer : result
+          end
+        end
+
+        # Flushes effect tails through every downstream processor.
+        def flush(format: nil)
+          tails = []
+          @effects.each_with_index do |effect, index|
+            next unless effect.respond_to?(:flush)
+
+            tail = effect.flush(format: format)
+            next unless tail&.sample_frame_count&.positive?
+
+            processed = @effects.drop(index + 1).reduce(tail) do |current, downstream|
+              downstream.respond_to?(:process) ? downstream.process(current) : downstream.call(current)
+            end
+            tails << processed
+          end
+          return nil if tails.empty?
+
+          tails.reduce { |combined, tail| combined.concat(tail) }
+        end
+
         # @return [EffectChain] self
         def reset
           @effects.each { |effect| effect.reset if effect.respond_to?(:reset) }

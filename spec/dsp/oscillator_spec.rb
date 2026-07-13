@@ -70,6 +70,20 @@ RSpec.describe Wavify::DSP::Oscillator do
 
       expect(buffer.samples.each_slice(2).any? { |left, right| left != right }).to eq(true)
     end
+
+    it "limits triangle harmonics below Nyquist" do
+      high_format = mono_float.with(sample_rate: 48_000)
+      frequency = 18_000
+      oscillator = described_class.new(waveform: :triangle, frequency: frequency)
+      samples = oscillator.generate(0.01, format: high_format).samples
+      fundamental_scale = 8.0 / (Math::PI * Math::PI)
+
+      expected = samples.each_index.map do |index|
+        fundamental_scale * Math.cos(2.0 * Math::PI * frequency * index / high_format.sample_rate)
+      end
+      error = samples.zip(expected).map { |actual, reference| (actual - reference).abs }.max
+      expect(error).to be < 0.001
+    end
   end
 
   describe "#each_sample" do

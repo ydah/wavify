@@ -117,6 +117,13 @@ module Wavify
       class Compressor
         def initialize: (?threshold: Numeric, ?ratio: Numeric, ?attack: Numeric, ?release: Numeric, ?makeup_gain: Numeric, ?knee: Numeric, ?sidechain: Audio | Core::SampleBuffer?) -> void
       end
+
+      class Limiter
+        def initialize: (?ceiling: Numeric, ?input_gain: Numeric, ?attack: Numeric, ?release: Numeric, ?lookahead: Numeric) -> void
+        def latency: () -> Float
+        def lookahead: () -> Float
+        def tail_duration: () -> Float
+      end
     end
 
     class Filter

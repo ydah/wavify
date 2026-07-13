@@ -181,9 +181,32 @@ RSpec.describe Wavify::DSP::Effects do
       effect = described_class.new(ceiling: -6.0206)
       source = Wavify::Core::SampleBuffer.new([0.25, 0.9, -0.9], mono_float)
 
-      processed = effect.process(source)
+      processed = effect.apply(source)
 
       expect(processed.samples.map(&:abs).max).to be_within(0.0001).of(0.5)
+    end
+
+    it "uses linked gain reduction instead of flattening every hot sample" do
+      effect = described_class.new(ceiling: -6.0206, attack: 0.0, release: 0.05, lookahead: 0.002)
+      source = Wavify::Core::SampleBuffer.new([0.8, 1.0, 0.8], mono_float)
+
+      processed = effect.apply(source)
+
+      expect(processed.samples.map(&:abs).max).to be <= 0.5
+      expect(processed.samples.fetch(0)).to be < processed.samples.fetch(1)
+      expect(effect.lookahead).to eq(0.002)
+      expect(effect.latency).to eq(0.002)
+    end
+
+    it "flushes frames retained by streaming lookahead" do
+      effect = described_class.new(ceiling: -6.0206, attack: 0.0, lookahead: 2.0 / 44_100)
+      source = Wavify::Core::SampleBuffer.new([0.25, 0.9, -0.9], mono_float)
+
+      processed = effect.process(source)
+      tail = effect.flush(format: mono_float)
+
+      expect(processed.sample_frame_count + tail.sample_frame_count).to eq(source.sample_frame_count + 2)
+      expect((processed.samples + tail.samples).map(&:abs).max).to be <= 0.5
     end
   end
 
@@ -340,13 +363,13 @@ RSpec.describe Wavify::DSP::Effects do
         Wavify::DSP::Effects::NoiseGate.new(threshold: -20.0)
       ])
 
-      processed = chain.process(Wavify::Core::SampleBuffer.new([0.005, 1.0], mono_float))
+      processed = chain.apply(Wavify::Core::SampleBuffer.new([0.005, 1.0], mono_float))
 
       expect(processed.samples.first.abs).to be < 0.00001
       expect(processed.samples.last).to be_within(0.0001).of(0.5)
-      expect(chain.latency).to eq(0.0)
-      expect(chain.lookahead).to eq(0.0)
-      expect(chain.tail_duration).to eq(0.0)
+      expect(chain.latency).to eq(0.005)
+      expect(chain.lookahead).to eq(0.005)
+      expect(chain.tail_duration).to eq(0.005)
     end
   end
 
