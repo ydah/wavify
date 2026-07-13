@@ -161,6 +161,7 @@ Wavify::Codecs.supported_formats
 Wavify::Codecs.available_formats
 Wavify::Codecs.detect("input.wav")
 Wavify::Codecs.register(".custom", MyCodec)
+Wavify::Codecs.unregister(".custom")
 Wavify::Adapters.known
 ```
 
@@ -207,7 +208,7 @@ mix = song.render
 mix.write("song.wav")
 ```
 
-Pattern steps support rests (`-`/`.`), normal triggers (`x`, velocity `0.8`), accents (`X`, velocity `1.0`), explicit velocity suffixes (`x0.5`), probability metadata (`x?50`), and ratchets (`x:3`).
+Pattern steps support rests (`-`/`.`), normal triggers (`x`, velocity `0.8`), accents (`X`, velocity `1.0`), explicit velocity suffixes (`x0.5`), probability rolls (`x?50`), and ratchets (`x:3`). Pass `random_seed:` to the DSL entrypoint for reproducible probability rolls. Trigger patterns render audio on sample-backed DSL tracks; synth tracks use note or chord events.
 Note tokens support fixed durations (`C4/8`), dotted values (`C4/8.`), triplets (`C4/8t`), and ties (`D4~ D4`).
 Use `key :c, :minor` for simple scale quantization, slash chords for inversions, and `@drop2` / `@open` or `voicing:` for chord voicings.
 Arrangement sections can carry `tempo:`, `beats_per_bar:`, and `markers:`.
@@ -291,7 +292,9 @@ wavify doctor
 - OGG Vorbis uses optional native gems (`ogg-ruby`, `vorbis`).
 - Raw PCM/float requires `format:` for read, stream read, and metadata.
 - Streaming writes for header-based formats require seekable output IO.
+- Non-rewindable IO stream sources are single-use; path and rewindable IO sources can be enumerated repeatedly.
 - Resampling defaults to linear interpolation; pass `resampler: :windowed_sinc` for higher-quality offline conversion.
+- LUFS values are lightweight mean-square estimates rather than BS.1770 measurements, and `Limiter` is a zero-latency hard clipper.
 
 ## Development
 

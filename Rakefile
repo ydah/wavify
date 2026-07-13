@@ -223,7 +223,7 @@ namespace :release do
     assert_release_check!(files.include?("README.md"), "gemspec.files does not include README.md")
     assert_release_check!(files.any? { |f| ["LICENSE", "LICENSE.txt"].include?(f) }, "gemspec.files does not include license file")
     assert_release_check!(files.none? { |f| f.start_with?(".idea/") }, ".idea files should not be packaged")
-    assert_release_check!(files.none? { |f| f.start_with?("benchmarks/", "tools/") }, "development utilities should not be packaged")
+    assert_release_check!(files.none? { |f| f.start_with?("benchmarks/", "docs/", "tools/") }, "development utilities should not be packaged")
 
     puts "release check ok: gemspec metadata and package file list"
     puts "  name: #{spec.name}"

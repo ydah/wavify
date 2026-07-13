@@ -38,6 +38,7 @@ Codec registration is intentionally small:
 
 ```ruby
 Wavify::Codecs.register(".custom", MyCodec)
+Wavify::Codecs.unregister(".custom")
 ```
 
 Custom codecs should expose `read`, `write`, `stream_read`, `stream_write`, and `metadata`.
@@ -54,6 +55,8 @@ Wavify::Adapters.load(:ffmpeg)
 - WAV supports PCM and float WAV, including extensible WAV.
 - WAV metadata exposes `info:` from LIST/INFO chunks, normalized `loops:` from `smpl`, `cue_points`, Broadcast WAV `bext`, and RF64 `ds64` sizes.
 - AIFF supports PCM AIFF plus uncompressed AIFF-C `NONE` and `sowt` reads and writes.
-- FLAC is implemented in pure Ruby. Write options include `compression_level:`, `comments:`, `stereo_coding:`, and `predictor:`.
+- FLAC is implemented in pure Ruby. Write options include `compression_level:`, `comments:`, `stereo_coding:`, and `predictor:`. Predictor/Rice searches are intentionally simpler than libFLAC, so encoded files can be larger than files from a native production encoder.
 - OGG Vorbis uses optional `ogg-ruby` and `vorbis` gems. Use `Wavify::Codecs.available_formats` or `wavify doctor` to check whether they are installed.
 - Raw PCM/float requires `format:` for read, stream read, and metadata.
+
+Magic-byte inspection preserves the position of seekable IO. For a non-rewindable IO, pass `filename:` so the codec can be selected without consuming its prefix; otherwise detection raises before reading the stream.

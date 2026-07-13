@@ -41,3 +41,5 @@ preview = Wavify::Audio.stream("input.wav", chunk_size: 2048)
 `progress(total_frames:)` reports cumulative processed frames and an optional progress ratio. `tee` writes the processed stream to an additional output as the stream is consumed.
 Use `dry_run(format:)` to validate reading, processors, and optional output conversion without writing files. `latency`, `lookahead`, and `pipeline_steps` expose processor timing metadata when processors provide it.
 Streaming failures are raised as `StreamError` with codec, target, and `chunk_size` context.
+
+Path-backed streams reopen their source for every pass. Caller-owned IO is rewound before reuse when it supports `rewind`; non-rewindable IO is single-use and raises before a second enumeration. Exceptions from user processors and `meter`/`progress` callbacks retain their original exception class.

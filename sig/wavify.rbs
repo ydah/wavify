@@ -3,6 +3,7 @@ module Wavify
 
   def self.ms: (Numeric value) -> Core::Duration
   def self.seconds: (Numeric value) -> Core::Duration
+  def self.build: (?String? output_path, ?format: Core::Format, ?tempo: Numeric, ?beats_per_bar: Integer, ?swing: Numeric, ?default_bars: Integer, ?random_seed: Integer) ?{ () -> void } -> Audio
 
   module Adapters
     class AdapterSpec
@@ -26,17 +27,35 @@ module Wavify
     def self.metadata: (String | IO path_or_io, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?strict: bool, ?filename: String?) -> Hash[Symbol, untyped]
     def self.info: (String | IO path_or_io, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?strict: bool, ?filename: String?) -> Hash[Symbol, untyped]
     def self.mix: (*Audio audios, ?strategy: Symbol, ?gains: Array[Numeric]?, ?align: Symbol) -> Audio
-    def self.silence: (Numeric duration_seconds, format: Core::Format) -> Audio
+    def self.silence: (Numeric | Core::Duration duration_seconds, format: Core::Format) -> Audio
 
     def format: () -> Core::Format
     def duration: () -> Core::Duration
     def sample_frame_count: () -> Integer
     def channels: () -> Integer
     def sample_rate: () -> Integer
+    def bit_depth: () -> Integer
+                 | (Integer value, ?dither: bool, ?dither_seed: Integer?) -> Audio
+    def with_bit_depth: (Integer value, ?dither: bool, ?dither_seed: Integer?) -> Audio
     def write: (String | IO path, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?overwrite: bool) -> Audio
     def convert: (Core::Format new_format, ?dither: bool, ?dither_seed: Integer?, ?resampler: Symbol) -> Audio
     def resample: (sample_rate: Integer, ?resampler: Symbol) -> Audio
     def stats: () -> Hash[Symbol, untyped]
+    def clipped?: (?consecutive_frames: Integer) -> bool
+    def loop: (times: Integer) -> Audio
+    def loop!: (times: Integer) -> Audio
+    def repeat: (times: Integer) -> Audio
+    def repeat!: (times: Integer) -> Audio
+    def ==: (untyped other) -> bool
+    def eql?: (untyped other) -> bool
+    def hash: () -> Integer
+  end
+
+  module Codecs
+    def self.register: (String extension, untyped codec) -> untyped
+    def self.unregister: (String extension) -> untyped
+    def self.supported_formats: () -> Array[String]
+    def self.available_formats: () -> Array[String]
   end
 
   module Core
@@ -45,6 +64,8 @@ module Wavify
 
       def initialize: (Numeric seconds) -> void
       def self.parse: (String value) -> Duration
+      def eql?: (untyped other) -> bool
+      def hash: () -> Integer
     end
 
     class Format
@@ -85,14 +106,29 @@ module Wavify
       def convert: (Format new_format, ?dither: bool, ?dither_seed: Integer?, ?resampler: Symbol) -> SampleBuffer
       def slice: (Integer start_frame, Integer frame_length) -> SampleBuffer
       def concat: (SampleBuffer other) -> SampleBuffer
+      def ==: (untyped other) -> bool
+      def eql?: (untyped other) -> bool
+      def hash: () -> Integer
     end
   end
 
   module DSP
     module Effects
+      def self.register: (String | Symbol name, ?untyped factory) ?{ (**untyped) -> untyped } -> untyped
+      def self.unregister: (String | Symbol name) -> untyped
+
       class Compressor
         def initialize: (?threshold: Numeric, ?ratio: Numeric, ?attack: Numeric, ?release: Numeric, ?makeup_gain: Numeric, ?knee: Numeric, ?sidechain: Audio | Core::SampleBuffer?) -> void
       end
     end
+
+    class Filter
+      def self.bandpass: (?center: Numeric?, ?bandwidth: Numeric?, ?cutoff: Numeric?, ?q: Numeric?) -> Filter
+    end
+  end
+
+  module DSL
+    def self.build_definition: (format: Core::Format, ?tempo: Numeric, ?beats_per_bar: Integer, ?swing: Numeric, ?default_bars: Integer, ?random_seed: Integer) ?{ () -> void } -> untyped
+    def self.validate: (format: Core::Format, ?tempo: Numeric, ?beats_per_bar: Integer, ?swing: Numeric, ?default_bars: Integer, ?random_seed: Integer) ?{ () -> void } -> true
   end
 end

@@ -40,7 +40,7 @@ rake bench:all
 
 ## Notes
 
-- OGG Vorbis audio decode is still incomplete, so it is not benchmarked yet.
+- OGG Vorbis is optional and depends on native gems, so it is not part of the portable benchmark suite.
 - `flac_benchmark.rb` measures the current pure Ruby FLAC implementation (verbatim/fixed subframe selection).
 - `streaming_memory_benchmark.rb` reports sampled RSS (`ps`) as an approximation, not a strict peak profiler.
 - `wav_io_benchmark.rb` optionally compares WAV read/write throughput with the `wavefile` gem when it is installed (`gem install wavefile`).
