@@ -23,6 +23,7 @@ bundle exec rake bench:compare
 Current optimization priorities:
 
 - Use `SampleBuffer#frame_view` when frame iteration is needed without materializing every frame upfront.
+- Use `SampleBuffer.new(samples, format, storage: :packed)` when a large immutable buffer should remain compact until random sample access is needed. Sequential `each` does not materialize the full Array.
 - Keep immutable public APIs while allowing internal buffer reuse where safe.
 - Prefer streaming pipelines for large inputs.
 - Keep pure Ruby codecs measurable with stable benchmark scripts.

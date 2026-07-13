@@ -81,6 +81,18 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(first).to eq(second)
       expect({ first => :buffer }[second]).to eq(:buffer)
     end
+
+    it "optionally stores samples in packed form until random access is requested" do
+      packed = described_class.new([1, -2, 3, -4], pcm16_stereo, storage: :packed)
+
+      expect(packed).to be_packed
+      expect(packed.packed_bytesize).to eq(8)
+      expect(packed.each.to_a).to eq([1, -2, 3, -4])
+      expect(packed).to be_packed
+
+      expect(packed.samples).to eq([1, -2, 3, -4])
+      expect(packed).not_to be_packed
+    end
   end
 
   describe "#convert" do
@@ -224,6 +236,18 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(converted.format).to eq(target_format)
       expect(converted.sample_frame_count).to eq(2)
       expect(converted.samples).to eq([0.0, -0.5])
+    end
+
+    it "converts channels and sample rate without materializing a frame view" do
+      source_format = Wavify::Core::Format.new(channels: 2, sample_rate: 8_000, bit_depth: 16, sample_format: :pcm)
+      target_format = Wavify::Core::Format.new(channels: 1, sample_rate: 16_000, bit_depth: 32, sample_format: :float)
+      source = described_class.new([1_000, -1_000, 2_000, -2_000], source_format)
+
+      expect(source).not_to receive(:frame_view)
+      converted = source.convert(target_format)
+
+      expect(converted.sample_frame_count).to eq(4)
+      expect(converted.samples).to all(be_within(0.0001).of(0.0))
     end
 
     it "keeps randomized conversion invariants" do

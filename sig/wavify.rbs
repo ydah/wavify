@@ -96,8 +96,10 @@ module Wavify
       attr_reader format: Format
       attr_reader duration: Duration
 
-      def initialize: (Array[Numeric] samples, Format format) -> void
+      def initialize: (Array[Numeric] samples, Format format, ?storage: Symbol) -> void
       def sample_frame_count: () -> Integer
+      def packed?: () -> bool
+      def packed_bytesize: () -> Integer
       def frame_view: () -> SampleBuffer::FrameView
       def view: (?start_frame: Integer, ?frame_length: Integer?) -> View
       def convert: (Format new_format, ?dither: bool, ?dither_seed: Integer?, ?resampler: Symbol) -> SampleBuffer
