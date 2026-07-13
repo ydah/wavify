@@ -300,7 +300,8 @@ module Wavify
               compression_level: compression_level,
               comments: comments,
               stereo_coding: stereo_coding,
-              predictor: predictor
+              predictor: predictor,
+              **codec_options
             )
           end
 
@@ -748,7 +749,6 @@ module Wavify
           encoded_candidates = candidates.map do |candidate|
             encode_pcm_frame_candidate(
               candidate,
-              format,
               block_size: block_size,
               block_size_code: block_size_code,
               block_size_extra_bits: block_size_extra_bits,
@@ -764,7 +764,7 @@ module Wavify
           selected
         end
 
-        def encode_pcm_frame_candidate(candidate, format, block_size:, block_size_code:, block_size_extra_bits:,
+        def encode_pcm_frame_candidate(candidate, block_size:, block_size_code:, block_size_extra_bits:,
                                        frame_number:, predictor:)
           header_without_crc8 = build_frame_header_bytes(
             block_size: block_size,

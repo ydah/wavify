@@ -137,7 +137,8 @@ module Wavify
               format: format,
               form_type: form_type,
               compression_type: compression_type,
-              compression_name: compression_name
+              compression_name: compression_name,
+              **codec_options
             )
           end
           raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)

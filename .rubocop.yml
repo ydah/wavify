@@ -18,6 +18,24 @@ AllCops:
 Lint/Syntax:
   Enabled: true
 
+Lint:
+  Enabled: true
+
+# Example and benchmark scripts are launched explicitly through Ruby/Rake.
+Lint/ScriptPermission:
+  Enabled: false
+
+# Processor and codec protocols require stable keyword names even when a
+# particular implementation does not need every value.
+Lint/UnusedMethodArgument:
+  Enabled: false
+
+# Format presets must be initialized after the private validation methods have
+# been defined; constant visibility is unaffected by the preceding `private`.
+Lint/UselessConstantScoping:
+  Exclude:
+    - "lib/wavify/core/format.rb"
+
 Lint/DuplicateMethods:
   Enabled: true
 

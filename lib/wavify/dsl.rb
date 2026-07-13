@@ -339,7 +339,7 @@ module Wavify
 
       def pitch_sample_option(audio, options)
         ratio = sample_pitch_ratio(options)
-        return audio if ratio == 1.0
+        return audio if (ratio - 1.0).abs <= Float::EPSILON
 
         pitched_format = audio.format.with(sample_rate: (audio.sample_rate * ratio).round)
         reinterpreted = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(audio.buffer.samples.dup, pitched_format))

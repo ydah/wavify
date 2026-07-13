@@ -120,14 +120,13 @@ module Wavify
         bit_depth
       end
 
-      public
-
       # Stereo 44.1kHz 16-bit PCM preset.
       CD_QUALITY = new(channels: 2, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
       # Stereo 96kHz 24-bit PCM preset.
       DVD_QUALITY = new(channels: 2, sample_rate: 96_000, bit_depth: 24, sample_format: :pcm)
       # Mono 16kHz 16-bit PCM preset for speech-focused workflows.
       VOICE = new(channels: 1, sample_rate: 16_000, bit_depth: 16, sample_format: :pcm)
+
     end
   end
 end

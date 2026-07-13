@@ -23,7 +23,7 @@ module Wavify
       private
 
       def yaml_files
-        Dir.glob(File.join(@yaml_dir, "*.yml")).sort
+        Dir.glob(File.join(@yaml_dir, "*.yml"))
       end
 
       def write_file(path)

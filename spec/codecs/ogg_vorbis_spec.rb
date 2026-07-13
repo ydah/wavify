@@ -813,7 +813,7 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
       format = Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
 
       expect do
-        described_class.stream_write(StringIO.new, format: format, quality: 2.0) { |_writer| }
+        described_class.stream_write(StringIO.new, format: format, quality: 2.0) { |_writer| nil }
       end.to raise_error(Wavify::InvalidParameterError, /quality/)
     end
 

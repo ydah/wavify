@@ -563,9 +563,7 @@ module Wavify
 
       def with_stream_context(operation, codec:, target:)
         yield
-      rescue UserCodeError
-        raise
-      rescue StreamError
+      rescue UserCodeError, StreamError
         raise
       rescue StandardError => e
         raise StreamError, stream_error_message(operation, codec: codec, target: target, error: e)

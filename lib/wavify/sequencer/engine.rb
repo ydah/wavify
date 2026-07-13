@@ -386,7 +386,7 @@ module Wavify
       end
 
       def straight_timing?(resolution)
-        @swing == 0.5 || resolution.odd?
+        (@swing - 0.5).abs <= Float::EPSILON || resolution.odd?
       end
 
       def repeated_section_name(name, repeat_index)

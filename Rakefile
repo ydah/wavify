@@ -8,7 +8,9 @@ require "rspec/core/rake_task"
 require "rbconfig"
 
 RSpec::Core::RakeTask.new(:spec)
-RuboCop::RakeTask.new(:lint)
+RuboCop::RakeTask.new(:lint) do |task|
+  task.options = ["--cache", "false"]
+end
 
 namespace :types do
   desc "Validate RBS signatures"
@@ -212,7 +214,7 @@ namespace :release do
     assert_release_check!(!spec.license.to_s.strip.empty?, "gemspec.license is empty")
     assert_release_check!(!spec.required_ruby_version.to_s.strip.empty?, "gemspec.required_ruby_version is empty")
 
-    required_metadata_keys = %w[allowed_push_host homepage_uri source_code_uri changelog_uri]
+    required_metadata_keys = %w[allowed_push_host homepage_uri source_code_uri changelog_uri rubygems_mfa_required]
     missing_metadata = required_metadata_keys.select { |key| spec.metadata[key].to_s.strip == "" }
     assert_release_check!(missing_metadata.empty?, "missing gemspec metadata keys: #{missing_metadata.join(', ')}")
 
@@ -221,6 +223,7 @@ namespace :release do
     assert_release_check!(files.include?("README.md"), "gemspec.files does not include README.md")
     assert_release_check!(files.any? { |f| ["LICENSE", "LICENSE.txt"].include?(f) }, "gemspec.files does not include license file")
     assert_release_check!(files.none? { |f| f.start_with?(".idea/") }, ".idea files should not be packaged")
+    assert_release_check!(files.none? { |f| f.start_with?("benchmarks/", "tools/") }, "development utilities should not be packaged")
 
     puts "release check ok: gemspec metadata and package file list"
     puts "  name: #{spec.name}"

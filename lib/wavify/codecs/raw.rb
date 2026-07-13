@@ -92,7 +92,7 @@ module Wavify
         # @return [Enumerator, String, IO]
         def stream_write(io_or_path, format:, **codec_options)
           validate_no_codec_options!(codec_options, operation: "raw stream_write")
-          return enum_for(__method__, io_or_path, format: format) unless block_given?
+          return enum_for(__method__, io_or_path, format: format, **codec_options) unless block_given?
 
           target_format = validate_format!(format)
           io, close_io = open_output(io_or_path)

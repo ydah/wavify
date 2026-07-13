@@ -262,8 +262,6 @@ module Wavify
           ordered = midi_notes.sort
           dropped = ordered.delete_at(-2) - 12
           [dropped, *ordered].sort
-        else
-          midi_notes
         end
       end
 
@@ -383,6 +381,7 @@ module Wavify
       rescue NoMethodError
         raise SequencerError, "chord_voicing must be Symbol/String"
       end
+      private_class_method :normalize_chord_voicing
 
       def coerce_pattern(pattern)
         return nil if pattern.nil?

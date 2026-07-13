@@ -123,7 +123,7 @@ module Wavify
         # @return [Enumerator, String, IO]
         def stream_write(io_or_path, format:, info: nil, **codec_options)
           validate_no_codec_options!(codec_options, operation: "WAV stream_write")
-          return enum_for(__method__, io_or_path, format: format, info: info) unless block_given?
+          return enum_for(__method__, io_or_path, format: format, info: info, **codec_options) unless block_given?
           raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
 
           io, close_io = open_output(io_or_path)

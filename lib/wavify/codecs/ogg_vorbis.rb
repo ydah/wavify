@@ -121,7 +121,9 @@ module Wavify
           ensure_available!
           validate_no_codec_options!(codec_options, operation: "OGG Vorbis stream_write")
           encode_quality = normalize_vorbis_quality(quality)
-          return enum_for(__method__, io_or_path, format: format, quality: encode_quality) unless block_given?
+          unless block_given?
+            return enum_for(__method__, io_or_path, format: format, quality: quality, **codec_options)
+          end
           raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
           raise InvalidParameterError, "Vorbis encode requires positive channel count" unless format.channels.to_i.positive?
           raise InvalidParameterError, "Vorbis encode requires positive sample_rate" unless format.sample_rate.to_i.positive?

@@ -89,7 +89,7 @@ if wavefile_loaded
   wavefile_read_elapsed, = helper.measure("WaveFile read x#{iterations}") do
     iterations.times do
       WaveFile::Reader.new(wavefile_path) do |reader|
-        reader.each_buffer(chunk_size) { |_buffer| }
+        reader.each_buffer(chunk_size) { |_buffer| nil }
       end
     end
   end
