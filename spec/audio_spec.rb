@@ -148,9 +148,21 @@ RSpec.describe Wavify::Audio do
       source_audio = described_class.silence(0.001, format: format)
 
       Tempfile.create(["wavify_audio_existing", ".wav"]) do |file|
+        expect(File).not_to receive(:exist?)
         expect do
           source_audio.write(file.path, overwrite: false)
         end.to raise_error(Wavify::InvalidParameterError, /already exists/)
+      end
+    end
+
+    it "creates a new output atomically when overwrite is disabled" do
+      source_audio = described_class.silence(0.001, format: format)
+
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "exclusive.wav")
+
+        expect(source_audio.write(path, overwrite: false)).to equal(source_audio)
+        expect(described_class.read(path)).to eq(source_audio)
       end
     end
   end

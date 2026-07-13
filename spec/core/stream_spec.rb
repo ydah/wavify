@@ -501,11 +501,28 @@ RSpec.describe Wavify::Core::Stream do
     output.close
     stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
 
+    expect(File).not_to receive(:exist?)
     expect do
       stream.write_to(output.path, overwrite: false)
     end.to raise_error(Wavify::InvalidParameterError, /already exists/)
   ensure
     source&.unlink
     output&.unlink
+  end
+
+  it "creates a new stream output atomically when overwrite is disabled" do
+    source = write_source_wav([0.1, 0.2])
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
+
+    Dir.mktmpdir do |dir|
+      output = File.join(dir, "exclusive.wav")
+
+      expect(stream.write_to(output, overwrite: false)).to eq(output)
+      samples = Wavify::Audio.read(output).buffer.samples
+      expect(samples.fetch(0)).to be_within(0.000_001).of(0.1)
+      expect(samples.fetch(1)).to be_within(0.000_001).of(0.2)
+    end
+  ensure
+    source&.unlink
   end
 end

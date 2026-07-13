@@ -186,7 +186,9 @@ module Wavify
       validate_overwrite!(path, overwrite)
       codec = Codecs::Registry.detect_for_write(path)
       options = normalize_codec_options!(codec_options)
-      codec.write(path, @buffer, format: format || @buffer.format, **options)
+      with_output_target(path, overwrite: overwrite) do |target|
+        codec.write(target, @buffer, format: format || @buffer.format, **options)
+      end
       self
     end
 
@@ -886,8 +888,13 @@ module Wavify
 
     def validate_overwrite!(path, overwrite)
       raise InvalidParameterError, "overwrite must be true or false" unless overwrite == true || overwrite == false
-      return if overwrite || !path.is_a?(String) || !File.exist?(path)
+    end
 
+    def with_output_target(path, overwrite:)
+      return yield(path) if overwrite || !path.is_a?(String)
+
+      File.open(path, "wbx") { |io| yield(io) }
+    rescue Errno::EEXIST
       raise InvalidParameterError, "output file already exists: #{path}"
     end
 

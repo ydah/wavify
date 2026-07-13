@@ -270,12 +270,14 @@ module Wavify
         target_format = resolve_target_format(format, output_codec)
         options = validate_codec_options!(codec_options, "codec_options")
 
-        with_stream_context("stream write", codec: output_codec, target: path_or_io) do
-          output_codec.stream_write(path_or_io, format: target_format, **options) do |writer|
-            each_chunk do |chunk|
-              output_chunk = target_format ? chunk.convert(target_format) : chunk
-              with_stream_context("stream write", codec: output_codec, target: path_or_io) do
-                writer.call(output_chunk)
+        with_output_target(path_or_io, overwrite: overwrite) do |target|
+          with_stream_context("stream write", codec: output_codec, target: path_or_io) do
+            output_codec.stream_write(target, format: target_format, **options) do |writer|
+              each_chunk do |chunk|
+                output_chunk = target_format ? chunk.convert(target_format) : chunk
+                with_stream_context("stream write", codec: output_codec, target: path_or_io) do
+                  writer.call(output_chunk)
+                end
               end
             end
           end
@@ -535,8 +537,13 @@ module Wavify
 
       def validate_overwrite!(path_or_io, overwrite)
         raise InvalidParameterError, "overwrite must be true or false" unless overwrite == true || overwrite == false
-        return if overwrite || !path_or_io.is_a?(String) || !File.exist?(path_or_io)
+      end
 
+      def with_output_target(path_or_io, overwrite:)
+        return yield(path_or_io) if overwrite || !path_or_io.is_a?(String)
+
+        File.open(path_or_io, "wbx") { |io| yield(io) }
+      rescue Errno::EEXIST
         raise InvalidParameterError, "output file already exists: #{path_or_io}"
       end
 
