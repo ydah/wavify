@@ -79,16 +79,19 @@ module Wavify
       max_frames = converted.map(&:sample_frame_count).max || 0
       channels = work_format.channels
       mixed = Array.new(max_frames * channels, 0.0)
+      active_sources = Array.new(mixed.length, 0)
 
       converted.each_with_index do |buffer, audio_index|
         gain_factor = db_to_amplitude(mix_gains.fetch(audio_index))
         sample_offset = mix_alignment_offset(mix_alignment, max_frames, buffer.sample_frame_count) * channels
         buffer.samples.each_with_index do |sample, index|
-          mixed[sample_offset + index] += sample * gain_factor
+          target_index = sample_offset + index
+          mixed[target_index] += sample * gain_factor
+          active_sources[target_index] += 1
         end
       end
 
-      apply_mix_strategy!(mixed, mix_strategy, audios.length)
+      apply_mix_strategy!(mixed, mix_strategy, audios.length, active_sources: active_sources)
       new(Core::SampleBuffer.new(mixed, work_format).convert(target_format))
     end
 
@@ -334,11 +337,25 @@ module Wavify
       channels = work_format.channels
       mixed_length = [base.samples.length, (start_frame * channels) + overlay_buffer.samples.length].max
       mixed = Array.new(mixed_length, 0.0)
-      base.samples.each_with_index { |sample, index| mixed[index] += sample }
+      active_sources = Array.new(mixed_length, 0)
+      base.samples.each_with_index do |sample, index|
+        mixed[index] += sample
+        active_sources[index] += 1
+      end
       offset = start_frame * channels
-      overlay_buffer.samples.each_with_index { |sample, index| mixed[offset + index] += sample }
+      overlay_buffer.samples.each_with_index do |sample, index|
+        target_index = offset + index
+        mixed[target_index] += sample
+        active_sources[target_index] += 1
+      end
 
-      self.class.send(:apply_mix_strategy!, mixed, self.class.send(:normalize_mix_strategy!, strategy), 2)
+      self.class.send(
+        :apply_mix_strategy!,
+        mixed,
+        self.class.send(:normalize_mix_strategy!, strategy),
+        2,
+        active_sources: active_sources
+      )
       self.class.new(Core::SampleBuffer.new(mixed, work_format).convert(format))
     end
 
@@ -1093,15 +1110,17 @@ module Wavify
     end
     private_class_method :normalize_fade_curve!
 
-    def self.apply_mix_strategy!(samples, strategy, source_count)
+    def self.apply_mix_strategy!(samples, strategy, source_count, active_sources: nil)
       case strategy
       when :clip
         samples.map! { |sample| clip_value(sample, -1.0, 1.0) }
       when :normalize
         normalize_mix_samples!(samples)
       when :headroom
-        divisor = [source_count, 1].max.to_f
-        samples.map! { |sample| clip_value(sample / divisor, -1.0, 1.0) }
+        samples.each_index do |index|
+          divisor = active_sources ? active_sources.fetch(index) : source_count
+          samples[index] = clip_value(samples.fetch(index) / [divisor, 1].max.to_f, -1.0, 1.0)
+        end
       when :soft_limit
         samples.map! { |sample| soft_limit_value(sample) }
       end

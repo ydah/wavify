@@ -219,6 +219,16 @@ RSpec.describe Wavify::Audio do
       expect(mixed.buffer.samples[0]).to be_within(0.0001).of(0.75)
     end
 
+    it "applies headroom only where sources overlap" do
+      mono_format = format.with(channels: 1, sample_format: :float, bit_depth: 32)
+      long = described_class.new(Wavify::Core::SampleBuffer.new([1.0, 1.0], mono_format))
+      short = described_class.new(Wavify::Core::SampleBuffer.new([1.0], mono_format))
+
+      mixed = described_class.mix(long, short, strategy: :headroom, align: :end)
+
+      expect(mixed.buffer.samples).to eq([1.0, 1.0])
+    end
+
     it "can soft-limit mix peaks" do
       a = described_class.new(Wavify::Core::SampleBuffer.new([0.9], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
       b = described_class.new(Wavify::Core::SampleBuffer.new([0.9], format.with(channels: 1, sample_format: :float, bit_depth: 32)))
