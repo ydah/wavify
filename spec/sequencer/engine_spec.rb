@@ -141,6 +141,15 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(bridge_note[:start_time]).to be_within(0.0001).of(2.0)
       expect(bridge_note[:duration]).to be_within(0.0001).of(3.0 / 8.0)
     end
+
+    it "rejects duplicate track names" do
+      first = Wavify::Sequencer::Track.new(:lead, note_sequence: "C4")
+      second = Wavify::Sequencer::Track.new(:lead, note_sequence: "E4")
+
+      expect do
+        engine.build_timeline(tracks: [first, second])
+      end.to raise_error(Wavify::SequencerError, /duplicate track name/)
+    end
   end
 
   describe "#render" do
@@ -167,6 +176,27 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(audio.format).to eq(format)
       expect(audio.sample_frame_count).to be > 0
       expect(audio.peak_amplitude).to be > 0.0
+    end
+
+    it "renders envelope release samples beyond note-on duration" do
+      envelope = Wavify::DSP::Envelope.new(attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.1)
+      lead = Wavify::Sequencer::Track.new(:lead, note_sequence: "C4", note_resolution: 4, envelope: envelope)
+
+      audio = engine.render(tracks: [lead], default_bars: 1)
+      note_duration = engine.step_duration_at(0, 4)
+
+      expect(audio.duration.total_seconds).to be_within(1.0 / format.sample_rate).of(note_duration + 0.1)
+      release_start = (note_duration * format.sample_rate).round * format.channels
+      expect(audio.buffer.samples.drop(release_start).any? { |sample| sample.abs > 0.0 }).to eq(true)
+    end
+
+    it "mixes chord voices with headroom" do
+      chord = Wavify::Sequencer::Track.new(:pad, chord_progression: ["Cmaj7"], waveform: :sine)
+
+      audio = engine.render(tracks: [chord], default_bars: 1)
+
+      expect(audio.peak_amplitude).to be <= 1.0
+      expect(audio.clipped?).to eq(false)
     end
 
     it "returns silence when only pattern tracks are provided" do

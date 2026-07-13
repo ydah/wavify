@@ -102,7 +102,7 @@ module Wavify
 
         return Wavify::Audio.silence(0.0, format: @format) if rendered_audios.empty?
 
-        Wavify::Audio.mix(*rendered_audios)
+        Wavify::Audio.mix(*rendered_audios, strategy: :headroom)
       end
 
       private
@@ -113,6 +113,7 @@ module Wavify
 
         list.each_with_object({}) do |track, map|
           raise SequencerError, "track must be a Sequencer::Track" unless track.is_a?(Track)
+          raise SequencerError, "duplicate track name: #{track.name}" if map.key?(track.name)
 
           map[track.name] = track
         end
@@ -198,9 +199,11 @@ module Wavify
         return nil if note_events.empty?
 
         track_format = @format.channels == 2 ? @format : @format.with(channels: 2)
-        total_end_time = note_events.map { |event| event[:start_time] + event[:duration] }.max || 0.0
+        release_seconds = track.envelope&.release || 0.0
+        total_end_time = note_events.map { |event| event[:start_time] + event[:duration] + release_seconds }.max || 0.0
         audio = Wavify::Audio.silence(total_end_time, format: track_format.with(sample_format: :float, bit_depth: 32))
         mixed = audio.buffer.samples.dup
+        active_notes = Array.new(mixed.length, 0)
 
         note_events.each do |event|
           frequencies = event[:midi_notes].map { |midi| midi_to_frequency(midi) }
@@ -213,10 +216,13 @@ module Wavify
             break if target_index >= mixed.length
 
             mixed[target_index] += sample
+            active_notes[target_index] += 1
           end
         end
 
-        mixed.map! { |sample| sample.clamp(-1.0, 1.0) }
+        mixed.each_index do |index|
+          mixed[index] = (mixed.fetch(index) / [active_notes.fetch(index), 1].max).clamp(-1.0, 1.0)
+        end
         rendered = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(mixed, track_format.with(sample_format: :float, bit_depth: 32)))
         rendered = rendered.gain(track.gain_db) if track.gain_db != 0.0
         rendered = rendered.pan(track.pan_position) if track.pan_position != 0.0
@@ -225,8 +231,9 @@ module Wavify
       end
 
       def render_chord_tone(frequencies, duration, track, format)
+        rendered_duration = duration + (track.envelope&.release || 0.0)
         note_audios = frequencies.map do |frequency|
-          tone = Wavify::Audio.tone(frequency: frequency, duration: duration, format: format, waveform: track.waveform)
+          tone = Wavify::Audio.tone(frequency: frequency, duration: rendered_duration, format: format, waveform: track.waveform)
           if track.envelope
             tone.apply(lambda do |buffer|
               track.envelope.apply(buffer, note_on_duration: duration)
@@ -236,7 +243,7 @@ module Wavify
           end
         end
 
-        Wavify::Audio.mix(*note_audios)
+        Wavify::Audio.mix(*note_audios, strategy: :headroom)
       end
 
       def schedule_pattern_events(track, bars:, start_bar:, start_time:)
