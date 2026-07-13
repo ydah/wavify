@@ -111,6 +111,13 @@ RSpec.describe Wavify::Codecs::Flac do
     Digest::MD5.hexdigest(packed)
   end
 
+  def apply_spec_frame_crcs(bytes)
+    frame = bytes.dup
+    frame.setbyte(6, spec_flac_crc8(frame.byteslice(0, 6)))
+    frame[-2, 2] = [spec_flac_crc16(frame.byteslice(0, frame.bytesize - 2))].pack("n")
+    frame
+  end
+
   def build_streaminfo_bytes(sample_rate:, channels:, bit_depth:, total_samples:)
     min_block_size = 4096
     max_block_size = 4096
@@ -210,7 +217,7 @@ RSpec.describe Wavify::Codecs::Flac do
 
     writer.align_byte
     writer.write_bits(0, 16) # CRC-16 (parser ignores)
-    writer.to_s
+    apply_spec_frame_crcs(writer.to_s)
   end
 
   def fixed_predictor_residuals(samples, predictor_order)
@@ -274,7 +281,7 @@ RSpec.describe Wavify::Codecs::Flac do
 
     writer.align_byte
     writer.write_bits(0, 16)
-    writer.to_s
+    apply_spec_frame_crcs(writer.to_s)
   end
 
   def lpc_residuals(samples, coefficients, qlp_shift)
@@ -335,7 +342,7 @@ RSpec.describe Wavify::Codecs::Flac do
 
     writer.align_byte
     writer.write_bits(0, 16)
-    writer.to_s
+    apply_spec_frame_crcs(writer.to_s)
   end
 
   describe ".metadata" do
@@ -591,6 +598,46 @@ RSpec.describe Wavify::Codecs::Flac do
       expect do
         described_class.read(StringIO.new(bytes))
       end.to raise_error(Wavify::UnsupportedFormatError, /subframe type/)
+    end
+
+    it "rejects frame CRC corruption" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      buffer = Wavify::Core::SampleBuffer.new([0, 100, -100, 200], format)
+      io = StringIO.new(+"")
+      described_class.write(io, buffer, format: format)
+      corrupted = io.string.dup
+      corrupted.setbyte(-1, corrupted.getbyte(-1) ^ 0x01)
+
+      expect do
+        described_class.read(StringIO.new(corrupted))
+      end.to raise_error(Wavify::InvalidFormatError, /CRC-16/)
+    end
+
+    it "rejects frame header CRC corruption" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      buffer = Wavify::Core::SampleBuffer.new([0, 100, -100, 200], format)
+      io = StringIO.new(+"")
+      described_class.write(io, buffer, format: format)
+      corrupted = io.string.dup
+      frame_header_crc_offset = 4 + 4 + 34 + 6
+      corrupted.setbyte(frame_header_crc_offset, corrupted.getbyte(frame_header_crc_offset) ^ 0x01)
+
+      expect do
+        described_class.read(StringIO.new(corrupted))
+      end.to raise_error(Wavify::InvalidFormatError, /CRC-8/)
+    end
+
+    it "rejects decoded PCM that does not match STREAMINFO MD5" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      buffer = Wavify::Core::SampleBuffer.new([0, 100, -100, 200], format)
+      io = StringIO.new(+"")
+      described_class.write(io, buffer, format: format)
+      corrupted = io.string.dup
+      corrupted.setbyte(26, corrupted.getbyte(26) ^ 0x01)
+
+      expect do
+        described_class.read(StringIO.new(corrupted))
+      end.to raise_error(Wavify::InvalidFormatError, /MD5/)
     end
   end
 

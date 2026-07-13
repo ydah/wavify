@@ -1212,6 +1212,7 @@ module Wavify
           format = metadata.fetch(:format)
           remaining_frames = metadata[:sample_frame_count]
           bounded_total = remaining_frames.is_a?(Integer) && remaining_frames.positive?
+          md5 = decoded_pcm_md5(metadata)
 
           until io.eof?
             break if bounded_total && remaining_frames <= 0
@@ -1230,26 +1231,33 @@ module Wavify
               remaining_frames -= decoded_frame_count
             end
 
+            md5&.update(pcm_bytes_for_md5(frame_samples, format))
             yield frame_samples unless frame_samples.empty?
           end
 
-          return unless bounded_total && remaining_frames.positive?
+          if bounded_total && remaining_frames.positive?
+            raise InvalidFormatError, "decoded FLAC samples are shorter than STREAMINFO total sample count"
+          end
 
-          raise InvalidFormatError, "decoded FLAC samples are shorter than STREAMINFO total sample count"
+          verify_decoded_pcm_md5!(md5, metadata[:md5])
         end
 
         def decode_frame(io, metadata)
+          frame_start = io.pos
           bit_reader = BitReader.new(io)
-          frame_header = parse_frame_header(bit_reader, metadata)
+          frame_header = parse_frame_header(bit_reader, metadata, io: io, frame_start: frame_start)
           channel_samples = decode_subframes(bit_reader, frame_header)
           channel_samples = restore_channel_assignment(channel_samples, frame_header)
           bit_reader.align_to_byte
-          _crc16 = bit_reader.read_bits(16)
+          crc_offset = io.pos
+          expected_crc16 = bit_reader.read_bits(16)
+          actual_crc16 = flac_crc16(io_bytes(io, frame_start, crc_offset))
+          raise InvalidFormatError, "FLAC frame CRC-16 mismatch" unless expected_crc16 == actual_crc16
 
           interleave_channels(channel_samples, frame_header.fetch(:block_size), frame_header.fetch(:channels))
         end
 
-        def parse_frame_header(bit_reader, metadata)
+        def parse_frame_header(bit_reader, metadata, io:, frame_start:)
           sync = bit_reader.read_bits(14)
           raise InvalidFormatError, "invalid FLAC frame sync code" unless sync == FLAC_SYNC_CODE
 
@@ -1270,7 +1278,10 @@ module Wavify
           block_size = decode_block_size(block_size_code, bit_reader)
           sample_rate = decode_sample_rate(sample_rate_code, bit_reader, metadata.fetch(:format).sample_rate)
           sample_size = decode_sample_size(sample_size_code, metadata.fetch(:format).bit_depth)
-          _crc8 = bit_reader.read_bits(8)
+          crc_offset = io.pos
+          expected_crc8 = bit_reader.read_bits(8)
+          actual_crc8 = flac_crc8(io_bytes(io, frame_start, crc_offset))
+          raise InvalidFormatError, "FLAC frame header CRC-8 mismatch" unless expected_crc8 == actual_crc8
 
           channels = decode_channel_count(channel_assignment, metadata.fetch(:format).channels)
 
@@ -1281,6 +1292,28 @@ module Wavify
             channels: channels,
             channel_assignment: channel_assignment
           }
+        end
+
+        def io_bytes(io, start_offset, end_offset)
+          current_offset = io.pos
+          io.seek(start_offset, IO::SEEK_SET)
+          bytes = read_exact(io, end_offset - start_offset, "truncated FLAC checksum input")
+          io.seek(current_offset, IO::SEEK_SET)
+          bytes
+        end
+
+        def decoded_pcm_md5(metadata)
+          expected = metadata[:md5]
+          return if expected.nil? || expected == ("0" * 32)
+
+          Digest::MD5.new
+        end
+
+        def verify_decoded_pcm_md5!(md5, expected)
+          return unless md5
+          return if md5.hexdigest == expected
+
+          raise InvalidFormatError, "FLAC STREAMINFO MD5 mismatch"
         end
 
         def read_utf8_uint(bit_reader)
