@@ -73,6 +73,14 @@ RSpec.describe Wavify::Core::SampleBuffer do
       combined = left + right
       expect(combined.samples).to eq([1, 2, 3, 4, 5, 6])
     end
+
+    it "supports value equality and hash keys" do
+      first = described_class.new([1, 2], pcm16_stereo)
+      second = described_class.new([1, 2], pcm16_stereo)
+
+      expect(first).to eq(second)
+      expect({ first => :buffer }[second]).to eq(:buffer)
+    end
   end
 
   describe "#convert" do

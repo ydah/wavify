@@ -145,12 +145,13 @@ module Wavify
     # @param format [Core::Format]
     # @return [Audio]
     def self.silence(duration_seconds, format:)
-      unless duration_seconds.is_a?(Numeric) && duration_seconds >= 0
-        raise InvalidParameterError, "duration_seconds must be a non-negative Numeric: #{duration_seconds.inspect}"
+      seconds = duration_seconds.is_a?(Core::Duration) ? duration_seconds.total_seconds : duration_seconds
+      unless seconds.is_a?(Numeric) && seconds >= 0
+        raise InvalidParameterError, "duration_seconds must be a non-negative Numeric or Core::Duration: #{duration_seconds.inspect}"
       end
       raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
 
-      frame_count = (duration_seconds.to_f * format.sample_rate).round
+      frame_count = (seconds.to_f * format.sample_rate).round
       default_sample = format.sample_format == :float ? 0.0 : 0
       samples = Array.new(frame_count * format.channels, default_sample)
       new(Core::SampleBuffer.new(samples, format))
@@ -161,6 +162,17 @@ module Wavify
       raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
 
       @buffer = buffer
+    end
+
+    # Value equality based on the underlying immutable sample buffer.
+    def ==(other)
+      other.is_a?(Audio) && @buffer == other.buffer
+    end
+
+    alias eql? ==
+
+    def hash
+      @buffer.hash
     end
 
     # Writes the audio to a file path using codec auto-detection.
@@ -211,6 +223,11 @@ module Wavify
       return format.bit_depth if value.nil?
 
       convert(format.with(bit_depth: value), dither: dither, dither_seed: dither_seed)
+    end
+
+    # Explicit conversion alias that avoids the getter/converter overload.
+    def with_bit_depth(value, dither: false, dither_seed: nil)
+      bit_depth(value, dither: dither, dither_seed: dither_seed)
     end
 
     # @return [Array<Array<Numeric>>] sample frames
@@ -419,6 +436,8 @@ module Wavify
       self.class.new(Core::SampleBuffer.new(@buffer.samples * times, @buffer.format))
     end
 
+    alias repeat loop
+
     # In-place variant of {#loop}.
     #
     # @param times [Integer]
@@ -427,6 +446,8 @@ module Wavify
       replace_buffer!(self.loop(times: times).buffer)
       self
     end
+
+    alias repeat! loop!
 
     # Reverses sample frame order.
     #

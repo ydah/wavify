@@ -66,6 +66,14 @@ module Wavify
         @total_seconds <=> other.total_seconds
       end
 
+      def eql?(other)
+        other.is_a?(Duration) && @total_seconds.eql?(other.total_seconds)
+      end
+
+      def hash
+        @total_seconds.hash
+      end
+
       def +(other)
         raise InvalidParameterError, "expected Duration: #{other.inspect}" unless other.is_a?(Duration)
 

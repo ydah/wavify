@@ -162,6 +162,17 @@ module Wavify
         @duration = Duration.from_samples(sample_frame_count, format.sample_rate)
       end
 
+      # Value equality for immutable samples and format metadata.
+      def ==(other)
+        other.is_a?(SampleBuffer) && @format == other.format && @samples == other.samples
+      end
+
+      alias eql? ==
+
+      def hash
+        [@format, @samples].hash
+      end
+
       # Enumerates sample values in interleaved order.
       #
       # @yield [sample]

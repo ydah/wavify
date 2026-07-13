@@ -13,6 +13,12 @@ RSpec.describe Wavify::Audio do
       expect(audio.sample_frame_count).to eq(22_050)
       expect(audio.buffer.samples.uniq).to eq([0])
     end
+
+    it "accepts a Duration without Numeric monkey patches" do
+      audio = described_class.silence(Wavify.ms(250), format: format)
+
+      expect(audio.sample_frame_count).to eq(11_025)
+    end
   end
 
   describe "read/write" do
@@ -349,6 +355,12 @@ RSpec.describe Wavify::Audio do
       expect(converted.bit_depth).to eq(8)
       expect(converted.buffer.samples.uniq).not_to eq([0])
     end
+
+    it "provides an explicit bit-depth conversion alias" do
+      source = described_class.silence(0.001, format: format)
+
+      expect(source.with_bit_depth(24).format.bit_depth).to eq(24)
+    end
   end
 
   describe "#split" do
@@ -419,7 +431,19 @@ RSpec.describe Wavify::Audio do
 
       expect(looped.sample_frame_count).to eq(6)
       expect(looped.buffer.samples).to eq([10, -10, 20, -20] * 3)
+      expect(source.repeat(times: 3)).to eq(looped)
       expect(source.buffer.samples).to eq([10, -10, 20, -20])
+    end
+  end
+
+
+  describe "value equality" do
+    it "compares audio by format and samples" do
+      first = described_class.silence(0.001, format: format)
+      second = described_class.silence(0.001, format: format)
+
+      expect(first).to eq(second)
+      expect({ first => :audio }[second]).to eq(:audio)
     end
   end
 end

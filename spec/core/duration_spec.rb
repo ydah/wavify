@@ -44,6 +44,7 @@ RSpec.describe Wavify::Core::Duration do
 
       expect(short).to be < long
       expect(long).to be > short
+      expect({ short => :duration }[described_class.new(1.5)]).to eq(:duration)
     end
 
     it "supports addition and subtraction" do
