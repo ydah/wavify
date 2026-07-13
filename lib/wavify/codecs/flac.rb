@@ -987,7 +987,11 @@ module Wavify
         end
 
         def choose_residual_encoding(residuals, block_size:, predictor_order:)
-          max_partition_order = [Math.log2(block_size).floor, 6].min
+          max_partition_order = if block_size < 256
+                                  0
+                                else
+                                  [Math.log2(block_size / 256).floor, 6].min
+                                end
           candidates = (0..max_partition_order).filter_map do |partition_order|
             partition_count = 1 << partition_order
             next unless (block_size % partition_count).zero?
@@ -1028,20 +1032,21 @@ module Wavify
         end
 
         def choose_rice_partition_encoding(residuals)
-          rice_candidates = (0..14).map do |parameter|
-            { kind: :rice, parameter: parameter, bit_length: 4 + rice_data_bit_length(residuals, parameter) }
+          unsigned = residuals.map { |residual| residual >= 0 ? (residual << 1) : ((-residual << 1) - 1) }
+          mean = unsigned.empty? ? 0.0 : unsigned.sum.to_f / unsigned.length
+          estimate = mean.positive? ? Math.log2(mean).floor.clamp(0, 14) : 0
+          parameters = [estimate - 1, estimate, estimate + 1].select { |value| value.between?(0, 14) }.uniq
+          rice_candidates = parameters.map do |parameter|
+            { kind: :rice, parameter: parameter, bit_length: 4 + rice_data_bit_length(unsigned, parameter) }
           end
           escape = escape_residual_encoding(residuals)
           rice_candidates << escape if escape
           rice_candidates.min_by { |candidate| candidate.fetch(:bit_length) }
         end
 
-        def rice_data_bit_length(residuals, parameter)
-          residuals.sum do |residual|
-            unsigned = residual >= 0 ? (residual << 1) : ((-residual << 1) - 1)
-            quotient = unsigned >> parameter
-            quotient + 1 + parameter
-          end
+        def rice_data_bit_length(unsigned_residuals, parameter)
+          unsigned_residuals.sum { |value| value >> parameter } +
+            (unsigned_residuals.length * (parameter + 1))
         end
 
         def escape_residual_encoding(residuals)

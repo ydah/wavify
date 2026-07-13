@@ -78,18 +78,19 @@ Main constructors:
 
 Immutable transforms (each also has `!` in-place variants):
 
-- `gain`, `normalize`, `trim`, `fade_in`, `fade_out`, `pan`, `reverse`, `loop`, `apply`
+- `gain`, `normalize`, `trim`, `fade_in`, `fade_out`, `pan`, `reverse`, `repeat`, `apply`
 - `concat`, `append`, `prepend`, `overlay`, `crossfade`, `slice`, `crop`, `pad_start`, `pad_end`, `insert_silence`
-- `to_mono`, `to_stereo`, `resample`, `bit_depth`, `map_samples`, `map_frames`
+- `to_mono`, `to_stereo`, `resample`, `with_bit_depth`, `map_samples`, `map_frames`
 
 Utility methods:
 
-- `convert`, `split(at:)`, `duration`, `sample_frame_count`, `channels`, `sample_rate`, `frames`, `each_frame`
+- `convert`, `split(at:)`, `duration`, `sample_frame_count`, `channels`, `sample_rate`, `bit_depth`, `frames`, `each_frame`
 - `peak_amplitude`, `rms_amplitude`, `peak_dbfs`, `rms_dbfs`, `lufs`, `stats`, `silent?`, `clipped?`, `dc_offset`, `zero_crossing_rate`
 
 Mix strategies are `:clip` (default), `:normalize`, `:headroom`, and `:soft_limit`. `gains:` accepts one dB value per source, and `align:` can be `:start`, `:center`, or `:end`.
 Normalize modes are `:peak`, `:rms`, and `:lufs`.
 Use `with_bit_depth(16, dither: true)` when reducing PCM bit depth and you want simple TPDF dither.
+For large immutable buffers that are not immediately transformed, pass `storage: :packed` to `SampleBuffer.new`; sequential enumeration stays packed until random sample access is requested.
 
 Duration helpers:
 

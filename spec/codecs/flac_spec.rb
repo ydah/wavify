@@ -773,12 +773,12 @@ RSpec.describe Wavify::Codecs::Flac do
     end
 
     it "selects multiple Rice partitions when residual statistics change" do
-      residuals = Array.new(32, 0) + Array.new(32) { |index| index.even? ? 1_000 : -1_000 }
+      residuals = Array.new(256, 0) + Array.new(256) { |index| index.even? ? 1_000 : -1_000 }
 
       encoding = described_class.send(
         :choose_residual_encoding,
         residuals,
-        block_size: 64,
+        block_size: 512,
         predictor_order: 0
       )
 
