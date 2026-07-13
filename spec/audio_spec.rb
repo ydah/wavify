@@ -85,6 +85,21 @@ RSpec.describe Wavify::Audio do
       end
     end
 
+    it "projects encoded metadata into an explicitly requested format" do
+      source_buffer = Wavify::Core::SampleBuffer.new([100, -100, 200, -200], format)
+      projected_format = format.with(channels: 1, sample_rate: 48_000, bit_depth: 24)
+
+      Tempfile.create(["wavify_audio", ".wav"]) do |file|
+        Wavify::Codecs::Wav.write(file.path, source_buffer)
+
+        metadata = described_class.metadata(file.path, format: projected_format)
+
+        expect(metadata[:format]).to eq(projected_format)
+        expect(metadata[:sample_frame_count]).to eq(2)
+        expect(metadata[:duration].total_seconds).to be_within(1.0 / 48_000).of(2.0 / 44_100)
+      end
+    end
+
     it "passes explicit format for raw metadata" do
       raw_format = format.with(channels: 1)
       source_buffer = Wavify::Core::SampleBuffer.new([100, -100], raw_format)

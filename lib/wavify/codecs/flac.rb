@@ -224,7 +224,7 @@ module Wavify
 
           io, close_io = open_output(io_or_path)
           io.rewind if io.respond_to?(:rewind)
-          io.truncate(0) if io.respond_to?(:truncate)
+          io.truncate(0) if close_io && io.respond_to?(:truncate)
           io.write(
             encode_verbatim_stream(
               buffer,
@@ -312,7 +312,7 @@ module Wavify
           io, close_io = open_output(io_or_path)
           ensure_seekable!(io)
           io.rewind if io.respond_to?(:rewind)
-          io.truncate(0) if io.respond_to?(:truncate)
+          io.truncate(0) if close_io && io.respond_to?(:truncate)
 
           header = write_stream_header(io, comments: vorbis_comments)
           total_sample_frames = 0

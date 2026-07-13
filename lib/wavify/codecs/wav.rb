@@ -129,7 +129,7 @@ module Wavify
           io, close_io = open_output(io_or_path)
           ensure_seekable!(io)
           io.rewind if io.respond_to?(:rewind)
-          io.truncate(0) if io.respond_to?(:truncate)
+          io.truncate(0) if close_io && io.respond_to?(:truncate)
 
           header = write_stream_header(io, format, info: info)
           total_data_bytes = 0

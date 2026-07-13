@@ -95,6 +95,16 @@ RSpec.describe Wavify::Codecs::Wav do
         expect(chunks.flat_map(&:samples)).to eq([1, -1, 2, -2, 3, -3, 4, -4])
       end
     end
+
+    it "does not truncate caller-owned IO before writing" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 8, sample_format: :pcm)
+      io = StringIO.new(+"existing bytes", "r+b")
+      expect(io).not_to receive(:truncate)
+
+      described_class.stream_write(io, format: format) do |writer|
+        writer.call(Wavify::Core::SampleBuffer.new([0], format))
+      end
+    end
   end
 
   describe ".metadata" do

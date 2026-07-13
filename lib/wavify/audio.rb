@@ -42,9 +42,16 @@ module Wavify
       options = normalize_codec_options!(codec_options)
       return codec.metadata(path_or_io, format: format, **options) if codec == Codecs::Raw
 
-      raise InvalidParameterError, "format is only supported for raw metadata" if format
+      metadata = codec.metadata(path_or_io, **options)
+      return metadata unless format
+      raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
 
-      codec.metadata(path_or_io, **options)
+      projected_frames = (metadata.fetch(:duration).total_seconds * format.sample_rate).round
+      metadata.merge(
+        format: format,
+        sample_frame_count: projected_frames,
+        duration: Core::Duration.from_samples(projected_frames, format.sample_rate)
+      )
     end
 
     singleton_class.alias_method :info, :metadata

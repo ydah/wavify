@@ -52,6 +52,15 @@ RSpec.describe Wavify::Codecs::Aiff do
         expect(decoded.samples).to eq(buffer.samples)
       end
     end
+
+    it "does not truncate caller-owned IO before writing" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 8, sample_format: :pcm)
+      buffer = Wavify::Core::SampleBuffer.new([0], format)
+      io = StringIO.new(+"existing bytes", "r+b")
+      expect(io).not_to receive(:truncate)
+
+      described_class.write(io, buffer)
+    end
   end
 
   describe ".metadata" do

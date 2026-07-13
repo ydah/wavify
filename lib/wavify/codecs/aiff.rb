@@ -69,7 +69,7 @@ module Wavify
 
           io, close_io = open_output(io_or_path)
           io.rewind if io.respond_to?(:rewind)
-          io.truncate(0) if io.respond_to?(:truncate)
+          io.truncate(0) if close_io && io.respond_to?(:truncate)
 
           sample_frames = buffer.sample_frame_count
           comm_chunk = build_comm_chunk(
