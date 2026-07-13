@@ -82,6 +82,21 @@ RSpec.describe Wavify::DSP::Effects::EffectBase do
     end
   end
 
+  describe "#flush" do
+    it "preserves runtime state before converting a tail to another format" do
+      runtime_format = format.with(channels: 1, sample_format: :float, bit_depth: 32)
+      output_format = runtime_format.with(channels: 2, sample_rate: 48_000)
+      effect = Wavify::DSP::Effects::Delay.new(time: 0.001, feedback: 0.5, mix: 1.0)
+      impulse = Wavify::Core::SampleBuffer.new([1.0] + Array.new(43, 0.0), runtime_format)
+
+      effect.process(impulse)
+      tail = effect.flush(format: output_format)
+
+      expect(tail.format).to eq(output_format)
+      expect(tail.samples.any? { |sample| sample.abs > 0.0 }).to eq(true)
+    end
+  end
+
   describe "#process_sample" do
     it "is abstract by default" do
       expect do

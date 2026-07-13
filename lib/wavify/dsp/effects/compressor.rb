@@ -19,28 +19,21 @@ module Wavify
         end
 
         def process(buffer)
-          return super unless @sidechain
-
           raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
 
           float_format = buffer.format.with(sample_format: :float, bit_depth: 32)
           float_buffer = buffer.convert(float_format)
-          detector = @sidechain.convert(float_format)
+          detector = @sidechain ? @sidechain.convert(float_format) : float_buffer
           prepare_runtime_if_needed!(
             sample_rate: float_format.sample_rate,
             channels: float_buffer.format.channels
           )
 
-          output = Array.new(float_buffer.samples.length)
-          float_buffer.samples.each_with_index do |sample, sample_index|
-            channel = sample_index % @runtime_channels
-            detector_level = detector_level_at(detector, sample_index)
-            output[sample_index] = process_sample_with_level(
-              sample,
-              detector_level,
-              channel: channel,
-              sample_rate: @runtime_sample_rate
-            ).clamp(-1.0, 1.0)
+          output = []
+          float_buffer.samples.each_slice(@runtime_channels).with_index do |frame, frame_index|
+            detector_level = detector_frame_level(detector, frame_index)
+            gain = gain_for_detector_level(detector_level)
+            output.concat(frame.map { |sample| (sample * gain).clamp(-1.0, 1.0) })
           end
 
           Core::SampleBuffer.new(output, float_format).convert(buffer.format)
@@ -60,25 +53,30 @@ module Wavify
         private
 
         def process_sample_with_level(sample, level, channel:, sample_rate:)
-          attack_coeff = time_coefficient(@attack, sample_rate)
-          release_coeff = time_coefficient(@release, sample_rate)
-          envelope = @envelopes.fetch(channel)
-          coeff = level > envelope ? attack_coeff : release_coeff
-          envelope += (1.0 - coeff) * (level - envelope)
-          @envelopes[channel] = envelope
+          sample * gain_for_detector_level(level)
+        end
 
-          gain = gain_for_envelope(envelope)
-          sample * gain
+        def gain_for_detector_level(level)
+          envelope = @envelopes.fetch(0)
+          coeff = level > envelope ? @attack_coefficient : @release_coefficient
+          envelope += (1.0 - coeff) * (level - envelope)
+          @envelopes[0] = envelope
+
+          gain_for_envelope(envelope)
         end
 
         def prepare_runtime_state(sample_rate:, channels:)
-          @envelopes = Array.new(channels, 0.0)
+          @envelopes = [0.0]
           @threshold_linear = 10.0**(@threshold_db / 20.0)
+          @attack_coefficient = time_coefficient(@attack, sample_rate)
+          @release_coefficient = time_coefficient(@release, sample_rate)
         end
 
         def reset_runtime_state
           @envelopes = []
           @threshold_linear = nil
+          @attack_coefficient = nil
+          @release_coefficient = nil
         end
 
         def gain_for_envelope(envelope)
@@ -157,8 +155,10 @@ module Wavify
           raise InvalidParameterError, "sidechain must be Audio or Core::SampleBuffer"
         end
 
-        def detector_level_at(detector, sample_index)
-          detector.samples.fetch(sample_index, 0.0).abs
+        def detector_frame_level(detector, frame_index)
+          start_index = frame_index * @runtime_channels
+          frame = detector.samples.slice(start_index, @runtime_channels) || []
+          frame.map(&:abs).max || 0.0
         end
       end
     end

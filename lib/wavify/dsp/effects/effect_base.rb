@@ -49,8 +49,13 @@ module Wavify
             bit_depth: 32,
             sample_format: :float
           )
-          float_format = target_format.with(sample_format: :float, bit_depth: 32)
-          silence = Core::SampleBuffer.new(Array.new(frames * @runtime_channels, 0.0), float_format)
+          runtime_format = Core::Format.new(
+            channels: @runtime_channels,
+            sample_rate: @runtime_sample_rate,
+            bit_depth: 32,
+            sample_format: :float
+          )
+          silence = Core::SampleBuffer.new(Array.new(frames * @runtime_channels, 0.0), runtime_format)
           process(silence).convert(target_format)
         end
 

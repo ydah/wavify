@@ -25,6 +25,13 @@ RSpec.describe Wavify::DSP::Filter do
 
       expect(rms(processed.samples)).to be < (rms(low.samples) * 0.2)
     end
+
+    it "accepts cutoff and Q for a consistent bandpass API" do
+      filter = described_class.bandpass(cutoff: 2_000, q: 5.0)
+
+      expect(filter.cutoff).to eq(2_000.0)
+      expect(filter.q).to eq(5.0)
+    end
   end
 
   describe "streaming behavior" do

@@ -21,7 +21,9 @@ module Wavify
         new(:highpass, cutoff: cutoff, q: q)
       end
 
-      def self.bandpass(center:, bandwidth:)
+      def self.bandpass(center: nil, bandwidth: nil, cutoff: nil, q: nil)
+        return new(:bandpass, cutoff: cutoff, q: q || 0.707) if cutoff
+
         unless center.is_a?(Numeric) && center.respond_to?(:finite?) && center.finite? && center.positive?
           raise InvalidParameterError, "center must be a positive finite Numeric"
         end

@@ -162,6 +162,18 @@ RSpec.describe Wavify::DSP::Effects do
       expect(processed.samples[2]).to be < source.samples[2]
       expect(processed.samples[3]).to be_within(0.001).of(source.samples[3])
     end
+
+    it "links stereo gain reduction to preserve channel balance" do
+      stereo = mono_float.with(channels: 2)
+      buffer = Wavify::Core::SampleBuffer.new([1.0, 0.25, 1.0, 0.25], stereo)
+      effect = described_class.new(threshold: -20.0, ratio: 4.0, attack: 0.0, release: 0.0)
+
+      processed = effect.process(buffer)
+
+      processed.samples.each_slice(2) do |left, right|
+        expect(left / right).to be_within(0.0001).of(4.0)
+      end
+    end
   end
 
   describe Wavify::DSP::Effects::Limiter do
