@@ -12,14 +12,15 @@ module Wavify
       # Arrangement section metadata (`name`, `bars`, active `tracks`).
       Section = Struct.new(:name, :bars, :tracks, :repeat, :tempo, :beats_per_bar, :markers, keyword_init: true)
 
-      attr_reader :format, :tempo, :beats_per_bar, :swing, :tracks, :sections, :default_bars
+      attr_reader :format, :tempo, :beats_per_bar, :swing, :tracks, :sections, :default_bars, :random_seed
 
-      def initialize(format:, tempo:, beats_per_bar:, swing:, default_bars:, tracks:, sections:)
+      def initialize(format:, tempo:, beats_per_bar:, swing:, default_bars:, tracks:, sections:, random_seed:)
         @format = format
         @tempo = tempo
         @beats_per_bar = beats_per_bar
         @swing = swing
         @default_bars = default_bars
+        @random_seed = random_seed
         @tracks = tracks.freeze
         @sections = sections.freeze
       end
@@ -216,6 +217,7 @@ module Wavify
         work_format = track_render_work_format
         sample_cache = {}
         events = []
+        random = Random.new(@random_seed)
 
         sections.each do |section|
           section_engine = engine_for_section(section)
@@ -230,8 +232,8 @@ module Wavify
 
                 start_time = bar_base_time + section_engine.step_start_seconds(step.index, pattern.length)
                 duration = section_engine.step_duration_at(step.index, pattern.length)
-                section_engine.send(:expand_pattern_step, step, start_time: start_time, duration: duration).each do |expanded|
-                  next if expanded.fetch(:probability).zero?
+                section_engine.expand_pattern_step(step, start_time: start_time, duration: duration).each do |expanded|
+                  next unless probability_hit?(expanded.fetch(:probability), random)
 
                   events << expanded.merge(sample_key: sample_key, sample_audio: sample_audio)
                 end
@@ -317,7 +319,7 @@ module Wavify
         processed = processed.convert(work_format)
         processed = processed.gain(options[:gain]) if options.key?(:gain)
         processed = processed.pan(options[:pan]) if options.key?(:pan)
-        processed.convert(work_format)
+        processed
       end
 
       def slice_sample_option(audio, options)
@@ -374,6 +376,13 @@ module Wavify
 
           mixed[target_index] += sample * velocity
         end
+      end
+
+      def probability_hit?(probability, random)
+        return false if probability <= 0.0
+        return true if probability >= 1.0
+
+        random.rand < probability
       end
 
       def arrangement_for_track(track_name)
@@ -585,6 +594,8 @@ module Wavify
 
         if patterns.empty? && @primary_pattern && @samples.length == 1
           patterns[@samples.keys.first] = Wavify::Sequencer::Pattern.new(@primary_pattern, resolution: @pattern_resolution)
+        elsif patterns.empty? && @primary_pattern && @samples.length > 1
+          raise Wavify::SequencerError, "primary sample pattern is ambiguous with multiple samples; use named patterns"
         end
 
         patterns
@@ -736,20 +747,30 @@ module Wavify
       # @param beats_per_bar [Integer]
       # @param default_bars [Integer]
       # @return [SongDefinition]
-      def self.build_definition(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1, &block)
-        builder = new(format: format, tempo: tempo, beats_per_bar: beats_per_bar, swing: swing, default_bars: default_bars)
+      def self.build_definition(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1,
+                                random_seed: Random.new_seed, &block)
+        builder = new(
+          format: format,
+          tempo: tempo,
+          beats_per_bar: beats_per_bar,
+          swing: swing,
+          default_bars: default_bars,
+          random_seed: random_seed
+        )
         builder.instance_eval(&block) if block
         builder.to_song_definition
       end
 
-      def initialize(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1)
+      def initialize(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1,
+                     random_seed: Random.new_seed)
         raise Wavify::InvalidParameterError, "format must be Core::Format" unless format.is_a?(Wavify::Core::Format)
 
         @format = format
-        @tempo = tempo.to_f
-        @beats_per_bar = beats_per_bar
+        @tempo = validate_tempo!(tempo)
+        @beats_per_bar = validate_beats_per_bar!(beats_per_bar)
         @swing = validate_swing!(swing)
-        @default_bars = default_bars
+        @default_bars = validate_default_bars!(default_bars)
+        @random_seed = validate_random_seed!(random_seed)
         @sample_folder = nil
         @key_root = nil
         @scale = nil
@@ -800,8 +821,13 @@ module Wavify
       end
 
       # Defines a track block and stores its compiled configuration.
-      def track(name, &block)
-        definition = TrackDefinition.new(name, sample_folder: @sample_folder, key_root: @key_root, scale: @scale)
+      def track(name, sample_folder: @sample_folder, &block)
+        normalized_name = name.to_sym
+        if @track_definitions.any? { |definition| definition.name == normalized_name }
+          raise Wavify::SequencerError, "duplicate track name: #{normalized_name}"
+        end
+
+        definition = TrackDefinition.new(normalized_name, sample_folder: sample_folder, key_root: @key_root, scale: @scale)
         begin
           TrackBuilder.new(definition).instance_eval(&block) if block
         rescue Wavify::Error => e
@@ -812,26 +838,16 @@ module Wavify
       end
 
       def lofi_drums_preset(name: :lofi_drums, sample_folder: @sample_folder)
-        folder = sample_folder
-        kick_path = preset_sample_path(folder, "kick.wav")
-        snare_path = preset_sample_path(folder, "snare.wav")
-        hat_path = preset_sample_path(folder, "hat.wav")
-        track(name) do
+        track(name, sample_folder: sample_folder) do
           pattern :kick, "x---x---x---x---"
           pattern :snare, "----x-------x---"
           pattern :hat, "x-x-x-x-x-x-x-x-"
-          sample :kick, kick_path, gain: -2, trim: true
-          sample :snare, snare_path, gain: -4, trim: true
-          sample :hat, hat_path, gain: -9, pan: 0.15, trim: true
+          sample :kick, "kick.wav", gain: -2, trim: true
+          sample :snare, "snare.wav", gain: -4, trim: true
+          sample :hat, "hat.wav", gain: -9, pan: 0.15, trim: true
           effect :compressor, threshold: -18, ratio: 2.5, attack: 0.005, release: 0.08, makeup_gain: 2
           gain(-3)
         end
-      end
-
-      def preset_sample_path(folder, filename)
-        return filename if folder.nil? || folder == @sample_folder
-
-        File.join(folder, filename)
       end
 
       # Defines arrangement sections for selective track playback by section.
@@ -854,7 +870,8 @@ module Wavify
           swing: @swing,
           default_bars: @default_bars,
           tracks: @track_definitions,
-          sections: @arrangement_sections
+          sections: @arrangement_sections,
+          random_seed: @random_seed
         )
       end
 
@@ -867,6 +884,30 @@ module Wavify
 
         value.to_f
       end
+
+      def validate_tempo!(value)
+        raise Wavify::SequencerError, "tempo must be a positive Numeric" unless value.is_a?(Numeric) && value.positive?
+
+        value.to_f
+      end
+
+      def validate_beats_per_bar!(value)
+        raise Wavify::SequencerError, "beats_per_bar must be a positive Integer" unless value.is_a?(Integer) && value.positive?
+
+        value
+      end
+
+      def validate_default_bars!(value)
+        raise Wavify::SequencerError, "bars must be a positive Integer" unless value.is_a?(Integer) && value.positive?
+
+        value
+      end
+
+      def validate_random_seed!(value)
+        raise Wavify::SequencerError, "random_seed must be an Integer" unless value.is_a?(Integer)
+
+        value
+      end
     end
 
     class << self
@@ -877,13 +918,15 @@ module Wavify
       # @param beats_per_bar [Integer]
       # @param default_bars [Integer]
       # @return [SongDefinition]
-      def build_definition(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1, &block)
+      def build_definition(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1,
+                           random_seed: Random.new_seed, &block)
         Builder.build_definition(
           format: format,
           tempo: tempo,
           beats_per_bar: beats_per_bar,
           swing: swing,
           default_bars: default_bars,
+          random_seed: random_seed,
           &block
         )
       end
@@ -891,13 +934,15 @@ module Wavify
       # Validates a DSL block without rendering audio.
       #
       # @return [true]
-      def validate(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1, &block)
+      def validate(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1,
+                   random_seed: Random.new_seed, &block)
         build_definition(
           format: format,
           tempo: tempo,
           beats_per_bar: beats_per_bar,
           swing: swing,
           default_bars: default_bars,
+          random_seed: random_seed,
           &block
         ).validate!
       end
@@ -923,13 +968,14 @@ module Wavify
     # @param default_bars [Integer]
     # @return [Audio]
     def build(output_path = nil, format: Core::Format::CD_QUALITY, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1,
-              &block)
+              random_seed: Random.new_seed, &block)
       song = DSL.build_definition(
         format: format,
         tempo: tempo,
         beats_per_bar: beats_per_bar,
         swing: swing,
         default_bars: default_bars,
+        random_seed: random_seed,
         &block
       )
 

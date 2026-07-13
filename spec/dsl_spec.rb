@@ -77,6 +77,35 @@ RSpec.describe Wavify::DSL do
       expect(drums.samples[:kick]).to eq(File.join("samples", "kick.wav"))
       expect(drums.samples[:snare]).to eq(File.join("samples", "drums/snare.wav"))
     end
+
+    it "validates constructor arguments and duplicate track names" do
+      expect do
+        described_class.build_definition(format: format, tempo: 0)
+      end.to raise_error(Wavify::SequencerError, /tempo/)
+      expect do
+        described_class.build_definition(format: format, default_bars: 0)
+      end.to raise_error(Wavify::SequencerError, /bars/)
+      expect do
+        described_class.build_definition(format: format) do
+          track(:lead)
+          track(:lead)
+        end
+      end.to raise_error(Wavify::SequencerError, /duplicate track name/)
+    end
+
+    it "rejects an ambiguous primary pattern with multiple samples" do
+      song = described_class.build_definition(format: format) do
+        track :drums do
+          pattern "x---"
+          sample :kick, "kick.wav"
+          sample :snare, "snare.wav"
+        end
+      end
+
+      expect do
+        song.validate!
+      end.to raise_error(Wavify::SequencerError, /ambiguous/)
+    end
   end
 
   describe ".validate" do
@@ -261,6 +290,15 @@ RSpec.describe Wavify::DSL do
       expect(drums.effects.first[:name]).to eq(:compressor)
     end
 
+    it "does not double-prefix an overridden preset sample folder" do
+      song = described_class.build_definition(format: format) do
+        sample_folder "global"
+        preset :lofi_drums, sample_folder: "other"
+      end
+
+      expect(song.tracks.first.samples[:kick]).to eq(File.join("other", "kick.wav"))
+    end
+
     it "renders and writes track stems" do
       song = described_class.build_definition(format: format, tempo: 120) do
         track :lead do
@@ -355,6 +393,26 @@ RSpec.describe Wavify::DSL do
         audio = song.render(default_bars: 1)
 
         expect(audio.sample_frame_count).to eq(2)
+      end
+    end
+
+    it "rolls pattern probability with a reproducible seed" do
+      Tempfile.create(["wavify_probability", ".wav"]) do |hit|
+        sample_buffer = Wavify::Core::SampleBuffer.new(Array.new(8, 0.5), format)
+        Wavify::Audio.new(sample_buffer).write(hit.path)
+        song = described_class.build_definition(format: format, tempo: 120, random_seed: 123) do
+          track :drums do
+            pattern :hit, "x?50x?50"
+            sample :hit, hit.path
+          end
+        end
+
+        first = song.render(default_bars: 1)
+        second = song.render(default_bars: 1)
+
+        expect(first.buffer.samples).to eq(second.buffer.samples)
+        expect(first.buffer.samples.first(8)).to all(eq(0.0))
+        expect(first.peak_amplitude).to be > 0.0
       end
     end
   end

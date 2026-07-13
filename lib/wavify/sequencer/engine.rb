@@ -304,6 +304,7 @@ module Wavify
           }
         end
       end
+      public :expand_pattern_step
 
       def note_duration_and_next_index(events, start_index, resolution)
         event = events.fetch(start_index)
