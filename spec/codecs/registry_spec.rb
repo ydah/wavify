@@ -149,6 +149,8 @@ RSpec.describe Wavify::Codecs::Registry do
       expect(Wavify::Codecs.register(".demoaudio", codec)).to eq(codec)
       expect(Wavify::Codecs.detect("song.demoaudio")).to eq(codec)
       expect(Wavify::Codecs.supported_formats).to include("demoaudio")
+      expect(Wavify::Codecs.unregister(".demoaudio")).to eq(codec)
+      expect(Wavify::Codecs.supported_formats).not_to include("demoaudio")
     end
   end
 end

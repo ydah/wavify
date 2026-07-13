@@ -93,17 +93,31 @@ module Wavify
         def register(extension, codec)
           normalized_extension = normalize_extension(extension)
           validate_codec!(codec)
-          extensions[normalized_extension] = codec
+          extensions_mutex.synchronize { extensions[normalized_extension] = codec }
+        end
+
+        # Removes a custom codec mapping or restores the built-in mapping.
+        def unregister(extension)
+          normalized_extension = normalize_extension(extension)
+          extensions_mutex.synchronize do
+            previous = extensions[normalized_extension]
+            if EXTENSIONS.key?(normalized_extension)
+              extensions[normalized_extension] = EXTENSIONS.fetch(normalized_extension)
+            else
+              extensions.delete(normalized_extension)
+            end
+            previous
+          end
         end
 
         # @return [Array<String>] supported extension names without leading dots
         def supported_formats
-          extensions.keys.map { |extension| extension.delete_prefix(".") }.uniq.sort.freeze
+          extension_snapshot.keys.map { |extension| extension.delete_prefix(".") }.uniq.sort.freeze
         end
 
         # @return [Array<String>] extension names whose codec dependencies are available
         def available_formats
-          extensions.filter_map do |extension, codec|
+          extension_snapshot.filter_map do |extension, codec|
             next if codec.respond_to?(:available?) && !codec.available?
 
             extension.delete_prefix(".")
@@ -116,11 +130,19 @@ module Wavify
           source = filename || io_or_path
           return unless source.is_a?(String)
 
-          extensions[File.extname(source).downcase]
+          extensions_mutex.synchronize { extensions[File.extname(source).downcase] }
         end
 
         def extensions
           @extensions ||= EXTENSIONS.dup
+        end
+
+        def extension_snapshot
+          extensions_mutex.synchronize { extensions.dup }
+        end
+
+        def extensions_mutex
+          @extensions_mutex ||= Mutex.new
         end
 
         def normalize_extension(extension)
@@ -182,6 +204,11 @@ module Wavify
       # @see Registry.register
       def register(extension, codec)
         Registry.register(extension, codec)
+      end
+
+      # @see Registry.unregister
+      def unregister(extension)
+        Registry.unregister(extension)
       end
 
       # @see Registry.supported_formats

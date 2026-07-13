@@ -437,6 +437,12 @@ RSpec.describe Wavify::DSP::Effects do
       callable_effect = described_class.build(:test_callable_effect, gain: 0.25)
       callable_processed = callable_effect.process(Wavify::Core::SampleBuffer.new([1.0], mono_float))
       expect(callable_processed.samples).to eq([0.25])
+
+      expect(described_class.unregister(:test_gain_effect)).to eq(custom_class)
+      expect do
+        described_class.build(:test_gain_effect)
+      end.to raise_error(Wavify::InvalidParameterError, /unsupported effect/)
+      described_class.unregister(:test_callable_effect)
     end
   end
 

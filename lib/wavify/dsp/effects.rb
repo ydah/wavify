@@ -59,7 +59,21 @@ module Wavify
           value = factory || block
           raise InvalidParameterError, "effect factory must be a Class or callable object" unless effect_factory?(value)
 
-          registry[key] = value
+          registry_mutex.synchronize { registry[key] = value }
+        end
+
+        # Removes a custom effect or restores a built-in implementation.
+        def unregister(name)
+          key = normalize_effect_name!(name)
+          registry_mutex.synchronize do
+            previous = registry[key]
+            if BUILTIN_EFFECTS.key?(key)
+              registry[key] = BUILTIN_EFFECTS.fetch(key)
+            else
+              registry.delete(key)
+            end
+            previous
+          end
         end
 
         # Builds a registered effect instance.
@@ -68,7 +82,7 @@ module Wavify
         # @return [Object]
         def build(name, **params)
           key = normalize_effect_name!(name)
-          factory = registry[key]
+          factory = registry_mutex.synchronize { registry[key] }
           raise InvalidParameterError, "unsupported effect: #{key}" unless factory
 
           effect = factory.is_a?(Class) ? factory.new(**params) : factory.call(**params)
@@ -79,13 +93,17 @@ module Wavify
 
         # @return [Hash<Symbol, Object>]
         def registered_effects
-          registry.dup.freeze
+          registry_mutex.synchronize { registry.dup.freeze }
         end
 
         private
 
         def registry
           @registry ||= BUILTIN_EFFECTS.dup
+        end
+
+        def registry_mutex
+          @registry_mutex ||= Mutex.new
         end
 
         def normalize_effect_name!(name)
