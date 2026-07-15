@@ -6,7 +6,7 @@ module Wavify
       # Peak compressor with threshold, ratio, attack, and release controls.
       class Compressor < EffectBase
         def initialize(threshold: -10, ratio: 4, attack: 0.01, release: 0.1, makeup_gain: 0.0, knee: 0.0,
-                       sidechain: nil)
+                       sidechain: nil, sidechain_end: :silence)
           super()
           @threshold_db = validate_numeric!(threshold, :threshold).to_f
           @ratio = validate_ratio!(ratio)
@@ -15,6 +15,7 @@ module Wavify
           @makeup_gain_db = validate_numeric!(makeup_gain, :makeup_gain).to_f
           @knee_db = validate_knee!(knee)
           @sidechain = validate_sidechain!(sidechain)
+          @sidechain_end = validate_sidechain_end!(sidechain_end)
           reset
         end
 
@@ -23,17 +24,16 @@ module Wavify
 
           float_format = buffer.format.with(sample_format: :float, bit_depth: 32)
           float_buffer = buffer.convert(float_format)
-          detector = @sidechain ? @sidechain.convert(float_format) : float_buffer
           prepare_runtime_if_needed!(
             sample_rate: float_format.sample_rate,
             channels: float_buffer.format.channels
           )
 
           output = []
-          float_buffer.samples.each_slice(@runtime_channels).with_index do |frame, frame_index|
-            detector_level = detector_frame_level(detector, frame_index)
+          float_buffer.samples.each_slice(@runtime_channels) do |frame|
+            detector_level = @sidechain ? next_sidechain_level : frame.map(&:abs).max
             gain = gain_for_detector_level(detector_level)
-            output.concat(frame.map { |sample| (sample * gain).clamp(-1.0, 1.0) })
+            output.concat(frame.map { |sample| sample * gain })
           end
 
           Core::SampleBuffer.new(output, float_format).convert(buffer.format)
@@ -64,6 +64,16 @@ module Wavify
           @threshold_linear = 10.0**(@threshold_db / 20.0)
           @attack_coefficient = time_coefficient(@attack, sample_rate)
           @release_coefficient = time_coefficient(@release, sample_rate)
+          @sidechain_cursor = 0
+          @sidechain_runtime = if @sidechain
+                                 format = Core::Format.new(
+                                   channels: channels,
+                                   sample_rate: sample_rate,
+                                   bit_depth: 32,
+                                   sample_format: :float
+                                 )
+                                 @sidechain.convert(format)
+                               end
         end
 
         def reset_runtime_state
@@ -71,6 +81,8 @@ module Wavify
           @threshold_linear = nil
           @attack_coefficient = nil
           @release_coefficient = nil
+          @sidechain_cursor = 0
+          @sidechain_runtime = nil
         end
 
         def gain_for_envelope(envelope)
@@ -149,10 +161,33 @@ module Wavify
           raise InvalidParameterError, "sidechain must be Audio or Core::SampleBuffer"
         end
 
-        def detector_frame_level(detector, frame_index)
+        def validate_sidechain_end!(value)
+          normalized = value.to_sym if value.respond_to?(:to_sym)
+          return normalized if %i[silence hold loop].include?(normalized)
+
+          raise InvalidParameterError, "sidechain_end must be :silence, :hold, or :loop"
+        end
+
+        def next_sidechain_level
+          frame_count = @sidechain_runtime.sample_frame_count
+          frame_index = sidechain_frame_index(frame_count)
+          @sidechain_cursor += 1
+          return 0.0 unless frame_index
+
           start_index = frame_index * @runtime_channels
-          frame = detector.samples.slice(start_index, @runtime_channels) || []
+          frame = @sidechain_runtime.samples.slice(start_index, @runtime_channels) || []
           frame.map(&:abs).max || 0.0
+        end
+
+        def sidechain_frame_index(frame_count)
+          return nil if frame_count.zero?
+          return @sidechain_cursor if @sidechain_cursor < frame_count
+
+          case @sidechain_end
+          when :silence then nil
+          when :hold then frame_count - 1
+          when :loop then @sidechain_cursor % frame_count
+          end
         end
       end
     end

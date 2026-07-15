@@ -89,13 +89,17 @@ module Wavify
         end
 
         def validate_positive!(value, name)
-          raise InvalidParameterError, "#{name} must be a positive Numeric" unless value.is_a?(Numeric) && value.positive?
+          unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite? && value.positive?
+            raise InvalidParameterError, "#{name} must be a positive finite Numeric"
+          end
 
           value.to_f
         end
 
         def validate_unit!(value, name)
-          raise InvalidParameterError, "#{name} must be Numeric in 0.0..1.0" unless value.is_a?(Numeric) && value.between?(0.0, 1.0)
+          unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite? && value.between?(0.0, 1.0)
+            raise InvalidParameterError, "#{name} must be a finite Numeric in 0.0..1.0"
+          end
 
           value.to_f
         end

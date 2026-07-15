@@ -41,12 +41,12 @@ RSpec.describe Wavify::DSP::Filter do
       source = tone_a + tone_b
 
       full_filter = described_class.lowpass(cutoff: 1_000)
-      full = full_filter.apply(source)
+      full = full_filter.process(source)
 
       chunk_filter = described_class.lowpass(cutoff: 1_000)
       first = source.slice(0, source.sample_frame_count / 2)
       second = source.slice(source.sample_frame_count / 2, source.sample_frame_count)
-      chunked = chunk_filter.apply(first) + chunk_filter.apply(second)
+      chunked = chunk_filter.process(first) + chunk_filter.process(second)
 
       differences = full.samples.zip(chunked.samples).map { |left, right| (left - right).abs }
       expect(differences.max).to be < 1e-5
@@ -67,8 +67,8 @@ RSpec.describe Wavify::DSP::Filter do
       filter = described_class.lowpass(cutoff: 1_000)
       impulse = Wavify::Core::SampleBuffer.new([1.0], mono_float)
 
-      filter.apply(impulse)
-      tail = filter.flush(format: mono_float)
+      filter.process(impulse)
+      tail = filter.flush(format: mono_float).to_a.reduce { |combined, chunk| combined.concat(chunk) }
 
       expect(tail.sample_frame_count).to be > 0
       expect(tail.samples.any? { |sample| sample.abs > 1.0e-8 }).to eq(true)
@@ -90,6 +90,27 @@ RSpec.describe Wavify::DSP::Filter do
       expect do
         described_class.lowpass(cutoff: Float::INFINITY)
       end.to raise_error(Wavify::InvalidParameterError, /finite Numeric/)
+    end
+
+    it "rejects non-finite samples before they enter IIR state" do
+      filter = described_class.lowpass(cutoff: 1_000)
+
+      expect do
+        filter.process_sample(Float::NAN, sample_rate: 44_100)
+      end.to raise_error(Wavify::InvalidParameterError, /finite Numeric/)
+    end
+
+    it "requires an explicit reset before a streaming format change" do
+      filter = described_class.lowpass(cutoff: 1_000)
+      filter.process(Wavify::Core::SampleBuffer.new([0.1], mono_float))
+
+      expect do
+        filter.process(Wavify::Core::SampleBuffer.new([0.1, 0.1], mono_float.with(channels: 2)))
+      end.to raise_error(Wavify::InvalidParameterError, /call reset/)
+
+      filter.reset
+      processed = filter.process(Wavify::Core::SampleBuffer.new([0.1, 0.1], mono_float.with(channels: 2)))
+      expect(processed.format.channels).to eq(2)
     end
   end
 end

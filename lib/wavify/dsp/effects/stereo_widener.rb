@@ -22,13 +22,19 @@ module Wavify
           widened = float_buffer.samples.each_slice(2).flat_map do |left, right|
             mid = (left + right) / 2.0
             side = ((left - right) / 2.0) * @width
-            [(mid + side).clamp(-1.0, 1.0), (mid - side).clamp(-1.0, 1.0)]
+            [mid + side, mid - side]
           end
 
           Wavify::Core::SampleBuffer.new(widened, float_format).convert(buffer.format)
         end
 
-        alias apply process
+        def apply(buffer)
+          DSP::Processor.render(self, buffer)
+        end
+
+        def build_runtime
+          dup.reset
+        end
 
         # Stateless processor API compatibility.
         #

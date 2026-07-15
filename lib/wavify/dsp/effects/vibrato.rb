@@ -5,6 +5,9 @@ module Wavify
     module Effects
       # Pitch modulation effect using a short modulated delay line.
       class Vibrato < EffectBase
+        BASE_DELAY_SECONDS = 0.006
+        DEPTH_DELAY_SECONDS = 0.004
+
         def initialize(rate: 5.0, depth: 0.5, mix: 1.0)
           super()
           @rate = validate_positive!(rate, :rate)
@@ -29,11 +32,21 @@ module Wavify
           (dry * (1.0 - @mix)) + (wet * @mix)
         end
 
+        def tail_duration
+          return 0.0 if @mix.zero?
+
+          maximum_delay
+        end
+
+        def latency
+          @mix >= 1.0 ? maximum_delay : 0.0
+        end
+
         private
 
         def prepare_runtime_state(sample_rate:, channels:)
-          @base_delay_samples = [(sample_rate * 0.006).round, 1].max
-          @depth_delay_samples = (sample_rate * 0.004 * @depth).to_f
+          @base_delay_samples = [(sample_rate * BASE_DELAY_SECONDS).round, 1].max
+          @depth_delay_samples = (sample_rate * DEPTH_DELAY_SECONDS * @depth).to_f
           line_length = [(@base_delay_samples + @depth_delay_samples.ceil + 3), 8].max
           @delay_lines = Array.new(channels) { Array.new(line_length, 0.0) }
           @write_indices = Array.new(channels, 0)
@@ -62,6 +75,10 @@ module Wavify
           return 0.0 if @runtime_channels.nil? || @runtime_channels <= 1
 
           channel.to_f / @runtime_channels
+        end
+
+        def maximum_delay
+          BASE_DELAY_SECONDS + (DEPTH_DELAY_SECONDS * @depth)
         end
 
         def validate_positive!(value, name)

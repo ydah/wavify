@@ -263,7 +263,7 @@ RSpec.describe Wavify::Core::SampleBuffer do
       source = described_class.new([1.0, 0.0, 1.0], surround)
 
       converted = source.convert(float_stereo)
-      expect(converted.samples[0]).to eq(1.0)
+      expect(converted.samples[0]).to be > 1.0
       expect(converted.samples[1]).to be_within(0.0001).of(0.707)
     end
 
@@ -282,7 +282,7 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(converted.samples[2]).to eq(1.0)
     end
 
-    it "keeps resampled duration close to source duration and samples bounded" do
+    it "keeps resampled duration close to source duration and preserves float headroom" do
       source_format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
       target_format = source_format.with(sample_rate: 48_000)
       source = described_class.new([-1.2, -0.5, 0.0, 0.75, 1.2], source_format)
@@ -293,7 +293,8 @@ RSpec.describe Wavify::Core::SampleBuffer do
       duration_error = (converted.duration.total_seconds - source.duration.total_seconds).abs
       expect(converted.sample_frame_count).to eq(expected_frames)
       expect(duration_error).to be <= (0.5 / target_format.sample_rate)
-      expect(converted.samples).to all(be_between(-1.0, 1.0))
+      expect(converted.samples).to all(be_finite)
+      expect(converted.samples.map(&:abs).max).to be > 1.0
     end
 
     it "supports windowed sinc resampling" do
@@ -362,7 +363,7 @@ RSpec.describe Wavify::Core::SampleBuffer do
         expected_frames = frames.zero? ? 0 : ((frames * target_rate.to_f) / source_rate).round
         expect(converted.format).to eq(target_format)
         expect(converted.sample_frame_count).to eq(expected_frames)
-        expect(converted.samples).to all(be_between(-1.0, 1.0))
+        expect(converted.samples).to all(be_finite)
         expect(source.samples).to eq(samples)
       end
     end

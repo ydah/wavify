@@ -68,7 +68,7 @@ module Wavify
           float_buffer.samples.each_slice(@runtime_channels) do |frame|
             envelope = @envelope_follower.follow(frame.reduce(0.0) { |peak, sample| [peak, sample.abs].max })
             gain = gain_for_envelope(envelope)
-            output.concat(frame.map { |sample| (sample * gain).clamp(-1.0, 1.0) })
+            output.concat(frame.map { |sample| sample * gain })
           end
           Core::SampleBuffer.new(output, float_format).convert(buffer.format)
         end

@@ -5,6 +5,9 @@ module Wavify
     module Effects
       # Short modulated comb delay effect.
       class Flanger < EffectBase
+        MAX_DELAY_SECONDS = 0.006
+        TAIL_AMPLITUDE = 1.0e-6
+
         def initialize(rate: 0.5, depth: 0.7, feedback: 0.35, mix: 0.5)
           super()
           @rate = validate_positive!(rate, :rate)
@@ -23,7 +26,7 @@ module Wavify
           delay_samples = @base_delay_samples + (@depth_delay_samples * ((mod + 1.0) / 2.0))
           wet = read_fractional_delay(line, write_index, delay_samples)
 
-          line[write_index] = (dry + (wet * @feedback)).clamp(-1.0, 1.0)
+          line[write_index] = dry + (wet * @feedback)
           @write_indices[channel] = (write_index + 1) % line.length
           @lfo.next_value if channel == (@runtime_channels - 1)
 
@@ -33,14 +36,23 @@ module Wavify
         def tail_duration
           return 0.0 if @mix.zero?
 
-          0.008
+          repetitions = if @feedback.zero?
+                          1
+                        else
+                          (Math.log(TAIL_AMPLITUDE) / Math.log(@feedback.abs)).ceil
+                        end
+          MAX_DELAY_SECONDS * [repetitions, 1].max
+        end
+
+        def latency
+          @mix >= 1.0 ? MAX_DELAY_SECONDS : 0.0
         end
 
         private
 
         def prepare_runtime_state(sample_rate:, channels:)
           @base_delay_samples = [(sample_rate * 0.0015).round, 1].max
-          @depth_delay_samples = (sample_rate * 0.0045 * @depth).to_f
+          @depth_delay_samples = (sample_rate * (MAX_DELAY_SECONDS - 0.0015) * @depth).to_f
           line_length = [(@base_delay_samples + @depth_delay_samples.ceil + 3), 8].max
           @delay_lines = Array.new(channels) { Array.new(line_length, 0.0) }
           @write_indices = Array.new(channels, 0)

@@ -23,9 +23,11 @@ module Wavify
       # @param note_on_duration [Numeric]
       # @return [Float]
       def gain_at(time, note_on_duration:)
-        raise InvalidParameterError, "time must be a non-negative Numeric" unless time.is_a?(Numeric) && time >= 0
-        unless note_on_duration.is_a?(Numeric) && note_on_duration >= 0
-          raise InvalidParameterError, "note_on_duration must be a non-negative Numeric"
+        unless finite_nonnegative?(time)
+          raise InvalidParameterError, "time must be a non-negative finite Numeric"
+        end
+        unless finite_nonnegative?(note_on_duration)
+          raise InvalidParameterError, "note_on_duration must be a non-negative finite Numeric"
         end
 
         return sustain_stage_gain(time) if time < note_on_duration
@@ -41,8 +43,8 @@ module Wavify
       # @return [Wavify::Core::SampleBuffer]
       def apply(buffer, note_on_duration:)
         raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
-        unless note_on_duration.is_a?(Numeric) && note_on_duration >= 0
-          raise InvalidParameterError, "note_on_duration must be a non-negative Numeric"
+        unless finite_nonnegative?(note_on_duration)
+          raise InvalidParameterError, "note_on_duration must be a non-negative finite Numeric"
         end
 
         float_format = buffer.format.with(sample_format: :float, bit_depth: 32)
@@ -60,6 +62,37 @@ module Wavify
         end
 
         Core::SampleBuffer.new(processed, float_format).convert(buffer.format)
+      end
+
+      # Applies the envelope and extends a short source through the release.
+      # The terminal source frame is held when more source audio is required.
+      def render_with_tail(buffer, note_on_duration:)
+        raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
+        unless finite_nonnegative?(note_on_duration)
+          raise InvalidParameterError, "note_on_duration must be a non-negative finite Numeric"
+        end
+
+        target_frames = ((note_on_duration + @release) * buffer.format.sample_rate).ceil
+        return apply(buffer, note_on_duration: note_on_duration) if buffer.sample_frame_count >= target_frames
+
+        channels = buffer.format.channels
+        terminal_frame = buffer.samples.last(channels)
+        terminal_frame = Array.new(channels, 0) if terminal_frame.empty?
+        missing_frames = target_frames - buffer.sample_frame_count
+        extended = buffer.concat(Core::SampleBuffer.new(terminal_frame * missing_frames, buffer.format))
+        apply(extended, note_on_duration: note_on_duration)
+      end
+
+      def tail_duration
+        @release
+      end
+
+      def latency
+        0.0
+      end
+
+      def lookahead
+        0.0
       end
 
       private
@@ -113,7 +146,9 @@ module Wavify
       end
 
       def validate_sustain!(value)
-        raise InvalidParameterError, "sustain must be Numeric in 0.0..1.0" unless value.is_a?(Numeric) && value.between?(0.0, 1.0)
+        unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite? && value.between?(0.0, 1.0)
+          raise InvalidParameterError, "sustain must be a finite Numeric in 0.0..1.0"
+        end
 
         value.to_f
       end
@@ -123,6 +158,10 @@ module Wavify
         return normalized if CURVES.include?(normalized)
 
         raise InvalidParameterError, "curve must be one of: #{CURVES.join(', ')}"
+      end
+
+      def finite_nonnegative?(value)
+        value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite? && value >= 0.0
       end
     end
   end

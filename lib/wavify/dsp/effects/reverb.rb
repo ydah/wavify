@@ -143,7 +143,7 @@ module Wavify
         end
 
         def mix_dry_wet(dry, wet)
-          ((dry * (1.0 - @mix)) + (wet * @mix)).clamp(-1.0, 1.0)
+          (dry * (1.0 - @mix)) + (wet * @mix)
         end
 
         def process_comb(comb, input_sample)
@@ -153,7 +153,7 @@ module Wavify
 
           filter_store = (delayed * (1.0 - comb[:damping])) + (comb[:filter_store] * comb[:damping])
           comb[:filter_store] = filter_store
-          buffer[index] = (input_sample + (filter_store * comb[:feedback])).clamp(-1.0, 1.0)
+          buffer[index] = input_sample + (filter_store * comb[:feedback])
           comb[:index] = (index + 1) % buffer.length
 
           delayed

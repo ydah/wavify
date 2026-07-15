@@ -5,12 +5,14 @@ module Wavify
     module Effects
       # Base class for sample-by-sample effects with runtime channel state.
       class EffectBase
+        TAIL_CHUNK_FRAMES = DSP::Processor::TAIL_CHUNK_FRAMES
+
         # Applies the effect to a sample buffer.
         #
         # @param buffer [Wavify::Core::SampleBuffer]
         # @return [Wavify::Core::SampleBuffer]
         def apply(buffer)
-          process(buffer)
+          DSP::Processor.render(self, buffer)
         end
 
         def process(buffer)
@@ -27,7 +29,7 @@ module Wavify
           output = Array.new(float_buffer.samples.length)
           float_buffer.samples.each_with_index do |sample, sample_index|
             channel = sample_index % @runtime_channels
-            output[sample_index] = process_sample(sample, channel: channel, sample_rate: @runtime_sample_rate).clamp(-1.0, 1.0)
+            output[sample_index] = process_sample(sample, channel: channel, sample_rate: @runtime_sample_rate)
           end
 
           Core::SampleBuffer.new(output, float_format).convert(buffer.format)
@@ -36,7 +38,7 @@ module Wavify
         # Emits effect tail after input has ended.
         #
         # @param format [Wavify::Core::Format, nil] output format for tail chunks
-        # @return [Wavify::Core::SampleBuffer, nil]
+        # @return [Enumerator<Wavify::Core::SampleBuffer>, nil]
         def flush(format: nil)
           return nil unless runtime_prepared?
 
@@ -55,8 +57,17 @@ module Wavify
             bit_depth: 32,
             sample_format: :float
           )
-          silence = Core::SampleBuffer.new(Array.new(frames * @runtime_channels, 0.0), runtime_format)
-          process(silence).convert(target_format)
+          Enumerator.new do |yielder|
+            remaining = frames
+            while remaining.positive?
+              chunk_frames = [remaining, TAIL_CHUNK_FRAMES].min
+              silence = Core::SampleBuffer.new(Array.new(chunk_frames * @runtime_channels, 0.0), runtime_format)
+              yielder << process(silence).convert(target_format)
+              remaining -= chunk_frames
+            end
+          ensure
+            reset
+          end
         end
 
         # @return [Float] tail duration in seconds emitted by {#flush}
@@ -86,6 +97,11 @@ module Wavify
           @runtime_channels = nil
           reset_runtime_state
           self
+        end
+
+        # Builds an independent runtime instance for offline rendering.
+        def build_runtime
+          dup.reset
         end
 
         private

@@ -47,7 +47,7 @@ RSpec.describe Wavify::DSP::Effects do
       effect = described_class.new(time: 2.0 / 44_100, feedback: 0.0, mix: 1.0)
       effect.process(Wavify::Core::SampleBuffer.new([1.0], mono_float))
 
-      tail = effect.flush(format: mono_float)
+      tail = effect.flush(format: mono_float).to_a.reduce { |combined, chunk| combined.concat(chunk) }
 
       expect(tail.samples.first(2)).to eq([0.0, 1.0])
     end
@@ -214,6 +214,35 @@ RSpec.describe Wavify::DSP::Effects do
         described_class.new.process_sample(1.0, channel: 0, sample_rate: 44_100)
       end.to raise_error(NotImplementedError, /frame-aware/)
     end
+
+
+    it "advances sidechain position across streaming chunks" do
+      source = Wavify::Core::SampleBuffer.new([0.5, 0.5, 0.5, 0.5], mono_float)
+      detector = Wavify::Core::SampleBuffer.new([0.0, 1.0, 0.0, 1.0], mono_float)
+      options = { threshold: -18.0, ratio: 8.0, attack: 0.0, release: 0.0, sidechain: detector }
+      continuous = described_class.new(**options).process(source)
+      chunked = described_class.new(**options)
+      actual = chunked.process(source.slice(0, 2)).concat(chunked.process(source.slice(2, 2)))
+
+      expect(actual.samples).to eq(continuous.samples)
+    end
+
+    it "supports explicit sidechain exhaustion policies" do
+      source = Wavify::Core::SampleBuffer.new([0.5, 0.5], mono_float)
+      detector = Wavify::Core::SampleBuffer.new([1.0], mono_float)
+      silence = described_class.new(threshold: -18.0, ratio: 8.0, attack: 0.0, release: 0.0, sidechain: detector)
+      hold = described_class.new(
+        threshold: -18.0,
+        ratio: 8.0,
+        attack: 0.0,
+        release: 0.0,
+        sidechain: detector,
+        sidechain_end: :hold
+      )
+
+      expect(silence.process(source).samples.last).to be_within(0.001).of(0.5)
+      expect(hold.process(source).samples.last).to be < 0.5
+    end
   end
 
   describe Wavify::DSP::Effects::Limiter do
@@ -292,6 +321,13 @@ RSpec.describe Wavify::DSP::Effects do
         described_class.new.process_sample(1.0, channel: 0, sample_rate: 44_100)
       end.to raise_error(NotImplementedError, /frame-aware/)
     end
+
+
+    it "bounds lookahead memory" do
+      expect do
+        described_class.new(lookahead: described_class::MAX_LOOKAHEAD_SECONDS + 0.1)
+      end.to raise_error(Wavify::InvalidParameterError, /lookahead/)
+    end
   end
 
   describe Wavify::DSP::Effects::SoftLimiter do
@@ -361,6 +397,8 @@ RSpec.describe Wavify::DSP::Effects do
       expect(processed.samples.length).to eq(source.samples.length)
       differences = source.samples.zip(processed.samples).map { |left, right| (left - right).abs }
       expect(differences.max).to be > 0.01
+      expect(effect.tail_duration).to be > 0.0
+      expect(effect.latency).to be > 0.0
     end
   end
 
@@ -372,9 +410,10 @@ RSpec.describe Wavify::DSP::Effects do
       processed = effect.process(source)
 
       expect(processed.samples.length).to eq(source.samples.length)
-      expect(effect.tail_duration).to eq(0.008)
+      expect(effect.tail_duration).to be > 0.008
       differences = source.samples.zip(processed.samples).map { |left, right| (left - right).abs }
       expect(differences.max).to be > 0.0001
+      expect(effect.tail_duration).to be > 0.0
     end
   end
 
@@ -389,6 +428,15 @@ RSpec.describe Wavify::DSP::Effects do
       expect(processed.samples).to all(be_finite)
       differences = source.samples.zip(processed.samples).map { |left, right| (left - right).abs }
       expect(differences.max).to be > 0.0001
+    end
+
+    it "requires bounded exact stage counts" do
+      expect do
+        described_class.new(stages: "4")
+      end.to raise_error(Wavify::InvalidParameterError, /stages/)
+      expect do
+        described_class.new(stages: described_class::MAX_STAGES + 1)
+      end.to raise_error(Wavify::InvalidParameterError, /stages/)
     end
   end
 
@@ -478,18 +526,18 @@ RSpec.describe Wavify::DSP::Effects do
       )
 
       eq.process(Wavify::Core::SampleBuffer.new([1.0], mono_float))
-      tail = eq.flush(format: mono_float)
+      tail = eq.flush(format: mono_float).to_a.reduce { |combined, chunk| combined.concat(chunk) }
 
       expect(tail.sample_frame_count).to be > 0
       expect(tail.samples.any? { |sample| sample.abs > 1.0e-8 }).to eq(true)
       expect(eq.flush(format: mono_float)).to be_nil
     end
 
-    it "reports the maximum filter lookahead" do
+    it "reports summed lookahead for serial filters" do
       first = Struct.new(:lookahead) { def apply(buffer) = buffer }.new(0.01)
       second = Struct.new(:lookahead) { def apply(buffer) = buffer }.new(0.02)
 
-      expect(described_class.new(first, second).lookahead).to eq(0.02)
+      expect(described_class.new(first, second).lookahead).to eq(0.03)
     end
   end
 
@@ -526,7 +574,25 @@ RSpec.describe Wavify::DSP::Effects do
 
       chain.process(Wavify::Core::SampleBuffer.new([0.0], mono_float))
 
-      expect(chain.flush(format: mono_float).samples).to eq([0.5])
+      expect(chain.flush(format: mono_float).to_a.flat_map(&:samples)).to eq([0.5])
+    end
+
+
+    it "keeps intermediate peaks in float workspace until the chain boundary" do
+      observer = Class.new do
+        attr_reader :peak
+
+        def process(buffer)
+          @peak = buffer.samples.map(&:abs).max
+          buffer
+        end
+      end.new
+      gain = ->(buffer) { Wavify::Core::SampleBuffer.new(buffer.samples.map { |sample| sample * 2.0 }, buffer.format) }
+      chain = described_class.new([gain, observer])
+
+      chain.process(Wavify::Core::SampleBuffer.new([0.75], mono_float))
+
+      expect(observer.peak).to eq(1.5)
     end
   end
 

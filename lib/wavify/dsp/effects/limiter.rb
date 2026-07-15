@@ -5,6 +5,8 @@ module Wavify
     module Effects
       # Stereo-linked lookahead peak limiter with attack and release smoothing.
       class Limiter < EffectBase
+        MAX_LOOKAHEAD_SECONDS = 1.0
+
         # FIFO with an amortized O(1) maximum for streaming lookahead detection.
         class LookaheadQueue
           def initialize
@@ -47,13 +49,15 @@ module Wavify
         end
         private_constant :LookaheadQueue
 
-        def initialize(ceiling: -1.0, input_gain: 0.0, attack: 0.001, release: 0.05, lookahead: 0.005)
+        def initialize(ceiling: -1.0, input_gain: 0.0, attack: 0.001, release: 0.05, lookahead: 0.005,
+                       oversampling: 1)
           super()
           @ceiling_db = validate_dbfs!(ceiling, :ceiling)
           @input_gain_db = validate_finite_numeric!(input_gain, :input_gain).to_f
           @attack = validate_time!(attack, :attack)
           @release = validate_time!(release, :release)
           @lookahead = validate_time!(lookahead, :lookahead)
+          @oversampling = validate_oversampling!(oversampling)
           @ceiling = db_to_amplitude(@ceiling_db)
           @input_gain = db_to_amplitude(@input_gain_db)
           reset
@@ -94,7 +98,7 @@ module Wavify
 
         # Emits samples retained by the lookahead delay.
         def flush(format: nil)
-          return nil unless runtime_prepared? && @delay_frames && !@delay_frames.empty?
+          return nil unless runtime_prepared? && @delay_frames && @lookahead_frames.positive?
 
           runtime_format = Core::Format.new(
             channels: @runtime_channels,
@@ -126,12 +130,14 @@ module Wavify
         private
 
         def limit_offline_frames(frames)
-          output = frames.filter_map { |frame| enqueue_and_limit(frame) }
-          output.concat(flush_limiter_frames)
+          delayed = frames.map do |frame|
+            enqueue_and_limit(frame) || Array.new(@runtime_channels, 0.0)
+          end
+          delayed.concat(flush_limiter_frames).drop(@lookahead_frames).first(frames.length)
         end
 
         def enqueue_and_limit(frame)
-          @delay_frames.push(frame, frame_peak(frame))
+          @delay_frames.push(frame, detector_peak(frame))
           if @delay_frames.length <= @lookahead_frames
             update_gain(@delay_frames.maximum)
             return nil
@@ -142,11 +148,11 @@ module Wavify
         end
 
         def flush_limiter_frames
-          output = []
-          until @delay_frames.empty?
-            delayed_frame, delayed_peak = @delay_frames.shift
-            output << limit_frame(delayed_frame, @delay_frames.maximum, current_peak: delayed_peak)
+          silence = Array.new(@runtime_channels, 0.0)
+          output = Array.new(@lookahead_frames) do
+            enqueue_and_limit(silence.dup) || silence.dup
           end
+          reset_limiter_state
           output
         end
 
@@ -184,6 +190,21 @@ module Wavify
         def reset_limiter_state
           @delay_frames = LookaheadQueue.new
           @gain = 1.0
+          @true_peak_history = []
+        end
+
+        def detector_peak(frame)
+          return frame_peak(frame) if @oversampling == 1
+
+          @true_peak_history.concat(frame)
+          history_samples = DSP::LoudnessMeter::TRUE_PEAK_RADIUS * 2 * @runtime_channels
+          @true_peak_history.shift(@true_peak_history.length - history_samples) if @true_peak_history.length > history_samples
+          DSP::LoudnessMeter.true_peak(
+            @true_peak_history,
+            sample_rate: @runtime_sample_rate,
+            channels: @runtime_channels,
+            oversampling: @oversampling
+          )
         end
 
         def time_coefficient(seconds, sample_rate)
@@ -202,6 +223,9 @@ module Wavify
         def validate_time!(value, name)
           numeric = validate_finite_numeric!(value, name)
           raise InvalidParameterError, "#{name} must be non-negative" if numeric.negative?
+          if name == :lookahead && numeric > MAX_LOOKAHEAD_SECONDS
+            raise InvalidParameterError, "lookahead must be <= #{MAX_LOOKAHEAD_SECONDS} seconds"
+          end
 
           numeric.to_f
         end
@@ -212,6 +236,12 @@ module Wavify
           end
 
           value
+        end
+
+        def validate_oversampling!(value)
+          return value if [1, 2, 4, 8].include?(value)
+
+          raise InvalidParameterError, "oversampling must be 1, 2, 4, or 8"
         end
 
         def db_to_amplitude(db)

@@ -19,42 +19,33 @@ module Wavify
         def process(buffer)
           raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
 
-          @effects.reduce(buffer) { |current, effect| process_effect(effect, current) }
+          original_format = buffer.format
+          float_format = original_format.with(sample_format: :float, bit_depth: 32)
+          processed = @effects.reduce(buffer.convert(float_format)) { |current, effect| process_effect(effect, current) }
+          processed.convert(original_format)
         end
 
         # Applies every effect using its offline entrypoint when available.
         def apply(buffer)
           raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
 
-          @effects.reduce(buffer) do |current, effect|
-            result = if effect.respond_to?(:apply)
-                       effect.apply(current)
-                     elsif effect.respond_to?(:process)
-                       effect.process(current)
-                     else
-                       effect.call(current)
-                     end
-            result.is_a?(Wavify::Audio) ? result.buffer : result
-          end
+          DSP::Processor.render(self, buffer)
         end
 
         # Flushes effect tails through every downstream processor.
         def flush(format: nil)
-          tails = []
-          @effects.each_with_index do |effect, index|
-            next unless effect.respond_to?(:flush)
+          Enumerator.new do |yielder|
+            @effects.each_with_index do |effect, index|
+              DSP::Processor.flush(effect, format: format).each do |tail|
+                next unless tail.sample_frame_count.positive?
 
-            tail = effect.flush(format: format)
-            next unless tail&.sample_frame_count&.positive?
-
-            processed = @effects.drop(index + 1).reduce(tail) do |current, downstream|
-              process_effect(downstream, current)
+                processed = @effects.drop(index + 1).reduce(tail) do |current, downstream|
+                  process_effect(downstream, current)
+                end
+                yielder << processed
+              end
             end
-            tails << processed
           end
-          return nil if tails.empty?
-
-          tails.reduce { |combined, tail| combined.concat(tail) }
         end
 
         # @return [EffectChain] self
@@ -63,32 +54,30 @@ module Wavify
           self
         end
 
+        # Builds a chain whose processors do not share runtime state.
+        def build_runtime
+          self.class.new(@effects.map { |effect| DSP::Processor.build_runtime(effect) })
+        end
+
         # @return [Float]
         def latency
-          @effects.sum { |effect| effect.respond_to?(:latency) ? effect.latency.to_f : 0.0 }
+          @effects.sum { |effect| DSP::Processor.duration(effect, :latency) }
         end
 
         # @return [Float]
         def lookahead
-          @effects.map { |effect| effect.respond_to?(:lookahead) ? effect.lookahead.to_f : 0.0 }.max || 0.0
+          @effects.sum { |effect| DSP::Processor.duration(effect, :lookahead) }
         end
 
         # @return [Float]
         def tail_duration
-          @effects.map { |effect| effect.respond_to?(:tail_duration) ? effect.tail_duration.to_f : 0.0 }.max || 0.0
+          @effects.sum { |effect| DSP::Processor.duration(effect, :tail_duration) }
         end
 
         private
 
         def process_effect(effect, buffer)
-          result = if effect.respond_to?(:process)
-                     effect.process(buffer)
-                   elsif effect.respond_to?(:call)
-                     effect.call(buffer)
-                   else
-                     effect.apply(buffer)
-                   end
-          result.is_a?(Wavify::Audio) ? result.buffer : result
+          DSP::Processor.process(effect, buffer)
         end
 
         def validate_effect!(effect)

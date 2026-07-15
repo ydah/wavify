@@ -152,5 +152,27 @@ RSpec.describe Wavify::DSP::Oscillator do
         described_class.new(waveform: :sine, frequency: 440, phase: Float::INFINITY)
       end.to raise_error(Wavify::InvalidParameterError)
     end
+
+    it "rejects non-finite and excessive generation requests" do
+      expect do
+        described_class.new(waveform: :sine, frequency: Float::INFINITY)
+      end.to raise_error(Wavify::InvalidParameterError, /frequency/)
+      expect do
+        described_class.new(waveform: :sine, frequency: 440, unison: described_class::MAX_UNISON + 1)
+      end.to raise_error(Wavify::InvalidParameterError, /unison/)
+
+      oscillator = described_class.new(waveform: :sine, frequency: 440)
+      expect do
+        oscillator.generate(Float::INFINITY, format: mono_float)
+      end.to raise_error(Wavify::InvalidParameterError, /duration/)
+    end
+
+    it "rejects periodic voices above Nyquist" do
+      oscillator = described_class.new(waveform: :square, frequency: 5_000)
+
+      expect do
+        oscillator.generate(0.01, format: mono_float)
+      end.to raise_error(Wavify::InvalidParameterError, /Nyquist/)
+    end
   end
 end

@@ -494,7 +494,7 @@ module Wavify
       def coerce_samples(samples, format)
         samples.map do |sample|
           if format.sample_format == :float
-            sample.to_f.clamp(-1.0, 1.0)
+            sample.to_f
           else
             coerce_pcm_sample(sample, format)
           end
@@ -513,7 +513,7 @@ module Wavify
       end
 
       def to_normalized_float(sample, format)
-        return sample.to_f.clamp(-1.0, 1.0) if format.sample_format == :float
+        return sample.to_f if format.sample_format == :float
 
         shift = format.bit_depth - format.valid_bits
         positive_scale = (((2**(format.valid_bits - 1)) - 1) << shift).to_f
@@ -523,9 +523,10 @@ module Wavify
       end
 
       def from_normalized_float(sample, format, dither_rng: nil)
-        value = sample.to_f.clamp(-1.0, 1.0)
+        value = sample.to_f
         return value if format.sample_format == :float
 
+        value = value.clamp(-1.0, 1.0)
         value = apply_tpdf_dither(value, format, dither_rng) if dither_rng
         float_to_pcm(value, format)
       end

@@ -75,13 +75,20 @@ module Wavify
         @coefficients = nil
         @coeff_sample_rate = nil
         @channel_states = []
+        @runtime_channels = nil
       end
 
       def apply(buffer)
+        DSP::Processor.render(self, buffer)
+      end
+
+      # Processes a streaming chunk while preserving filter state.
+      def process(buffer)
         raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
 
         float_format = buffer.format.with(sample_format: :float, bit_depth: 32)
         float_buffer = buffer.convert(float_format)
+        prepare_runtime_format!(sample_rate: float_format.sample_rate, channels: float_format.channels)
         processed = process_interleaved(
           float_buffer.samples,
           sample_rate: float_format.sample_rate,
@@ -92,12 +99,14 @@ module Wavify
       end
 
       def process_sample(sample, sample_rate:, channel: 0)
-        raise InvalidParameterError, "sample must be Numeric" unless sample.is_a?(Numeric)
+        unless sample.is_a?(Numeric) && sample.respond_to?(:finite?) && sample.finite?
+          raise InvalidParameterError, "sample must be a finite Numeric"
+        end
         raise InvalidParameterError, "channel must be a non-negative Integer" unless channel.is_a?(Integer) && channel >= 0
         raise InvalidParameterError, "sample_rate must be a positive Integer" unless sample_rate.is_a?(Integer) && sample_rate.positive?
 
         update_coefficients!(sample_rate)
-        ensure_channel_states!(channel + 1)
+        ensure_sample_channel_state!(channel)
         state = @channel_states[channel]
         x = sample.to_f
         y = compute_biquad(state, x)
@@ -108,7 +117,7 @@ module Wavify
       # Emits the decaying IIR state after the input ends.
       #
       # @param format [Core::Format, nil] optional target format
-      # @return [Core::SampleBuffer, nil]
+      # @return [Enumerator<Core::SampleBuffer>, nil]
       def flush(format: nil)
         return nil unless @coeff_sample_rate && filter_state_active?
         if format && !format.is_a?(Core::Format)
@@ -122,10 +131,19 @@ module Wavify
           bit_depth: 32,
           sample_format: :float
         )
-        silence = Array.new(tail_frame_count(@coeff_sample_rate) * channels, 0.0)
-        processed = process_interleaved(silence, sample_rate: @coeff_sample_rate, channels: channels)
-        reset
-        Core::SampleBuffer.new(processed, runtime_format).convert(format || runtime_format)
+        remaining = tail_frame_count(@coeff_sample_rate)
+        target_format = format || runtime_format
+        Enumerator.new do |yielder|
+          while remaining.positive?
+            frames = [remaining, DSP::Processor::TAIL_CHUNK_FRAMES].min
+            silence = Array.new(frames * channels, 0.0)
+            processed = process_interleaved(silence, sample_rate: @coeff_sample_rate, channels: channels)
+            yielder << Core::SampleBuffer.new(processed, runtime_format).convert(target_format)
+            remaining -= frames
+          end
+        ensure
+          reset
+        end
       end
 
       # Estimated time for the biquad poles to decay below -120 dB.
@@ -139,7 +157,23 @@ module Wavify
       #
       # @return [void]
       def reset
+        @coefficients = nil
+        @coeff_sample_rate = nil
         @channel_states = []
+        @runtime_channels = nil
+        self
+      end
+
+      def build_runtime
+        dup.reset
+      end
+
+      def latency
+        0.0
+      end
+
+      def lookahead
+        0.0
       end
 
       private
@@ -188,16 +222,39 @@ module Wavify
       def update_coefficients!(sample_rate)
         return if @coeff_sample_rate == sample_rate && @coefficients
 
+        if @coeff_sample_rate && @coeff_sample_rate != sample_rate
+          raise InvalidParameterError, "sample rate changed; call reset before processing a new format"
+        end
+
         validate_cutoff_below_nyquist!(sample_rate)
         @coefficients = coefficients_for(sample_rate)
         @coeff_sample_rate = sample_rate
-        reset
       end
 
       def ensure_channel_states!(channels)
         return if @channel_states.length == channels
 
+        unless @channel_states.empty?
+          raise InvalidParameterError, "channel count changed; call reset before processing a new format"
+        end
+
         @channel_states = Array.new(channels) { { x1: 0.0, x2: 0.0, y1: 0.0, y2: 0.0 } }
+      end
+
+      def ensure_sample_channel_state!(channel)
+        until @channel_states.length > channel
+          @channel_states << { x1: 0.0, x2: 0.0, y1: 0.0, y2: 0.0 }
+        end
+      end
+
+      def prepare_runtime_format!(sample_rate:, channels:)
+        if @runtime_channels && @runtime_channels != channels
+          raise InvalidParameterError, "channel count changed; call reset before processing a new format"
+        end
+
+        update_coefficients!(sample_rate)
+        ensure_channel_states!(channels)
+        @runtime_channels = channels
       end
 
       def compute_biquad(state, x)

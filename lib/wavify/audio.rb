@@ -702,17 +702,7 @@ module Wavify
     # @param effect [Object]
     # @return [Audio]
     def apply(effect)
-      processed = if effect.respond_to?(:apply)
-                    effect.apply(@buffer)
-                  elsif effect.respond_to?(:process)
-                    effect.process(@buffer)
-                  elsif effect.respond_to?(:call)
-                    effect.call(@buffer)
-                  else
-                    raise InvalidParameterError, "effect must respond to :process, :call, or :apply"
-                  end
-
-      raise ProcessingError, "effect must return Core::SampleBuffer" unless processed.is_a?(Core::SampleBuffer)
+      processed = DSP::Processor.render(effect, @buffer)
 
       self.class.new(processed)
     end

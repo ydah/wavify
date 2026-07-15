@@ -5,6 +5,11 @@ module Wavify
     module Effects
       # Modulated all-pass phase shifting effect.
       class Phaser < EffectBase
+        MAX_STAGES = 32
+        TAIL_AMPLITUDE = 1.0e-6
+        MAX_ALLPASS_COEFFICIENT = 0.9
+        REFERENCE_SAMPLE_RATE = 44_100.0
+
         def initialize(rate: 0.5, depth: 0.7, feedback: 0.2, mix: 0.5, stages: 4)
           super()
           @rate = validate_positive!(rate, :rate)
@@ -23,6 +28,14 @@ module Wavify
           @lfo.next_value if channel == (@runtime_channels - 1)
 
           (dry * (1.0 - @mix)) + (wet * @mix)
+        end
+
+        def tail_duration
+          return 0.0 if @mix.zero?
+
+          pole = [MAX_ALLPASS_COEFFICIENT, @feedback.abs].max
+          decay_samples = (Math.log(TAIL_AMPLITUDE) / Math.log(pole)).ceil
+          (@stages * decay_samples) / REFERENCE_SAMPLE_RATE
         end
 
         private
@@ -87,12 +100,11 @@ module Wavify
         end
 
         def validate_stages!(value)
-          stages = Integer(value)
-          raise InvalidParameterError, "stages must be positive" unless stages.positive?
+          unless value.is_a?(Integer) && value.between?(1, MAX_STAGES)
+            raise InvalidParameterError, "stages must be an Integer in 1..#{MAX_STAGES}"
+          end
 
-          stages
-        rescue ArgumentError, TypeError
-          raise InvalidParameterError, "stages must be an Integer"
+          value
         end
       end
     end

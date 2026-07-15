@@ -73,5 +73,24 @@ RSpec.describe Wavify::DSP::Envelope do
 
       expect(processed.samples.last).to be <= 0.5
     end
+
+
+    it "can extend a short source through the release tail" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 32, sample_format: :float)
+      buffer = Wavify::Core::SampleBuffer.new([1.0] * 8, format)
+      env = described_class.new(attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.001)
+
+      rendered = env.render_with_tail(buffer, note_on_duration: 0.001)
+
+      expect(rendered.sample_frame_count).to eq(16)
+      expect(rendered.samples.last).to be_within(0.001).of(0.125)
+      expect(env.tail_duration).to eq(0.001)
+    end
+
+    it "rejects non-finite timing values" do
+      expect do
+        envelope.gain_at(Float::INFINITY, note_on_duration: 0.5)
+      end.to raise_error(Wavify::InvalidParameterError, /finite/)
+    end
   end
 end

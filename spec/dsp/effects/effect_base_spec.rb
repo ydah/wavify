@@ -90,10 +90,22 @@ RSpec.describe Wavify::DSP::Effects::EffectBase do
       impulse = Wavify::Core::SampleBuffer.new([1.0] + Array.new(43, 0.0), runtime_format)
 
       effect.process(impulse)
-      tail = effect.flush(format: output_format)
+      tail = effect.flush(format: output_format).to_a.reduce { |combined, chunk| combined.concat(chunk) }
 
       expect(tail.format).to eq(output_format)
       expect(tail.samples.any? { |sample| sample.abs > 0.0 }).to eq(true)
+    end
+
+
+    it "emits long tails in bounded chunks" do
+      runtime_format = format.with(channels: 1, sample_format: :float, bit_depth: 32)
+      effect = Wavify::DSP::Effects::Delay.new(time: 0.25, feedback: 0.0, mix: 1.0)
+      effect.process(Wavify::Core::SampleBuffer.new([1.0], runtime_format))
+
+      chunks = effect.flush(format: runtime_format).to_a
+
+      expect(chunks.length).to be > 1
+      expect(chunks.map(&:sample_frame_count).max).to be <= described_class::TAIL_CHUNK_FRAMES
     end
   end
 

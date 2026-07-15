@@ -55,7 +55,7 @@ module Wavify
           wet = delayed
 
           output = (dry * (1.0 - @mix)) + (wet * @mix)
-          line[index] = (dry + (wet * @feedback)).clamp(-1.0, 1.0)
+          line[index] = dry + (wet * @feedback)
           @write_indices[channel] = (index + 1) % line.length
 
           output

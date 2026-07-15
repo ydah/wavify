@@ -9,6 +9,10 @@ module Wavify
       TRIANGLE_TABLE_SIZE = 2_048
       TRIANGLE_MAX_HARMONIC = 255
       TRIANGLE_TABLE_CACHE_LIMIT = 8
+      MAX_DURATION_SECONDS = 3_600.0
+      MAX_GENERATE_FRAMES = 50_000_000
+      MAX_FREQUENCY = 1_000_000.0
+      MAX_UNISON = 64
 
       # @param phase [Numeric] initial phase in cycles (`0.0..1.0` wraps)
       def initialize(waveform:, frequency:, amplitude: 1.0, phase: 0.0, pulse_width: 0.5, detune: 0.0, unison: 1,
@@ -17,8 +21,8 @@ module Wavify
         @frequency = validate_frequency!(frequency)
         @amplitude = validate_amplitude!(amplitude)
         @initial_phase = validate_phase!(phase)
-        @phase = @initial_phase
-        @sample_position = 0
+        @voice_phases = nil
+        @voice_frequencies = nil
         @sample_rate = nil
         @pulse_width = validate_pulse_width!(pulse_width)
         @detune = validate_detune!(detune)
@@ -29,8 +33,9 @@ module Wavify
       end
 
       def reset_phase(phase = @initial_phase)
-        @phase = validate_phase!(phase)
-        @sample_position = 0
+        @initial_phase = validate_phase!(phase)
+        @voice_phases = nil
+        @voice_frequencies = nil
         @sample_rate = nil
         reset_pink_noise!
         self
@@ -46,11 +51,15 @@ module Wavify
       def generate(duration_seconds, format:)
         validate_format!(format)
         prepare_sample_rate!(format.sample_rate)
-        unless duration_seconds.is_a?(Numeric) && duration_seconds >= 0
-          raise InvalidParameterError, "duration_seconds must be a non-negative Numeric"
+        unless duration_seconds.is_a?(Numeric) && duration_seconds.respond_to?(:finite?) && duration_seconds.finite? &&
+               duration_seconds.between?(0.0, MAX_DURATION_SECONDS)
+          raise InvalidParameterError, "duration_seconds must be a finite Numeric in 0.0..#{MAX_DURATION_SECONDS}"
         end
 
         sample_frames = (duration_seconds.to_f * format.sample_rate).round
+        if sample_frames > MAX_GENERATE_FRAMES
+          raise InvalidParameterError, "generation is limited to #{MAX_GENERATE_FRAMES} sample frames"
+        end
         samples = Array.new(sample_frames * format.channels)
 
         sample_frames.times do |frame_index|
@@ -58,10 +67,9 @@ module Wavify
           if noise_waveform?
             format.channels.times { |channel| samples[base_index + channel] = scaled_noise_sample }
           else
-            value = sample_at(@sample_position, format.sample_rate)
+            value = next_periodic_sample(format.sample_rate)
             format.channels.times { |channel| samples[base_index + channel] = value }
           end
-          @sample_position += 1
         end
 
         Core::SampleBuffer.new(samples, format)
@@ -77,8 +85,7 @@ module Wavify
 
         Enumerator.new do |yielder|
           loop do
-            value = noise_waveform? ? scaled_noise_sample : sample_at(@sample_position, format.sample_rate)
-            @sample_position += 1
+            value = noise_waveform? ? scaled_noise_sample : next_periodic_sample(format.sample_rate)
             yielder << value
           end
         end
@@ -96,7 +103,10 @@ module Wavify
       end
 
       def validate_frequency!(frequency)
-        raise InvalidParameterError, "frequency must be a positive Numeric" unless frequency.is_a?(Numeric) && frequency.positive?
+        unless frequency.is_a?(Numeric) && frequency.respond_to?(:finite?) && frequency.finite? &&
+               frequency.positive? && frequency <= MAX_FREQUENCY
+          raise InvalidParameterError, "frequency must be a positive finite Numeric <= #{MAX_FREQUENCY}"
+        end
 
         frequency.to_f
       end
@@ -130,12 +140,11 @@ module Wavify
       end
 
       def validate_unison!(unison)
-        voices = Integer(unison)
-        raise InvalidParameterError, "unison must be positive" unless voices.positive?
+        unless unison.is_a?(Integer) && unison.between?(1, MAX_UNISON)
+          raise InvalidParameterError, "unison must be an Integer in 1..#{MAX_UNISON}"
+        end
 
-        voices
-      rescue ArgumentError, TypeError
-        raise InvalidParameterError, "unison must be an Integer"
+        unison
       end
 
       def validate_format!(format)
@@ -147,19 +156,24 @@ module Wavify
           raise InvalidParameterError, "sample_rate cannot change while phase is active; call reset_phase first"
         end
 
+        if !noise_waveform? && oscillator_voice_frequencies.any? { |frequency| frequency > (sample_rate / 2.0) }
+          raise InvalidParameterError, "oscillator frequency must not exceed Nyquist for the output format"
+        end
+
         @sample_rate = sample_rate
+        @voice_frequencies ||= oscillator_voice_frequencies.freeze
+        @voice_phases ||= Array.new(@voice_frequencies.length, @initial_phase)
       end
 
-      def sample_at(index, sample_rate)
-        frequencies = oscillator_voice_frequencies
-        raw = frequencies.sum do |frequency|
-          oscillator_sample(index, sample_rate, frequency)
-        end / frequencies.length
+      def next_periodic_sample(sample_rate)
+        raw = @voice_frequencies.each_with_index.sum do |frequency, voice|
+          oscillator_sample(@voice_phases.fetch(voice), sample_rate, frequency)
+        end / @voice_frequencies.length
+        advance_voice_phases!(sample_rate)
         (raw * @amplitude).clamp(-1.0, 1.0)
       end
 
-      def oscillator_sample(index, sample_rate, frequency)
-        phase = (@phase + (frequency * index.to_f / sample_rate)) % 1.0
+      def oscillator_sample(phase, sample_rate, frequency)
         phase_step = frequency / sample_rate.to_f
         phase_step = 0.5 if phase_step > 0.5
 
@@ -169,6 +183,12 @@ module Wavify
         when :pulse then polyblep_square(phase, phase_step, @pulse_width)
         when :sawtooth then polyblep_saw(phase, phase_step)
         when :triangle then bandlimited_triangle(phase, frequency, sample_rate)
+        end
+      end
+
+      def advance_voice_phases!(sample_rate)
+        @voice_phases.map!.with_index do |phase, voice|
+          (phase + (@voice_frequencies.fetch(voice) / sample_rate.to_f)) % 1.0
         end
       end
 

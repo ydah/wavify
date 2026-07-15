@@ -9,15 +9,30 @@ module Wavify
       RELATIVE_GATE_LU = -10.0
       BLOCK_SECONDS = 0.4
       STEP_SECONDS = 0.1
+      SHORT_TERM_SECONDS = 3.0
+      TRUE_PEAK_OVERSAMPLING = 4
+      TRUE_PEAK_RADIUS = 8
 
       class << self
         # Measures integrated loudness. Inputs shorter than the BS.1770 400 ms
         # block are treated as a single partial block.
-        def integrated(samples, sample_rate:, channels:)
+        def integrated(samples, sample_rate: nil, channels: nil, format: nil, channel_layout: nil)
+          samples, sample_rate, channels, channel_layout = measurement_input(
+            samples,
+            sample_rate: sample_rate,
+            channels: channels,
+            format: format,
+            channel_layout: channel_layout
+          )
           return -Float::INFINITY if samples.empty?
 
           weighted = k_weight(samples, sample_rate: sample_rate, channels: channels)
-          energies = block_energies(weighted, sample_rate: sample_rate, channels: channels)
+          energies = block_energies(
+            weighted,
+            sample_rate: sample_rate,
+            channels: channels,
+            channel_layout: channel_layout
+          )
           absolute_gated = energies.select { |energy| loudness_for_energy(energy) >= ABSOLUTE_GATE_LUFS }
           return -Float::INFINITY if absolute_gated.empty?
 
@@ -26,7 +41,95 @@ module Wavify
           loudness_for_energy(mean(relative_gated))
         end
 
+        # Measures the most recent 400 ms loudness window without gating.
+        def momentary(samples, sample_rate: nil, channels: nil, format: nil, channel_layout: nil)
+          window_loudness(
+            samples,
+            seconds: BLOCK_SECONDS,
+            sample_rate: sample_rate,
+            channels: channels,
+            format: format,
+            channel_layout: channel_layout
+          )
+        end
+
+        # Measures the most recent 3 second loudness window without gating.
+        def short_term(samples, sample_rate: nil, channels: nil, format: nil, channel_layout: nil)
+          window_loudness(
+            samples,
+            seconds: SHORT_TERM_SECONDS,
+            sample_rate: sample_rate,
+            channels: channels,
+            format: format,
+            channel_layout: channel_layout
+          )
+        end
+
+        # Estimates inter-sample true peak with windowed-sinc oversampling.
+        def true_peak(samples, sample_rate: nil, channels: nil, format: nil, oversampling: TRUE_PEAK_OVERSAMPLING)
+          samples, _sample_rate, channels, = measurement_input(
+            samples,
+            sample_rate: sample_rate,
+            channels: channels,
+            format: format,
+            channel_layout: nil
+          )
+          unless [2, 4, 8].include?(oversampling)
+            raise InvalidParameterError, "oversampling must be 2, 4, or 8"
+          end
+          return 0.0 if samples.empty?
+
+          channel_samples = Array.new(channels) { [] }
+          samples.each_with_index { |sample, index| channel_samples.fetch(index % channels) << sample.to_f }
+          channel_samples.map { |values| oversampled_peak(values, oversampling) }.max || 0.0
+        end
+
         private
+
+        def measurement_input(samples, sample_rate:, channels:, format:, channel_layout:)
+          if samples.is_a?(Core::SampleBuffer)
+            format ||= samples.format
+            samples = samples.convert(samples.format.with(sample_format: :float, bit_depth: 32)).samples
+          end
+          if format
+            raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
+
+            sample_rate ||= format.sample_rate
+            channels ||= format.channels
+            channel_layout ||= format.channel_layout
+          end
+          unless samples.is_a?(Array) && samples.all? { |sample| sample.is_a?(Numeric) && sample.respond_to?(:finite?) && sample.finite? }
+            raise InvalidParameterError, "samples must be an Array of finite Numeric values"
+          end
+          unless sample_rate.is_a?(Integer) && sample_rate.positive?
+            raise InvalidParameterError, "sample_rate must be a positive Integer"
+          end
+          unless channels.is_a?(Integer) && channels.positive? && (samples.length % channels).zero?
+            raise InvalidParameterError, "channels must be a positive Integer that divides the sample count"
+          end
+          if channel_layout && (!channel_layout.is_a?(Array) || channel_layout.length != channels)
+            raise InvalidParameterError, "channel_layout must contain one position per channel"
+          end
+
+          [samples, sample_rate, channels, channel_layout]
+        end
+
+        def window_loudness(samples, seconds:, sample_rate:, channels:, format:, channel_layout:)
+          samples, sample_rate, channels, channel_layout = measurement_input(
+            samples,
+            sample_rate: sample_rate,
+            channels: channels,
+            format: format,
+            channel_layout: channel_layout
+          )
+          return -Float::INFINITY if samples.empty?
+
+          frames = [samples.length / channels, (seconds * sample_rate).round].min
+          window = samples.last(frames * channels)
+          weighted = k_weight(window, sample_rate: sample_rate, channels: channels)
+          energy = block_energy(weighted, channels: channels, channel_layout: channel_layout)
+          loudness_for_energy(energy)
+        end
 
         def k_weight(samples, sample_rate:, channels:)
           shelf = high_shelf_coefficients(sample_rate)
@@ -87,12 +190,12 @@ module Wavify
           output
         end
 
-        def block_energies(samples, sample_rate:, channels:)
+        def block_energies(samples, sample_rate:, channels:, channel_layout:)
           frame_count = samples.length / channels
           block_frames = [(BLOCK_SECONDS * sample_rate).round, frame_count].min
           step_frames = [(STEP_SECONDS * sample_rate).round, 1].max
           starts = frame_count <= block_frames ? [0] : (0..(frame_count - block_frames)).step(step_frames)
-          gains = channel_gains(channels)
+          gains = channel_gains(channels, channel_layout)
 
           starts.map do |start_frame|
             channel_squares = Array.new(channels, 0.0)
@@ -107,12 +210,59 @@ module Wavify
           end
         end
 
-        def channel_gains(channels)
-          # Wavify channel order: L, R, C, LFE, Ls, Rs. BS.1770 excludes LFE
-          # and applies +1.5 dB to surround channels.
-          [1.0, 1.0, 1.0, 0.0, 1.41, 1.41].first(channels).tap do |gains|
-            gains.concat(Array.new(channels - gains.length, 1.0))
+        def block_energy(samples, channels:, channel_layout:)
+          frames = samples.length / channels
+          return 0.0 if frames.zero?
+
+          squares = Array.new(channels, 0.0)
+          samples.each_with_index { |sample, index| squares[index % channels] += sample * sample }
+          gains = channel_gains(channels, channel_layout)
+          squares.each_with_index.sum { |sum, channel| gains.fetch(channel) * sum / frames }
+        end
+
+        def channel_gains(channels, channel_layout)
+          layout = channel_layout || Core::Format::DEFAULT_CHANNEL_LAYOUTS[channels]
+          return Array.new(channels, 1.0) unless layout
+
+          layout.map do |position|
+            case position.to_sym
+            when :low_frequency then 0.0
+            when :back_left, :back_right, :back_center, :side_left, :side_right then 1.41
+            else 1.0
+            end
           end
+        end
+
+        def oversampled_peak(samples, factor)
+          peak = samples.map(&:abs).max || 0.0
+          return peak if samples.length < 2
+
+          (0...(samples.length - 1)).each do |index|
+            1.upto(factor - 1) do |step|
+              time = index + (step.to_f / factor)
+              peak = [peak, sinc_interpolate(samples, time).abs].max
+            end
+          end
+          peak
+        end
+
+        def sinc_interpolate(samples, time)
+          center = time.floor
+          start_index = [center - TRUE_PEAK_RADIUS + 1, 0].max
+          end_index = [center + TRUE_PEAK_RADIUS, samples.length - 1].min
+          weighted_sum = 0.0
+          weight_sum = 0.0
+          start_index.upto(end_index) do |index|
+            distance = time - index
+            next if distance.abs >= TRUE_PEAK_RADIUS
+
+            sinc = distance.zero? ? 1.0 : Math.sin(Math::PI * distance) / (Math::PI * distance)
+            window = 0.5 * (1.0 + Math.cos(Math::PI * distance / TRUE_PEAK_RADIUS))
+            weight = sinc * window
+            weighted_sum += samples.fetch(index) * weight
+            weight_sum += weight
+          end
+          weight_sum.zero? ? 0.0 : weighted_sum / weight_sum
         end
 
         def loudness_for_energy(energy)

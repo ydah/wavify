@@ -36,14 +36,20 @@ module Wavify
         # @param buffer [Wavify::Core::SampleBuffer]
         # @return [Wavify::Core::SampleBuffer]
         def process(buffer)
-          processed = @filters.reduce(buffer) do |current, filter|
-            filter.respond_to?(:apply) ? filter.apply(current) : filter.process(current)
-          end
+          raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
+
+          original_format = buffer.format
+          float_format = original_format.with(sample_format: :float, bit_depth: 32)
+          processed = @filters.reduce(buffer.convert(float_format)) do |current, filter|
+            DSP::Processor.process(filter, current)
+          end.convert(original_format)
           @runtime_format = buffer.format
           processed
         end
 
-        alias apply process
+        def apply(buffer)
+          DSP::Processor.render(self, buffer)
+        end
 
         # Resets stateful filters in the chain.
         #
@@ -54,33 +60,41 @@ module Wavify
           self
         end
 
+        def build_runtime
+          self.class.new(@filters.map { |filter| DSP::Processor.build_runtime(filter) })
+        end
+
         # Drains the filters' IIR state through the complete EQ chain.
         def flush(format: nil)
           return nil unless @runtime_format
 
-          runtime_format = @runtime_format
-          frames = (tail_duration * runtime_format.sample_rate).ceil
-          return nil if frames.zero?
-
-          silence = Core::SampleBuffer.new(Array.new(frames * runtime_format.channels, 0.0), runtime_format)
-          tail = process(silence)
-          reset
-          tail.convert(format || runtime_format)
+          Enumerator.new do |yielder|
+            @filters.each_with_index do |filter, index|
+              DSP::Processor.flush(filter, format: format || @runtime_format).each do |tail|
+                processed = @filters.drop(index + 1).reduce(tail) do |current, downstream|
+                  DSP::Processor.process(downstream, current)
+                end
+                yielder << processed
+              end
+            end
+          ensure
+            @runtime_format = nil
+          end
         end
 
         # @return [Float]
         def latency
-          @filters.sum { |filter| filter.respond_to?(:latency) ? filter.latency.to_f : 0.0 }
+          @filters.sum { |filter| DSP::Processor.duration(filter, :latency) }
         end
 
         # @return [Float]
         def lookahead
-          @filters.map { |filter| filter.respond_to?(:lookahead) ? filter.lookahead.to_f : 0.0 }.max || 0.0
+          @filters.sum { |filter| DSP::Processor.duration(filter, :lookahead) }
         end
 
         # @return [Float]
         def tail_duration
-          @filters.map { |filter| filter.respond_to?(:tail_duration) ? filter.tail_duration.to_f : 0.0 }.max || 0.0
+          @filters.sum { |filter| DSP::Processor.duration(filter, :tail_duration) }
         end
       end
     end

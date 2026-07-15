@@ -397,13 +397,7 @@ module Wavify
       end
 
       def invoke_processor(processor, chunk)
-        if processor.respond_to?(:process)
-          processor.process(chunk)
-        elsif processor.respond_to?(:call)
-          processor.call(chunk)
-        else
-          processor.apply(chunk)
-        end
+        DSP::Processor.process(processor, chunk)
       rescue UserCodeError
         raise
       rescue StandardError => e
@@ -423,20 +417,7 @@ module Wavify
       end
 
       def flush_processor(processor, index)
-        return [] unless processor.respond_to?(:flush)
-
-        result = if flush_accepts_format?(processor) && flush_format(index)
-                   processor.flush(format: flush_format(index))
-                 else
-                   processor.flush
-                 end
-        normalize_processor_results(result, "stream processor flush")
-      end
-
-      def flush_accepts_format?(processor)
-        processor.method(:flush).parameters.any? do |kind, name|
-          (%i[key keyreq].include?(kind) && name == :format) || kind == :keyrest
-        end
+        DSP::Processor.flush(processor, format: flush_format(index))
       end
 
       def flush_format(index)
@@ -444,15 +425,7 @@ module Wavify
       end
 
       def processor_duration(processor, method_name)
-        return 0.0 unless processor.respond_to?(method_name)
-
-        value = processor.public_send(method_name)
-        return 0.0 if value.nil?
-        unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite? && value >= 0.0
-          raise InvalidParameterError, "#{method_name} must return a non-negative finite Numeric"
-        end
-
-        value.to_f
+        DSP::Processor.duration(processor, method_name)
       end
 
       def pipeline_tail_duration
@@ -524,23 +497,11 @@ module Wavify
       end
 
       def normalize_processor_results(result, context)
-        return [].each if result.nil?
-        return [coerce_processor_result(result, context)].each if result.is_a?(Audio) || result.is_a?(SampleBuffer)
-        unless result.respond_to?(:each)
-          raise ProcessingError, "#{context} must return Core::SampleBuffer, Audio, an Enumerable of them, or nil"
-        end
-
-        result.lazy.map { |item| coerce_processor_result(item, context) }
+        DSP::Processor.each_buffer(result, context)
       end
 
       def coerce_processor_result(result, context)
-        if result.is_a?(Audio)
-          result.buffer
-        elsif result.is_a?(SampleBuffer)
-          result
-        else
-          raise ProcessingError, "#{context} must return Core::SampleBuffer or Audio"
-        end
+        DSP::Processor.coerce_buffer(result, context)
       end
 
       def detect_output_codec(path_or_io, codec:, filename:)

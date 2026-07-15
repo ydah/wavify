@@ -44,4 +44,30 @@ RSpec.describe Wavify::DSP::LoudnessMeter do
   it "returns negative infinity for silence" do
     expect(described_class.integrated(Array.new(sample_rate, 0.0), sample_rate: sample_rate, channels: 1)).to eq(-Float::INFINITY)
   end
+
+  it "uses explicit channel layout and excludes LFE energy" do
+    format = Wavify::Core::Format.new(
+      channels: 2,
+      sample_rate: sample_rate,
+      bit_depth: 32,
+      sample_format: :float,
+      channel_layout: %i[front_center low_frequency]
+    )
+    main = sine_samples(frequency: 1_000, seconds: 1.0, channels: 1, amplitude: 0.1)
+    samples = main.flat_map { |sample| [sample, 1.0] }
+    buffer = Wavify::Core::SampleBuffer.new(samples, format)
+
+    measured = described_class.integrated(buffer, format: format)
+    reference = described_class.integrated(main, sample_rate: sample_rate, channels: 1)
+
+    expect(measured).to be_within(0.01).of(reference)
+  end
+
+  it "reports momentary, short-term, and inter-sample true peak" do
+    samples = sine_samples(frequency: 1_000, seconds: 3.1, channels: 1, amplitude: 0.5)
+
+    expect(described_class.momentary(samples, sample_rate: sample_rate, channels: 1)).to be_finite
+    expect(described_class.short_term(samples, sample_rate: sample_rate, channels: 1)).to be_finite
+    expect(described_class.true_peak([0.0, 1.0, 0.0, -1.0, 0.0], sample_rate: sample_rate, channels: 1)).to be >= 1.0
+  end
 end
