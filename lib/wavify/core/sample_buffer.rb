@@ -153,6 +153,7 @@ module Wavify
       end
 
       STORAGE_TYPES = %i[array packed].freeze
+      HASH_PROBE_COUNT = 8
 
       attr_reader :format, :duration, :storage
 
@@ -422,9 +423,15 @@ module Wavify
       end
 
       def sample_value_hash(values)
-        values.reduce(@format.hash) do |value, sample|
-          ((value * 31) ^ sample.hash) & 0xFFFFFFFFFFFFFFFF
-        end
+        probe_count = [values.length, HASH_PROBE_COUNT].min
+        return [@format, values.length].hash if probe_count.zero?
+
+        indexes = if probe_count == 1
+                    [0]
+                  else
+                    Array.new(probe_count) { |index| (index * (values.length - 1)) / (probe_count - 1) }
+                  end
+        [@format, values.length, *indexes.map { |index| values.fetch(index) }].hash
       end
 
       def packed_directive_and_width(format)
