@@ -89,6 +89,7 @@ RSpec.describe Wavify::Core::SampleBuffer do
 
       expect(first).to eq(second)
       expect(first).to eq(array)
+      expect(first).not_to receive(:each)
       expect(first.hash).to eq(array.hash)
       expect(first).to be_packed
       expect(second).to be_packed

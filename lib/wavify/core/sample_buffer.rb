@@ -169,6 +169,7 @@ module Wavify
         @format = format
         coerced = coerce_samples(samples, format)
         @sample_count = coerced.length
+        @value_hash = sample_value_hash(coerced)
         @storage_mutex = Mutex.new
         if storage == :packed
           @packed_samples = pack_samples(coerced, format).freeze
@@ -210,7 +211,9 @@ module Wavify
 
         packed_bytes = packed_storage_snapshot
         other_packed_bytes = other.send(:packed_storage_snapshot)
-        return packed_bytes == other_packed_bytes if packed_bytes && other_packed_bytes
+        if @format.sample_format == :pcm && packed_bytes && other_packed_bytes
+          return packed_bytes == other_packed_bytes
+        end
 
         sample_values_equal?(other)
       end
@@ -218,7 +221,7 @@ module Wavify
       alias eql? ==
 
       def hash
-        @value_hash ||= sample_value_hash
+        @value_hash
       end
 
       # Enumerates sample values in interleaved order.
@@ -418,8 +421,8 @@ module Wavify
         @sample_count.times.all? { left.next == right.next }
       end
 
-      def sample_value_hash
-        each.reduce(@format.hash) do |value, sample|
+      def sample_value_hash(values)
+        values.reduce(@format.hash) do |value, sample|
           ((value * 31) ^ sample.hash) & 0xFFFFFFFFFFFFFFFF
         end
       end
