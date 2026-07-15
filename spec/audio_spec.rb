@@ -27,6 +27,7 @@ RSpec.describe Wavify::Audio do
       source_audio = described_class.new(source_buffer)
 
       Tempfile.create(["wavify_audio", ".wav"]) do |file|
+        file.close
         source_audio.write(file.path)
         loaded = described_class.read(file.path)
 
@@ -62,6 +63,7 @@ RSpec.describe Wavify::Audio do
       source_audio = described_class.new(source_buffer)
 
       Tempfile.create(["wavify_audio", ".flac"]) do |file|
+        file.close
         source_audio.write(file.path, codec_options: { block_size: 2 })
 
         metadata = Wavify::Codecs::Flac.metadata(file.path)
@@ -78,6 +80,7 @@ RSpec.describe Wavify::Audio do
       source_audio = described_class.new(source_buffer)
 
       Tempfile.create(["wavify_audio_info", ".wav"]) do |file|
+        file.close
         source_audio.write(file.path, codec_options: { info: { title: "Tone", software: "wavify-spec" } })
 
         metadata = described_class.metadata(file.path)

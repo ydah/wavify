@@ -233,6 +233,7 @@ RSpec.describe Wavify::DSL do
   describe "integration" do
     it "renders and writes audio with Wavify.build" do
       Tempfile.create(["wavify_dsl", ".wav"]) do |file|
+        file.close
         audio = Wavify.build(file.path, format: format, tempo: 120, default_bars: 1) do
           track :lead do
             synth :sine
@@ -449,6 +450,8 @@ RSpec.describe Wavify::DSL do
       Tempfile.create(["wavify_kick", ".wav"]) do |kick|
         Tempfile.create(["wavify_snare", ".wav"]) do |snare|
           sample_format = Wavify::Core::Format::CD_QUALITY
+          kick.close
+          snare.close
           Wavify::Audio.tone(frequency: 90, duration: 0.08, waveform: :sine, format: sample_format)
                        .fade_out(0.05)
                        .write(kick.path)
@@ -481,6 +484,7 @@ RSpec.describe Wavify::DSL do
       Tempfile.create(["wavify_hit", ".wav"]) do |hit|
         sample_format = format
         source = Wavify::Core::SampleBuffer.new([0.0, 0.0, 0.8, 0.8, 0.4, 0.4], sample_format)
+        hit.close
         Wavify::Audio.new(source).write(hit.path)
 
         song = described_class.build_definition(format: format, tempo: 120) do
@@ -502,6 +506,7 @@ RSpec.describe Wavify::DSL do
     it "applies per-sample pitch while rendering" do
       Tempfile.create(["wavify_pitch", ".wav"]) do |hit|
         source = Wavify::Core::SampleBuffer.new([0.2, 0.2, 0.4, 0.4, 0.6, 0.6, 0.8, 0.8], format)
+        hit.close
         Wavify::Audio.new(source).write(hit.path)
 
         song = described_class.build_definition(format: format, tempo: 120) do
@@ -522,6 +527,7 @@ RSpec.describe Wavify::DSL do
     it "rolls pattern probability with a reproducible seed" do
       Tempfile.create(["wavify_probability", ".wav"]) do |hit|
         sample_buffer = Wavify::Core::SampleBuffer.new(Array.new(8, 0.5), format)
+        hit.close
         Wavify::Audio.new(sample_buffer).write(hit.path)
         song = described_class.build_definition(format: format, tempo: 120, random_seed: 123) do
           track :drums do
@@ -544,6 +550,8 @@ RSpec.describe Wavify::DSL do
       Tempfile.create(["wavify_overlap_a", ".wav"]) do |first|
         Tempfile.create(["wavify_overlap_b", ".wav"]) do |second|
           audio_sample = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(Array.new(8, 1.0), format))
+          first.close
+          second.close
           audio_sample.write(first.path)
           audio_sample.write(second.path)
           song = described_class.build_definition(format: format, tempo: 120) do

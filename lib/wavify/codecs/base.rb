@@ -7,6 +7,9 @@ module Wavify
     #
     # Concrete codecs implement the class methods below.
     class Base
+      READ_CHUNK_SIZE = 64 * 1024
+      private_constant :READ_CHUNK_SIZE
+
       class << self
         # Returns whether this codec can read the given path/IO.
         #
@@ -113,7 +116,7 @@ module Wavify
         def read_exact(io, size, message)
           data = +"".b
           while data.bytesize < size
-            chunk = io.read(size - data.bytesize)
+            chunk = io.read([size - data.bytesize, READ_CHUNK_SIZE].min)
             break if chunk.nil? || chunk.empty?
 
             data << chunk

@@ -41,6 +41,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Fixed sequencer release tails, chord/track headroom, pattern probability, duplicate tracks, preset sample paths, and stream tail duration limits.
 - Fixed arrangement timing across silent track sections, packed-buffer concurrency, projected metadata coordinates, and apply-only effect-chain tails.
 - Fixed CLI option ordering, help/version exit behavior, reproducible `--seed` rendering, optional OGG test setup, and codec/effect registry synchronization.
+- Fixed Windows path-output coverage by closing destination handles before atomic replacement, and bounded exact codec reads so malformed AIFF sizes stay within the public error contract.
 
 ## [0.1.0] - 2026-03-04
 

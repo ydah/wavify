@@ -62,6 +62,7 @@ RSpec.describe Wavify::CLI do
 
   it "generates a tone file" do
     Tempfile.create(["wavify-cli-tone", ".wav"]) do |file|
+      file.close
       status, stdout, = run_cli(["tone", "--freq", "220", "--duration", "0.01", file.path])
 
       expect(status).to eq(0)
@@ -75,6 +76,7 @@ RSpec.describe Wavify::CLI do
       Tempfile.create(["wavify-cli-output", ".aiff"]) do |output|
         buffer = Wavify::Core::SampleBuffer.new([0, 100, -100], format)
         Wavify::Codecs::Wav.write(source.path, buffer)
+        output.close
 
         status, stdout, = run_cli(["convert", source.path, output.path, "--sample-rate", "16000"])
 
@@ -90,6 +92,7 @@ RSpec.describe Wavify::CLI do
       Tempfile.create(["wavify-cli-output", ".wav"]) do |output|
         buffer = Wavify::Core::SampleBuffer.new([0, 100, -100], format)
         Wavify::Codecs::Wav.write(source.path, buffer)
+        output.close
 
         status, stdout, stderr = run_cli(["normalize", "--target", "-3", source.path, output.path])
 
@@ -105,6 +108,7 @@ RSpec.describe Wavify::CLI do
       Tempfile.create(["wavify-cli-chain-output", ".wav"]) do |output|
         buffer = Wavify::Core::SampleBuffer.new([0.0, 0.5, 0.5, 0.5], format.with(sample_format: :float, bit_depth: 32))
         Wavify::Codecs::Wav.write(source.path, buffer)
+        output.close
 
         status, stdout, = run_cli(["chain", source.path, output.path, "--gain", "-6", "--fade-in", "0.0001"])
 
@@ -126,6 +130,7 @@ RSpec.describe Wavify::CLI do
       song_file.flush
 
       Tempfile.create(["wavify-cli-render", ".wav"]) do |output|
+        output.close
         expect(Wavify::DSL).to receive(:build_definition).with(hash_including(random_seed: 123)).and_call_original
         status, stdout, = run_cli(
           [

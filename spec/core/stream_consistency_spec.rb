@@ -10,6 +10,8 @@ RSpec.describe "streaming and offline consistency" do
   it "matches offline gain processing for chunked write pipelines" do
     Tempfile.create(["wavify-stream-source", ".wav"]) do |input|
       Tempfile.create(["wavify-stream-output", ".wav"]) do |output|
+        input.close
+        output.close
         source.write(input.path)
 
         stream_gain = lambda do |buffer|

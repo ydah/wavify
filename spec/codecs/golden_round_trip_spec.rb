@@ -14,6 +14,7 @@ RSpec.describe "codec golden round trips" do
       ".flac" => { codec_options: { block_size: 2 } }
     }.each do |extension, write_options|
       Tempfile.create(["wavify-golden", extension]) do |file|
+        file.close
         audio.write(file.path, **write_options)
         loaded = Wavify::Audio.read(file.path)
 
@@ -26,6 +27,7 @@ RSpec.describe "codec golden round trips" do
 
   it "round-trips raw PCM when explicit format metadata is supplied" do
     Tempfile.create(["wavify-golden", ".raw"]) do |file|
+      file.close
       audio.write(file.path, format: format)
       loaded = Wavify::Audio.read(file.path, format: format)
 
