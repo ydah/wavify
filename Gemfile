@@ -10,7 +10,7 @@ gem "benchmark", "~> 0.4"
 gem "rake", "~> 13.2"
 gem "rubocop", "~> 1.76", require: false
 gem "rspec", "~> 3.13"
-gem "simplecov", "~> 0.22", require: false
+gem "simplecov", "~> 1.0", require: false
 gem "yard", "~> 0.9.36", require: false
 
 group :ogg do
