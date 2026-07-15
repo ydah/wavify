@@ -46,25 +46,33 @@ def build_song
     end
 
     arrange do
-      section :intro, bars: 1, tracks: %i[kick hat bass]
-      section :groove, bars: 3, tracks: %i[kick snare hat bass]
+      section :intro, bars: 1, tracks: %i[kick hat bass], markers: [:intro]
+      section :groove, bars: 1, tracks: %i[kick snare hat bass], repeat: 3, markers: [:groove]
     end
   end
 end
 
 def process_mix(audio)
   audio
-    .apply(Wavify::Effects::Compressor.new(threshold: -14, ratio: 3.0, attack: 0.003, release: 0.08))
     .apply(Wavify::Effects::Reverb.new(room_size: 0.25, damping: 0.4, mix: 0.12))
-    .normalize(target_db: -1.0)
+    .apply(
+      Wavify::Effects::MasteringChain.new(
+        highpass: 25.0,
+        presence: 1.0,
+        threshold: -14,
+        ratio: 3.0,
+        ceiling: -1.0
+      )
+    )
 end
 
 FileUtils.mkdir_p(OUTPUT_DIR)
 
 song = build_song
+song.validate!
 timeline = song.timeline
 raw_mix = song.render
-final_mix = process_mix(raw_mix).convert(Wavify::Core::Format::CD_QUALITY)
+final_mix = process_mix(raw_mix).convert(Wavify::Core::Format::CD_QUALITY, dither: true, dither_seed: 0)
 final_mix.write(OUTPUT_PATH)
 
 puts "Wrote #{OUTPUT_PATH}"

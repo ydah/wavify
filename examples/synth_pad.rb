@@ -12,15 +12,15 @@ format = Wavify::Core::Format.new(channels: 2, sample_rate: 48_000, bit_depth: 3
 audio = Wavify.build(nil, format: format, tempo: 72, default_bars: 4) do
   track :pad do
     synth :triangle
-    chords %w[Cm9 Abmaj7 Ebmaj7 Bbsus2]
-    envelope attack: 0.25, decay: 0.5, sustain: 0.75, release: 0.9
+    chords %w[Cm9 Abmaj7 Ebmaj7 Bbsus2], voicing: :open
+    envelope attack: 0.25, hold: 0.05, decay: 0.5, sustain: 0.75, release: 0.9, curve: :log
     gain(-12)
   end
 
   track :lead do
     synth :sine
     notes "G4 Bb4 C5 D5 Eb5 D5 C5 Bb4", resolution: 8
-    envelope attack: 0.02, decay: 0.1, sustain: 0.6, release: 0.25
+    envelope attack: 0.02, decay: 0.1, sustain: 0.6, release: 0.25, curve: :exp
     gain(-18)
     pan(0.1)
   end
@@ -29,14 +29,15 @@ end
 processed = audio
             .apply(Wavify::Effects::Chorus.new(rate: 0.3, depth: 0.45, mix: 0.35))
             .apply(Wavify::Effects::Reverb.new(room_size: 0.7, damping: 0.5, mix: 0.25))
+            .apply(Wavify::Effects::MasteringChain.new(highpass: 30.0, presence: 0.8, ceiling: -1.0))
             .fade_in(0.2)
             .fade_out(0.6)
-            .normalize(target_db: -1.0)
 
 FileUtils.mkdir_p(OUTPUT_DIR)
-processed.convert(Wavify::Core::Format::CD_QUALITY).write(OUTPUT_PATH)
+processed.convert(Wavify::Core::Format::CD_QUALITY, dither: true, dither_seed: 0).write(OUTPUT_PATH)
 
 puts "Wrote #{OUTPUT_PATH}"
 puts "  duration: #{processed.duration}"
 puts "  peak:     #{processed.peak_amplitude.round(4)}"
 puts "  rms:      #{processed.rms_amplitude.round(4)}"
+puts "  loudness: #{processed.lufs.round(2)} LUFS"

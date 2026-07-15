@@ -12,12 +12,11 @@ def render_format
 end
 
 def place(audio, at:, total_length:, format:)
-  head = Wavify::Audio.silence(at, format: format)
-  clip = Wavify::Audio.new(head.buffer + audio.buffer)
+  clip = audio.convert(format).pad_start(at)
   remaining = total_length - clip.duration.total_seconds
   return clip if remaining <= 0.0
 
-  Wavify::Audio.new(clip.buffer + Wavify::Audio.silence(remaining, format: format).buffer)
+  clip.pad_end(remaining)
 end
 
 def drone_layer(frequency, duration, format)
@@ -29,7 +28,7 @@ def drone_layer(frequency, duration, format)
                   .gain(-30)
                   .fade_in(1.5)
                   .fade_out(1.2)
-  Wavify::Audio.mix(base, shimmer)
+  Wavify::Audio.mix(base, shimmer, strategy: :none, format: format)
 end
 
 def riser(duration, format)
@@ -42,13 +41,14 @@ def riser(duration, format)
                  .fade_out(0.04)
   end
 
-  combined = layers.reduce { |memo, audio| Wavify::Audio.new(memo.buffer + audio.buffer) }
+  combined = layers.reduce(&:concat)
   noise = Wavify::Audio.tone(frequency: 1.0, duration: duration, waveform: :white_noise, format: format)
                 .gain(-33)
                 .fade_in(duration * 0.7)
                 .fade_out(duration * 0.1)
                 .apply(Wavify::DSP::Filter.highpass(cutoff: 2_500.0))
-  Wavify::Audio.mix(combined, noise).apply(Wavify::Effects::Chorus.new(rate: 0.5, depth: 0.35, mix: 0.25))
+  Wavify::Audio.mix(combined, noise, strategy: :none, format: format)
+               .apply(Wavify::Effects::Chorus.new(rate: 0.5, depth: 0.35, mix: 0.25))
 end
 
 def impact(format)
@@ -63,7 +63,7 @@ def impact(format)
                 .gain(-20)
                 .fade_out(0.015)
 
-  Wavify::Audio.mix(low, noise, click)
+  Wavify::Audio.mix(low, noise, click, strategy: :none, format: format)
                .apply(Wavify::Effects::Distortion.new(drive: 0.18, tone: 0.6, mix: 0.16))
                .normalize(target_db: -3.5)
 end
@@ -78,9 +78,16 @@ end
 
 def master(audio)
   audio
-    .apply(Wavify::Effects::Compressor.new(threshold: -16, ratio: 3.2, attack: 0.004, release: 0.1))
     .apply(Wavify::Effects::Reverb.new(room_size: 0.45, damping: 0.5, mix: 0.18))
-    .normalize(target_db: -1.0)
+    .apply(
+      Wavify::Effects::MasteringChain.new(
+        highpass: 28.0,
+        presence: 1.0,
+        threshold: -16,
+        ratio: 3.2,
+        ceiling: -1.0
+      )
+    )
     .fade_in(0.08)
     .fade_out(1.2)
 end
@@ -90,8 +97,10 @@ def build_scene
   total_length = 12.0
 
   base_drone = Wavify::Audio.mix(
-    drone_layer(110.0, total_length, format).pan(-0.15),
-    drone_layer(146.83, total_length, format).pan(0.14)
+    drone_layer(110.0, total_length, format).balance(-0.15),
+    drone_layer(146.83, total_length, format).balance(0.14),
+    strategy: :none,
+    format: format
   )
   pulse = Wavify::Audio.tone(frequency: 2.0, duration: 3.2, waveform: :sine, format: format)
                  .apply(Wavify::DSP::Filter.lowpass(cutoff: 180.0))
@@ -103,13 +112,13 @@ def build_scene
   tail = place(reverse_tail(format), at: 8.15, total_length: total_length, format: format)
   pulse_layer = place(pulse, at: 4.9, total_length: total_length, format: format)
 
-  Wavify::Audio.mix(base_drone, pulse_layer, build, tail, hit)
+  Wavify::Audio.mix(base_drone, pulse_layer, build, tail, hit, strategy: :none, format: format)
 end
 
 FileUtils.mkdir_p(OUTPUT_DIR)
 
 raw = build_scene
-final = master(raw).convert(Wavify::Core::Format::CD_QUALITY)
+final = master(raw).convert(Wavify::Core::Format::CD_QUALITY, dither: true, dither_seed: 0)
 final.write(OUTPUT_PATH)
 
 puts "Wrote #{OUTPUT_PATH}"

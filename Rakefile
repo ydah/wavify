@@ -151,6 +151,12 @@ end
 
 namespace :docs do
   def example_scripts
+    Dir.glob(File.join(__dir__, "examples", "*.rb")).map do |path|
+      path.delete_prefix("#{__dir__}/")
+    end.freeze
+  end
+
+  def smoke_example_scripts
     %w[
       examples/format_convert.rb
       examples/synth_pad.rb
@@ -163,6 +169,12 @@ namespace :docs do
     ruby = RbConfig.ruby
     success = system(ruby, File.expand_path(path, __dir__))
     abort("script failed: #{path}") unless success
+  end
+
+  def check_ruby_script(path)
+    ruby = RbConfig.ruby
+    success = system(ruby, "-c", File.expand_path(path, __dir__), out: File::NULL)
+    abort("script syntax failed: #{path}") unless success
   end
 
   desc "Generate YARD docs into doc/"
@@ -192,9 +204,17 @@ namespace :docs do
     puts format("docs check ok: %.2f%% >= %.2f%%", percent, minimum)
   end
 
-  desc "Smoke-run short example scripts (self-contained demo mode)"
+  desc "Check all examples and run smoke examples (EXAMPLES=all runs every script)"
   task :examples do
-    example_scripts.each do |script|
+    example_scripts.each { |script| check_ruby_script(script) }
+    scope = ENV.fetch("EXAMPLES", "smoke")
+    scripts = case scope
+              when "smoke" then smoke_example_scripts
+              when "all" then example_scripts
+              else abort("EXAMPLES must be smoke or all")
+              end
+
+    scripts.each do |script|
       puts "== running #{script}"
       run_ruby_script(script)
     end

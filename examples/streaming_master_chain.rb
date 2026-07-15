@@ -8,42 +8,6 @@ OUTPUT_DIR = File.expand_path("../tmp/examples", __dir__)
 DEMO_INPUT_PATH = File.join(OUTPUT_DIR, "streaming_master_chain_source.wav")
 DEMO_OUTPUT_PATH = File.join(OUTPUT_DIR, "streaming_master_chain_output.aiff")
 
-class ChunkMeter
-  attr_reader :chunks, :peak
-
-  def initialize
-    @chunks = 0
-    @peak = 0.0
-  end
-
-  def call(buffer)
-    @chunks += 1
-    float = buffer.convert(buffer.format.with(sample_format: :float, bit_depth: 32))
-    chunk_peak = float.samples.map(&:abs).max || 0.0
-    @peak = chunk_peak if chunk_peak > @peak
-    buffer
-  end
-end
-
-class StereoWidthProcessor
-  def initialize(width: 1.2)
-    @width = width.to_f
-  end
-
-  def call(buffer)
-    return buffer unless buffer.format.channels == 2
-
-    float_format = buffer.format.with(sample_format: :float, bit_depth: 32)
-    float = buffer.convert(float_format)
-    widened = float.samples.each_slice(2).flat_map do |left, right|
-      mid = (left + right) * 0.5
-      side = ((left - right) * 0.5) * @width
-      [(mid + side).clamp(-1.0, 1.0), (mid - side).clamp(-1.0, 1.0)]
-    end
-    Wavify::Core::SampleBuffer.new(widened, float_format).convert(buffer.format)
-  end
-end
-
 def render_format
   Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
 end
@@ -85,26 +49,50 @@ def build_source(path)
     end
   end
 
+  song.validate!
   source = song.render
               .apply(Wavify::Effects::Reverb.new(room_size: 0.28, damping: 0.42, mix: 0.1))
               .normalize(target_db: -3.0)
-  source.convert(Wavify::Core::Format::CD_QUALITY).write(path)
+  source.convert(Wavify::Core::Format::CD_QUALITY, dither: true, dither_seed: 0).write(path)
   source
 end
 
 def process_stream(input_path, output_path)
-  meter = ChunkMeter.new
-  highpass = Wavify::DSP::Filter.highpass(cutoff: 120.0)
+  metadata = Wavify::Audio.metadata(input_path)
+  float_format = metadata.fetch(:format).with(sample_format: :float, bit_depth: 32)
+  meter_readings = []
+  progress_updates = []
   chain = Wavify::Audio.stream(input_path, chunk_size: 2_048)
-                     .pipe(meter)
-                     .pipe(->(chunk) { highpass.apply(chunk) })
-                     .pipe(Wavify::Effects::Compressor.new(threshold: -18, ratio: 2.6, attack: 0.006, release: 0.12))
-                     .pipe(StereoWidthProcessor.new(width: 1.25))
-                     .pipe(Wavify::Effects::Chorus.new(rate: 0.24, depth: 0.2, mix: 0.16))
-                     .pipe(Wavify::Effects::Delay.new(time: 0.14, feedback: 0.18, mix: 0.1))
+                     .map_chunks(name: :float_workspace) { |chunk| chunk.convert(float_format) }
+                     .meter { |stats| meter_readings << stats }
+                     .progress(total_frames: metadata.fetch(:sample_frame_count)) { |stats| progress_updates << stats }
+                     .pipe(
+                       Wavify::Effects::Chorus.new(rate: 0.24, depth: 0.2, mix: 0.16),
+                       name: :chorus
+                     )
+                     .pipe(
+                       Wavify::Effects::Delay.new(time: 0.14, feedback: 0.18, mix: 0.1),
+                       name: :delay
+                     )
+                     .pipe(Wavify::Effects::StereoWidener.new(width: 1.25), name: :stereo_width)
+                     .pipe(
+                       Wavify::Effects::MasteringChain.new(
+                         highpass: 30.0,
+                         presence: 1.0,
+                         threshold: -18,
+                         ratio: 2.6,
+                         ceiling: -1.0
+                       ),
+                       name: :mastering
+                     )
 
   chain.write_to(output_path, format: Wavify::Core::Format::CD_QUALITY)
-  meter
+  {
+    chunks: meter_readings.length,
+    peak: meter_readings.map { |stats| stats.fetch(:peak_amplitude) }.max || 0.0,
+    processed_frames: progress_updates.last&.fetch(:sample_frame_count, 0) || 0,
+    pipeline: chain.pipeline_steps.map { |step| step.fetch(:name) }
+  }
 end
 
 if ARGV.include?("-h") || ARGV.include?("--help")
@@ -117,13 +105,15 @@ input_path = ARGV[0] || DEMO_INPUT_PATH
 output_path = ARGV[1] || DEMO_OUTPUT_PATH
 
 build_source(input_path) unless ARGV[0]
-meter = process_stream(input_path, output_path)
+summary = process_stream(input_path, output_path)
 source = Wavify::Audio.read(input_path)
 rendered = Wavify::Audio.read(output_path)
 
 puts "Processed #{input_path} -> #{output_path}"
 puts "  source duration:  #{source.duration}"
 puts "  output duration:  #{rendered.duration}"
-puts "  chunks processed: #{meter.chunks}"
-puts "  input peak seen:  #{meter.peak.round(4)}"
+puts "  chunks processed: #{summary.fetch(:chunks)}"
+puts "  frames processed: #{summary.fetch(:processed_frames)}"
+puts "  input peak seen:  #{summary.fetch(:peak).round(4)}"
 puts "  output peak:      #{rendered.peak_amplitude.round(4)}"
+puts "  pipeline:         #{summary.fetch(:pipeline).join(' -> ')}"

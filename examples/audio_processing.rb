@@ -14,14 +14,12 @@ def build_demo_recording
   format = float_format
   lead = Wavify::Audio.tone(frequency: 220.0, duration: 1.0, waveform: :sine, format: format).gain(-12)
   harmony = Wavify::Audio.tone(frequency: 330.0, duration: 1.0, waveform: :triangle, format: format).gain(-16)
-  body = Wavify::Audio.mix(lead, harmony)
+  body = Wavify::Audio.mix(lead, harmony, strategy: :none, format: format)
 
   noise = Wavify::Audio.tone(frequency: 1.0, duration: body.duration.total_seconds, waveform: :white_noise, format: format).gain(-30)
-  signal = Wavify::Audio.mix(body, noise)
+  signal = Wavify::Audio.mix(body, noise, strategy: :none, format: format)
 
-  head = Wavify::Audio.silence(0.15, format: format)
-  tail = Wavify::Audio.silence(0.2, format: format)
-  Wavify::Audio.new(head.buffer + signal.buffer + tail.buffer)
+  signal.pad_start(0.15).pad_end(0.2)
 end
 
 def process(audio)
@@ -29,21 +27,29 @@ def process(audio)
     .trim(threshold: 0.02)
     .fade_in(0.01)
     .fade_out(0.08)
-    .apply(Wavify::Effects::Compressor.new(threshold: -18, ratio: 3.5, attack: 0.005, release: 0.08))
     .apply(Wavify::Effects::Distortion.new(drive: 0.2, tone: 0.65, mix: 0.12))
-    .normalize(target_db: -1.0)
+    .apply(
+      Wavify::Effects::MasteringChain.new(
+        highpass: 30.0,
+        presence: 0.5,
+        threshold: -18,
+        ratio: 3.5,
+        ceiling: -1.0
+      )
+    )
 end
 
 def process_file(input_path, output_path)
   source = Wavify::Audio.read(input_path)
   processed = process(source)
-  processed.convert(Wavify::Core::Format::CD_QUALITY).write(output_path)
+  processed.convert(Wavify::Core::Format::CD_QUALITY, dither: true, dither_seed: 0).write(output_path)
 
   puts "Processed #{input_path} -> #{output_path}"
   puts "  source duration:    #{source.duration}"
   puts "  processed duration: #{processed.duration}"
   puts "  source peak:        #{source.peak_amplitude.round(4)}"
   puts "  output peak:        #{processed.peak_amplitude.round(4)}"
+  puts "  output loudness:    #{processed.lufs.round(2)} LUFS"
 end
 
 def run_demo
@@ -52,8 +58,8 @@ def run_demo
   output_path = File.join(OUTPUT_DIR, "audio_processing_output.wav")
 
   source = build_demo_recording
-  source.convert(Wavify::Core::Format::CD_QUALITY).write(source_path)
-  process(source).convert(Wavify::Core::Format::CD_QUALITY).write(output_path)
+  source.convert(Wavify::Core::Format::CD_QUALITY, dither: true, dither_seed: 0).write(source_path)
+  process(source).convert(Wavify::Core::Format::CD_QUALITY, dither: true, dither_seed: 1).write(output_path)
 
   puts "Generated demo processing files:"
   puts "  #{source_path}"

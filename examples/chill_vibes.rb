@@ -12,11 +12,6 @@ def render_format
   Wavify::Core::Format.new(channels: 2, sample_rate: 48_000, bit_depth: 32, sample_format: :float)
 end
 
-def place(audio, at:, format:)
-  head = Wavify::Audio.silence(at, format: format)
-  Wavify::Audio.new(head.buffer + audio.buffer)
-end
-
 def kick_sample(format)
   body = Wavify::Audio.tone(frequency: 50.0, duration: 0.2, waveform: :sine, format: format)
                      .fade_out(0.17)
@@ -27,7 +22,7 @@ def kick_sample(format)
                       .gain(-26)
                       .apply(Wavify::DSP::Filter.highpass(cutoff: 3_000.0))
                       .fade_out(0.017)
-  Wavify::Audio.mix(body, thump, click).normalize(target_db: -5.0)
+  Wavify::Audio.mix(body, thump, click, strategy: :none, format: format).normalize(target_db: -5.0)
 end
 
 def snare_sample(format)
@@ -38,7 +33,7 @@ def snare_sample(format)
   tone = Wavify::Audio.tone(frequency: 190.0, duration: 0.11, waveform: :triangle, format: format)
                      .gain(-21)
                      .fade_out(0.09)
-  Wavify::Audio.mix(noise, tone).normalize(target_db: -8.0)
+  Wavify::Audio.mix(noise, tone, strategy: :none, format: format).normalize(target_db: -8.0)
 end
 
 def hat_sample(format)
@@ -55,8 +50,10 @@ def shaker_sample(format)
                        .apply(Wavify::DSP::Filter.bandpass(center: 5_200.0, bandwidth: 3_000.0))
                        .fade_out(0.08)
   Wavify::Audio.mix(
-    place(burst, at: 0.0, format: format),
-    place(burst.gain(-3), at: 0.02, format: format)
+    burst,
+    burst.gain(-3).pad_start(0.02),
+    strategy: :none,
+    format: format
   ).normalize(target_db: -12.0)
 end
 
@@ -69,15 +66,15 @@ def write_drum_samples(format)
     shaker: File.join(SAMPLE_DIR, "shaker.wav")
   }
 
-  kick_sample(format).convert(Wavify::Core::Format::CD_QUALITY).write(paths.fetch(:kick))
-  snare_sample(format).convert(Wavify::Core::Format::CD_QUALITY).write(paths.fetch(:snare))
-  hat_sample(format).convert(Wavify::Core::Format::CD_QUALITY).write(paths.fetch(:hat))
-  shaker_sample(format).convert(Wavify::Core::Format::CD_QUALITY).write(paths.fetch(:shaker))
+  kick_sample(format).convert(Wavify::Core::Format::CD_QUALITY, dither: true, dither_seed: 0).write(paths.fetch(:kick))
+  snare_sample(format).convert(Wavify::Core::Format::CD_QUALITY, dither: true, dither_seed: 1).write(paths.fetch(:snare))
+  hat_sample(format).convert(Wavify::Core::Format::CD_QUALITY, dither: true, dither_seed: 2).write(paths.fetch(:hat))
+  shaker_sample(format).convert(Wavify::Core::Format::CD_QUALITY, dither: true, dither_seed: 3).write(paths.fetch(:shaker))
   paths
 end
 
 def build_song(format:, sample_paths:)
-  Wavify::DSL.build_definition(format: format, tempo: 88, beats_per_bar: 4, default_bars: 2) do
+  Wavify::DSL.build_definition(format: format, tempo: 88, beats_per_bar: 4, default_bars: 2, random_seed: 88) do
     track :drums do
       sample :kick, sample_paths.fetch(:kick)
       sample :snare, sample_paths.fetch(:snare)
@@ -85,8 +82,8 @@ def build_song(format:, sample_paths:)
       sample :shaker, sample_paths.fetch(:shaker)
       pattern :kick, "X...x...X...x..."
       pattern :snare, "....x.......x..."
-      pattern :hat, "x.x.x.x.x.x.x.x."
-      pattern :shaker, "..x...x...x...x."
+      pattern :hat, "x.x.x.x.x.x.x.x:2-"
+      pattern :shaker, "..x...x...x...x?65-"
       effect :compressor, threshold: -22, ratio: 2.0, attack: 0.003, release: 0.08
       effect :reverb, room_size: 0.28, damping: 0.45, mix: 0.09
       gain(-7)
@@ -121,21 +118,28 @@ def build_song(format:, sample_paths:)
     end
 
     arrange do
-      section :intro, bars: 2, tracks: %i[drums keys]
-      section :groove, bars: 4, tracks: %i[drums bass keys]
-      section :lift, bars: 2, tracks: %i[drums bass keys topline]
-      section :breakdown, bars: 2, tracks: %i[keys topline]
-      section :outro, bars: 2, tracks: %i[drums bass keys]
+      section :intro, bars: 2, tracks: %i[drums keys], markers: [:intro]
+      section :groove, bars: 2, tracks: %i[drums bass keys], repeat: 2, markers: [:groove]
+      section :lift, bars: 2, tracks: %i[drums bass keys topline], markers: [:lift]
+      section :breakdown, bars: 2, tracks: %i[keys topline], markers: [:breakdown]
+      section :outro, bars: 2, tracks: %i[drums bass keys], markers: [:outro]
     end
   end
 end
 
 def master(audio)
   audio
-    .apply(Wavify::Effects::Compressor.new(threshold: -17, ratio: 2.4, attack: 0.004, release: 0.11))
     .apply(Wavify::Effects::Reverb.new(room_size: 0.42, damping: 0.53, mix: 0.14))
     .apply(Wavify::Effects::Chorus.new(rate: 0.2, depth: 0.2, mix: 0.08))
-    .normalize(target_db: -1.0)
+    .apply(
+      Wavify::Effects::MasteringChain.new(
+        highpass: 28.0,
+        presence: 0.8,
+        threshold: -17,
+        ratio: 2.4,
+        ceiling: -1.0
+      )
+    )
     .fade_in(0.2)
     .fade_out(1.0)
 end
@@ -152,10 +156,11 @@ FileUtils.mkdir_p(OUTPUT_DIR)
 format = render_format
 sample_paths = write_drum_samples(format)
 song = build_song(format: format, sample_paths: sample_paths)
+song.validate!(deep: true)
 
 timeline = song.timeline
 raw = song.render
-final = master(raw).convert(Wavify::Core::Format::CD_QUALITY)
+final = master(raw).convert(Wavify::Core::Format::CD_QUALITY, dither: true, dither_seed: 4)
 final.write(OUTPUT_PATH)
 
 puts "Wrote #{OUTPUT_PATH}"

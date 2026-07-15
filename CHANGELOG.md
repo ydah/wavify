@@ -27,6 +27,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Moved general `InvalidParameterError` failures out of the DSP-specific error hierarchy.
 - Replaced triangle generation with a band-limited wavetable and FLAC fixed LPC coefficients with Levinson–Durbin analysis.
 - Added adaptive FLAC Rice partition selection and removed frame-array/flatten allocation passes from format conversion.
+- Refreshed all runnable examples for current mastering, streaming, conversion, and sequencer APIs, with an opt-in full example smoke run.
 
 ### Removed
 
@@ -47,6 +48,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Restored eager arrangement validation while keeping repeat expansion lazy, and reused sequencer engines across repeated tempo/meter sections.
 - Normalized explicit nil channel layouts, made dynamic processor flush dispatch format-aware, and preserved above-full-scale Automation gain in float workspaces.
 - Documented unclipped float mixing and silent-by-default WAV/AIFF warnings, and covered OGG tempfile cleanup on parser failures.
+- Fixed offline and streaming runtime construction for mastering and podcast preset chains.
 
 ## [0.1.0] - 2026-03-04
 

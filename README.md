@@ -351,7 +351,7 @@ YARD_MINIMUM=85 bundle exec rake docs:check
 bundle exec rake docs:all
 ```
 
-`docs:examples` smoke-runs the self-contained example scripts. `docs:yard` generates YARD output under `doc/`. `docs:check` enforces the configured YARD documentation percentage.
+`docs:examples` syntax-checks every example and smoke-runs the shorter scripts. Set `EXAMPLES=all` to run all examples end to end. `docs:yard` generates YARD output under `doc/`. `docs:check` enforces the configured YARD documentation percentage.
 
 Benchmarks:
 

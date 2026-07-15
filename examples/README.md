@@ -1,6 +1,6 @@
 # Examples
 
-Examples write generated files under `tmp/examples/`.
+Examples are self-contained and write generated files under `tmp/examples/`.
 
 ```bash
 ruby examples/synth_pad.rb
@@ -13,17 +13,34 @@ ruby examples/streaming_master_chain.rb
 ruby examples/cinematic_transition.rb
 ```
 
-Run the short smoke examples through the development task:
+The examples cover these current APIs:
+
+- `format_convert.rb`: windowed-sinc resampling and deterministic TPDF dither
+- `audio_processing.rb`: immutable transforms and `MasteringChain`
+- `synth_pad.rb`: chord voicing, AHDSR curves, effects, and mastering
+- `drum_machine.rb`: arranged synth tracks, section repeats, and markers
+- `chill_vibes.rb`: sample patterns, probability, ratchets, and deep validation
+- `hybrid_arrangement.rb`: sample/synth arrangements with section tempo changes
+- `streaming_master_chain.rb`: float workspaces, stateful processors, meter/progress, and named pipeline steps
+- `cinematic_transition.rb`: unclipped float layering and final limiting
+
+Syntax-check every example and run the four shorter smoke examples:
 
 ```bash
 bundle exec rake docs:examples
 ```
 
-Use the shorter examples first:
+Run all eight examples end to end:
+
+```bash
+EXAMPLES=all bundle exec rake docs:examples
+```
+
+The default smoke set is:
 
 - `synth_pad.rb`
 - `drum_machine.rb`
 - `audio_processing.rb`
 - `format_convert.rb`
 
-Use the arrangement examples when testing the DSL and longer rendering flows; they are intentionally not part of the default smoke task.
+The arrangement examples render longer audio and are intentionally not executed by the default smoke task, but they are always syntax-checked.

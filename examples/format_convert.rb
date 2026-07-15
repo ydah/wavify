@@ -35,10 +35,21 @@ def preset_format(name)
   end
 end
 
+def convert_audio(audio, target_format)
+  dither = target_format.sample_format == :pcm &&
+           (audio.format.sample_format == :float || audio.format.bit_depth > target_format.bit_depth)
+  audio.convert(
+    target_format,
+    dither: dither,
+    dither_seed: 0,
+    resampler: :windowed_sinc
+  )
+end
+
 def convert_file(input_path, output_path, preset_name)
   audio = Wavify::Audio.read(input_path)
   target_format = preset_format(preset_name) || audio.format
-  converted = audio.convert(target_format)
+  converted = convert_audio(audio, target_format)
   converted.write(output_path)
 
   puts "Converted #{input_path} -> #{output_path}"
@@ -50,7 +61,7 @@ def build_demo_audio
   format = Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
   lead = Wavify::Audio.tone(frequency: 440.0, duration: 1.2, waveform: :sine, format: format).gain(-8)
   harmony = Wavify::Audio.tone(frequency: 659.25, duration: 1.2, waveform: :triangle, format: format).gain(-14)
-  Wavify::Audio.mix(lead, harmony).fade_in(0.02).fade_out(0.08)
+  Wavify::Audio.mix(lead, harmony, strategy: :none, format: format).fade_in(0.02).fade_out(0.08)
 end
 
 def run_demo
@@ -62,7 +73,7 @@ def run_demo
 
   demo = build_demo_audio
   demo.write(source_path)
-  Wavify::Audio.read(source_path).convert(target_format).write(output_path)
+  convert_audio(Wavify::Audio.read(source_path), target_format).write(output_path)
 
   puts "Generated demo files:"
   puts "  #{source_path}"
