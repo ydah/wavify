@@ -1,0 +1,77 @@
+module Wavify
+  module Codecs
+    class Base
+      def self.available?: () -> bool
+      def self.can_read?: (String | IO io_or_path) -> bool
+      def self.read: (String | IO io_or_path, **untyped options) -> Core::SampleBuffer
+      def self.write: (String | IO io_or_path, Core::SampleBuffer sample_buffer, **untyped options) -> untyped
+      def self.stream_read: (String | IO io_or_path, **untyped options) { (Core::SampleBuffer) -> void } -> untyped
+      def self.stream_write: (String | IO io_or_path, **untyped options) { (untyped) -> void } -> untyped
+      def self.metadata: (String | IO io_or_path, **untyped options) -> Hash[Symbol, untyped]
+    end
+
+    class Wav < Base
+      def self.can_read?: (String | IO io_or_path) -> bool
+      def self.read: (String | IO io_or_path, ?format: Core::Format?, ?warning_io: IO?) -> Core::SampleBuffer
+      def self.write: (String | IO io_or_path, Core::SampleBuffer sample_buffer, ?format: Core::Format?, ?info: Hash[Symbol, untyped]?, **untyped codec_options) -> Core::SampleBuffer
+      def self.stream_read: (String | IO io_or_path, ?chunk_size: Integer, ?warning_io: IO?) { (Core::SampleBuffer) -> void } -> Core::Format
+      def self.stream_write: (String | IO io_or_path, format: Core::Format, ?info: Hash[Symbol, untyped]?, **untyped codec_options) { (untyped) -> void } -> untyped
+      def self.metadata: (String | IO io_or_path) -> Hash[Symbol, untyped]
+    end
+
+    class Aiff < Base
+      def self.can_read?: (String | IO io_or_path) -> bool
+      def self.read: (String | IO io_or_path, ?format: Core::Format?, ?warning_io: IO?) -> Core::SampleBuffer
+      def self.write: (String | IO io_or_path, Core::SampleBuffer sample_buffer, ?format: Core::Format?, **untyped options) -> Core::SampleBuffer
+      def self.stream_read: (String | IO io_or_path, ?chunk_size: Integer, ?warning_io: IO?) { (Core::SampleBuffer) -> void } -> Core::Format
+      def self.stream_write: (String | IO io_or_path, format: Core::Format, **untyped options) { (untyped) -> void } -> untyped
+      def self.metadata: (String | IO io_or_path) -> Hash[Symbol, untyped]
+    end
+
+    class Flac < Base
+      def self.can_read?: (String | IO io_or_path) -> bool
+      def self.read: (String | IO io_or_path, ?format: Core::Format?) -> Core::SampleBuffer
+      def self.write: (String | IO io_or_path, Core::SampleBuffer sample_buffer, format: Core::Format, **untyped options) -> Core::SampleBuffer
+      def self.stream_read: (String | IO io_or_path, ?chunk_size: Integer) { (Core::SampleBuffer) -> void } -> Core::Format
+      def self.stream_write: (String | IO io_or_path, format: Core::Format, **untyped options) { (untyped) -> void } -> untyped
+      def self.metadata: (String | IO io_or_path) -> Hash[Symbol, untyped]
+    end
+
+    class OggVorbis < Base
+      def self.available?: () -> bool
+      def self.runtime_diagnostics: () -> Hash[Symbol, untyped]
+      def self.can_read?: (String | IO io_or_path) -> bool
+      def self.read: (String | IO io_or_path, ?format: Core::Format?, ?mix_strategy: Symbol) -> Core::SampleBuffer
+      def self.write: (String | IO io_or_path, Core::SampleBuffer sample_buffer, format: Core::Format, ?quality: Numeric, **untyped options) -> Core::SampleBuffer
+      def self.stream_read: (String | IO io_or_path, ?chunk_size: Integer, ?mix_strategy: Symbol) { (Core::SampleBuffer) -> void } -> Core::Format
+      def self.stream_write: (String | IO io_or_path, format: Core::Format, ?quality: Numeric, **untyped options) { (untyped) -> void } -> untyped
+      def self.metadata: (String | IO io_or_path) -> Hash[Symbol, untyped]
+    end
+
+    class Raw < Base
+      def self.can_read?: (String | IO io_or_path) -> bool
+      def self.read: (String | IO io_or_path, ?format: Core::Format?) -> Core::SampleBuffer
+      def self.write: (String | IO io_or_path, Core::SampleBuffer sample_buffer, format: Core::Format, **untyped options) -> Core::SampleBuffer
+      def self.stream_read: (String | IO io_or_path, format: Core::Format, ?chunk_size: Integer) { (Core::SampleBuffer) -> void } -> Core::Format
+      def self.stream_write: (String | IO io_or_path, format: Core::Format, **untyped options) { (untyped) -> void } -> untyped
+      def self.metadata: (String | IO io_or_path, format: Core::Format) -> Hash[Symbol, untyped]
+    end
+
+    class Registry
+      def self.detect: (String | IO io_or_path, ?strict: bool, ?filename: String?) -> singleton(Base)
+      def self.detect_for_read: (String | IO io_or_path, ?strict: bool, ?filename: String?) -> singleton(Base)
+      def self.detect_for_write: (String | IO io_or_path, ?filename: String?) -> singleton(Base)
+      def self.resolve: (String | Symbol | singleton(Base) codec) -> singleton(Base)
+      def self.register: (String extension, singleton(Base) codec) -> singleton(Base)
+      def self.unregister: (String extension) -> singleton(Base)?
+      def self.supported_formats: () -> Array[String]
+      def self.available_formats: () -> Array[String]
+    end
+
+    def self.detect: (String | IO io_or_path, ?strict: bool, ?filename: String?) -> singleton(Base)
+    def self.register: (String extension, singleton(Base) codec) -> singleton(Base)
+    def self.unregister: (String extension) -> singleton(Base)?
+    def self.supported_formats: () -> Array[String]
+    def self.available_formats: () -> Array[String]
+  end
+end

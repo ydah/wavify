@@ -1,0 +1,87 @@
+module Wavify
+  module DSP
+    module Processor
+      def self.build_runtime: (untyped processor) -> untyped
+      def self.process: (untyped processor, Core::SampleBuffer buffer) -> Core::SampleBuffer
+      def self.flush: (untyped processor, ?format: Core::Format?) -> Enumerator[Core::SampleBuffer, nil]
+      def self.render: (untyped processor, Core::SampleBuffer buffer) -> Core::SampleBuffer
+      def self.duration: (untyped processor, Symbol method_name) -> Float
+    end
+
+    module Headroom
+      def self.apply!: (Array[Numeric] samples, ?strategy: Symbol, ?format: Core::Format?, ?smoothing: Numeric) -> Array[Numeric]
+    end
+
+    class Automation
+      attr_reader points: Array[[Float, Float]]
+
+      def initialize: (Array[untyped] points) -> void
+      def value_at: (Numeric time) -> Float
+      def apply: (Core::SampleBuffer buffer) { (Numeric, Float, Integer) -> Numeric } -> Core::SampleBuffer
+      def apply_gain: (Core::SampleBuffer buffer, ?unit: Symbol) -> Core::SampleBuffer
+    end
+
+    class Envelope
+      attr_reader attack: Float
+      attr_reader hold: Float
+      attr_reader decay: Float
+      attr_reader sustain: Float
+      attr_reader release: Float
+      attr_reader curve: Symbol
+
+      def initialize: (attack: Numeric, decay: Numeric, sustain: Numeric, release: Numeric, ?hold: Numeric, ?curve: Symbol) -> void
+      def gain_at: (Numeric time, note_on_duration: Numeric) -> Float
+      def apply: (Core::SampleBuffer buffer, note_on_duration: Numeric) -> Core::SampleBuffer
+      def render_with_tail: (Core::SampleBuffer buffer, note_on_duration: Numeric) -> Core::SampleBuffer
+      def tail_duration: () -> Float
+      def latency: () -> Float
+      def lookahead: () -> Float
+    end
+
+    class Filter
+      attr_reader type: Symbol
+      attr_reader cutoff: Float
+      attr_reader q: Float
+      attr_reader gain_db: Float
+
+      def self.lowpass: (cutoff: Numeric, ?q: Numeric) -> Filter
+      def self.highpass: (cutoff: Numeric, ?q: Numeric) -> Filter
+      def self.bandpass: (?center: Numeric?, ?bandwidth: Numeric?, ?cutoff: Numeric?, ?q: Numeric?) -> Filter
+      def self.notch: (cutoff: Numeric, ?q: Numeric) -> Filter
+      def self.peaking: (cutoff: Numeric, ?q: Numeric, ?gain_db: Numeric) -> Filter
+      def self.lowshelf: (cutoff: Numeric, gain_db: Numeric) -> Filter
+      def self.highshelf: (cutoff: Numeric, gain_db: Numeric) -> Filter
+      def initialize: (Symbol type, cutoff: Numeric, ?q: Numeric, ?gain_db: Numeric) -> void
+      def apply: (Core::SampleBuffer buffer) -> Core::SampleBuffer
+      def process: (Core::SampleBuffer buffer) -> Core::SampleBuffer
+      def process_sample: (Numeric sample, sample_rate: Integer, channel: Integer, channels: Integer) -> Float
+      def flush: (?format: Core::Format?) -> Core::SampleBuffer?
+      def reset: () -> Filter
+      def build_runtime: () -> Filter
+      def tail_duration: () -> Float
+      def latency: () -> Float
+      def lookahead: () -> Float
+    end
+
+    class LFO
+      def initialize: (rate: Numeric, sample_rate: Numeric, ?waveform: Symbol, ?phase: Numeric) -> void
+      def next_value: () -> Float
+      def value_at: (?Numeric offset) -> Float
+      def reset: () -> LFO
+    end
+
+    class LoudnessMeter
+      def self.integrated: (Array[Numeric] | Core::SampleBuffer samples, ?sample_rate: Integer?, ?channels: Integer?, ?format: Core::Format?, ?channel_layout: Array[Symbol]?) -> Float
+      def self.momentary: (Array[Numeric] | Core::SampleBuffer samples, ?sample_rate: Integer?, ?channels: Integer?, ?format: Core::Format?, ?channel_layout: Array[Symbol]?) -> Float
+      def self.short_term: (Array[Numeric] | Core::SampleBuffer samples, ?sample_rate: Integer?, ?channels: Integer?, ?format: Core::Format?, ?channel_layout: Array[Symbol]?) -> Float
+      def self.true_peak: (Array[Numeric] | Core::SampleBuffer samples, ?sample_rate: Integer?, ?channels: Integer?, ?format: Core::Format?, ?oversampling: Integer) -> Float
+    end
+
+    class Oscillator
+      def initialize: (waveform: Symbol, frequency: Numeric, ?amplitude: Numeric, ?phase: Numeric, ?pulse_width: Numeric, ?detune: Numeric, ?unison: Integer, ?random: Random) -> void
+      def reset_phase: (?Numeric phase) -> Oscillator
+      def generate: (Numeric duration_seconds, format: Core::Format) -> Core::SampleBuffer
+      def each_sample: (format: Core::Format) -> Enumerator[Float, nil]
+    end
+  end
+end

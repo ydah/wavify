@@ -1,0 +1,108 @@
+module Wavify
+  module Core
+    class Duration
+      include Comparable[Duration]
+
+      attr_reader total_seconds: Float
+
+      def self.from_samples: (Integer sample_frames, Integer sample_rate) -> Duration
+      def self.parse: (String value) -> Duration
+      def initialize: (Numeric total_seconds) -> void
+      def <=>: (Duration other) -> Integer?
+      def eql?: (untyped other) -> bool
+      def hash: () -> Integer
+      def +: (Duration other) -> Duration
+      def -: (Duration other) -> Duration
+      def hours: () -> Integer
+      def minutes: () -> Integer
+      def seconds: () -> Integer
+      def milliseconds: () -> Integer
+      def to_s: () -> String
+    end
+
+    class Format
+      attr_reader channels: Integer
+      attr_reader sample_rate: Integer
+      attr_reader bit_depth: Integer
+      attr_reader valid_bits: Integer
+      attr_reader sample_format: Symbol
+      attr_reader channel_layout: Array[Symbol]?
+
+      def initialize: (channels: Integer, sample_rate: Integer, bit_depth: Integer, ?sample_format: Symbol, ?valid_bits: Integer?, ?channel_layout: Array[Symbol]?) -> void
+      def with: (?channels: Integer?, ?sample_rate: Integer?, ?bit_depth: Integer?, ?sample_format: Symbol?, ?valid_bits: Integer?, ?channel_layout: Array[Symbol]?) -> Format
+      def mono?: () -> bool
+      def stereo?: () -> bool
+      def block_align: () -> Integer
+      def byte_rate: () -> Integer
+      def bytes_per_sample: () -> Integer
+      def ==: (untyped other) -> bool
+      def eql?: (untyped other) -> bool
+      def hash: () -> Integer
+    end
+
+    class SampleBuffer
+      class FrameView
+        include Enumerable[Array[Numeric]]
+
+        attr_reader channels: Integer
+        attr_reader frame_count: Integer
+
+        def initialize: (Array[Numeric] samples, Integer channels, ?start_frame: Integer, ?frame_count: Integer?) -> void
+        def each: () { (Array[Numeric]) -> void } -> FrameView
+                | () -> Enumerator[Array[Numeric], FrameView]
+        def []: (Integer index) -> Array[Numeric]?
+        def slice: (Integer start_frame, Integer frame_length) -> FrameView
+        def length: () -> Integer
+      end
+
+      class View
+        include Enumerable[Numeric]
+
+        attr_reader format: Format
+        attr_reader duration: Duration
+
+        def initialize: (Array[Numeric] samples, Format format, ?start_frame: Integer, ?frame_count: Integer?) -> void
+        def each: () { (Numeric) -> void } -> View
+                | () -> Enumerator[Numeric, View]
+        def samples: () -> Array[Numeric]
+        def length: () -> Integer
+        def size: () -> Integer
+        def sample_frame_count: () -> Integer
+        def frame_view: () -> FrameView
+        def slice: (Integer start_frame, Integer frame_length) -> View
+        def to_sample_buffer: () -> SampleBuffer
+        def convert: (Format new_format, **untyped options) -> SampleBuffer
+      end
+
+      include Enumerable[Numeric]
+
+      attr_reader format: Format
+      attr_reader duration: Duration
+
+      def self.from_pcm_samples: (Array[Numeric] samples, Format format, ?storage: Symbol) -> SampleBuffer
+      def self.from_normalized_samples: (Array[Numeric] samples, Format format, ?storage: Symbol) -> SampleBuffer
+      def initialize: (Array[Numeric] samples, Format format, ?storage: Symbol) -> void
+      def samples: () -> Array[Numeric]
+      def each: () { (Numeric) -> void } -> SampleBuffer
+              | () -> Enumerator[Numeric, SampleBuffer]
+      def each_frame_sample: () { (Numeric, Integer, Integer) -> void } -> SampleBuffer
+                           | () -> Enumerator[Numeric, SampleBuffer]
+      def storage: () -> Symbol
+      def packed?: () -> bool
+      def packed_bytesize: () -> Integer
+      def length: () -> Integer
+      def size: () -> Integer
+      def sample_frame_count: () -> Integer
+      def frame_view: () -> FrameView
+      def view: (?start_frame: Integer, ?frame_length: Integer?) -> View
+      def convert: (Format new_format, ?dither: bool, ?dither_seed: Integer?, ?resampler: Symbol) -> SampleBuffer
+      def reverse: () -> SampleBuffer
+      def slice: (Integer start_frame, Integer frame_length) -> SampleBuffer
+      def concat: (SampleBuffer other) -> SampleBuffer
+      def +: (SampleBuffer other) -> SampleBuffer
+      def ==: (untyped other) -> bool
+      def eql?: (untyped other) -> bool
+      def hash: () -> Integer
+    end
+  end
+end

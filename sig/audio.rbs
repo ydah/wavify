@@ -1,0 +1,86 @@
+module Wavify
+  class Audio
+    attr_reader buffer: Core::SampleBuffer
+
+    def self.read: (String | IO path_or_io, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?strict: bool, ?filename: String?) -> Audio
+    def self.metadata: (String | IO path_or_io, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?strict: bool, ?filename: String?) -> Hash[Symbol, untyped]
+    def self.info: (String | IO path_or_io, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?strict: bool, ?filename: String?) -> Hash[Symbol, untyped]
+    def self.mix: (*Audio audios, ?strategy: Symbol, ?gains: Array[Numeric]?, ?align: Symbol, ?format: Core::Format?, ?work_format: Core::Format?, ?headroom_smoothing: Numeric) -> Audio
+    def self.stream: (String | IO path_or_io, ?chunk_size: Integer, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?strict: bool, ?filename: String?) -> Core::Stream
+    def self.tone: (frequency: Numeric, duration: Numeric | Core::Duration, format: Core::Format, ?waveform: Symbol, **untyped oscillator_options) -> Audio
+    def self.silence: (Numeric | Core::Duration duration_seconds, format: Core::Format) -> Audio
+
+    def initialize: (Core::SampleBuffer buffer) -> void
+    def format: () -> Core::Format
+    def duration: () -> Core::Duration
+    def sample_frame_count: () -> Integer
+    def channels: () -> Integer
+    def sample_rate: () -> Integer
+    def bit_depth: () -> Integer
+    def with_bit_depth: (Integer value, ?dither: bool, ?dither_seed: Integer?) -> Audio
+    def frames: () -> Array[Array[Numeric]]
+    def each_frame: () { (Array[Numeric]) -> void } -> Audio
+                  | () -> Enumerator[Array[Numeric], Audio]
+    def write: (String | IO path, ?format: Core::Format?, ?codec: Symbol | untyped, ?filename: String?, ?codec_options: Hash[Symbol, untyped]?, ?overwrite: bool) -> Audio
+    def convert: (Core::Format new_format, ?dither: bool, ?dither_seed: Integer?, ?resampler: Symbol) -> Audio
+    def resample: (sample_rate: Integer, ?resampler: Symbol) -> Audio
+    def to_mono: () -> Audio
+    def to_stereo: () -> Audio
+    def split: (at: Numeric | Core::Duration) -> [Audio, Audio]
+    def slice: (from: Numeric | Core::Duration, to: Numeric | Core::Duration) -> Audio
+    def crop: (start: Numeric | Core::Duration, duration: Numeric | Core::Duration) -> Audio
+    def concat: (Audio other) -> Audio
+    def append: (Audio other) -> Audio
+    def +: (Audio other) -> Audio
+    def prepend: (Audio other) -> Audio
+    def overlay: (Audio other, at: Numeric | Core::Duration, ?strategy: Symbol, ?headroom_smoothing: Numeric) -> Audio
+    def crossfade: (Audio other, duration: Numeric | Core::Duration) -> Audio
+    def pad_start: (Numeric seconds) -> Audio
+    def pad_end: (Numeric seconds) -> Audio
+    def insert_silence: (at: Numeric | Core::Duration, duration: Numeric | Core::Duration) -> Audio
+    def repeat: (times: Integer) -> Audio
+    def repeat_chunks: (times: Integer, ?chunk_frames: Integer) -> Enumerator[Audio, nil]
+    def repeat!: (times: Integer) -> Audio
+    def reverse: () -> Audio
+    def reverse!: () -> Audio
+    def gain: (Numeric db) -> Audio
+    def gain!: (Numeric db) -> Audio
+    def normalize: (?target_db: Numeric, ?mode: Symbol) -> Audio
+    def normalize!: (?target_db: Numeric, ?mode: Symbol) -> Audio
+    def trim: (?threshold: Numeric) -> Audio
+    def trim!: (?threshold: Numeric) -> Audio
+    def fade_in: (Numeric seconds, ?curve: Symbol) -> Audio
+    def fade_in!: (Numeric seconds, ?curve: Symbol) -> Audio
+    def fade_out: (Numeric seconds, ?curve: Symbol) -> Audio
+    def fade_out!: (Numeric seconds, ?curve: Symbol) -> Audio
+    def fade: (Numeric seconds, type: Symbol, ?curve: Symbol) -> Audio
+    def pan: (Numeric position) -> Audio
+    def pan!: (Numeric position) -> Audio
+    def balance: (Numeric position) -> Audio
+    def stereo_rotate: (Numeric position) -> Audio
+    def apply: (untyped effect) -> Audio
+    def apply!: (untyped effect) -> Audio
+    def map_samples: () { (Numeric, Integer) -> Numeric } -> Audio
+    def map_frames: () { (Array[Numeric], Integer) -> Array[Numeric] } -> Audio
+    def sample_peak_amplitude: () -> Float
+    def peak_amplitude: () -> Float
+    def true_peak_amplitude: (?oversampling: Integer) -> Float
+    def rms_amplitude: () -> Float
+    def peak_dbfs: () -> Float
+    def sample_peak_dbfs: () -> Float
+    def true_peak_dbfs: (?oversampling: Integer) -> Float
+    def rms_dbfs: () -> Float
+    def lufs: () -> Float
+    def stats: () -> Hash[Symbol, untyped]
+    def silent?: (?threshold: Numeric) -> bool
+    def clipped?: (?consecutive_frames: Integer) -> bool
+    def dc_offset: () -> Float
+    def dc_offsets: () -> Array[Float]
+    def remove_dc_offset: () -> Audio
+    def zero_crossing_rate: () -> Float
+    def ==: (untyped other) -> bool
+    def eql?: (untyped other) -> bool
+    def hash: () -> Integer
+    def inspect: () -> String
+  end
+end

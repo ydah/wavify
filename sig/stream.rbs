@@ -1,0 +1,30 @@
+module Wavify
+  module Core
+    class Stream
+      include Enumerable[SampleBuffer]
+
+      attr_reader chunk_size: Integer
+
+      def initialize: (String | IO source, codec: untyped, format: Format?, ?chunk_size: Integer, ?codec_read_options: Hash[Symbol, untyped]) -> void
+      def format: () -> Format
+      def pipe: (?untyped processor, ?name: String | Symbol?) ?{ (SampleBuffer) -> untyped } -> Stream
+      def map_chunks: (?name: String | Symbol?) { (SampleBuffer) -> untyped } -> Stream
+      def take_duration: (Numeric | Duration duration) -> Stream
+      def drop_duration: (Numeric | Duration duration) -> Stream
+      def meter: () { (Hash[Symbol, untyped]) -> void } -> Stream
+      def progress: (?total_frames: Integer?) { (Hash[Symbol, untyped]) -> void } -> Stream
+      def tee: (String | IO path_or_io, ?format: Format?, ?codec: Symbol | untyped, ?filename: String?, ?codec_options: Hash[Symbol, untyped]?) -> Stream
+      def to_audio: () -> Audio
+      def pipeline: () -> Array[untyped]
+      def pipeline_steps: () -> Array[Hash[Symbol, untyped]]
+      def latency: () -> Float
+      def lookahead: () -> Float
+      def dry_run: (?format: Format?) -> Hash[Symbol, untyped]
+      def each_chunk: () { (SampleBuffer) -> void } -> Stream
+                    | () -> Enumerator[SampleBuffer, Stream]
+      def each: () { (SampleBuffer) -> void } -> Stream
+              | () -> Enumerator[SampleBuffer, Stream]
+      def write_to: (String | IO path_or_io, ?format: Format?, ?codec: Symbol | untyped, ?filename: String?, ?codec_options: Hash[Symbol, untyped]?, ?overwrite: bool) -> Stream
+    end
+  end
+end

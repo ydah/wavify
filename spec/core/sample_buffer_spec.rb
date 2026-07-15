@@ -173,6 +173,35 @@ RSpec.describe Wavify::Core::SampleBuffer do
       end
     end
 
+    it "preserves the eql?-implies-equal-hash property for randomized storage and formats" do
+      rng = Random.new(20_260_715)
+      formats = [
+        float_stereo,
+        float_stereo.with(bit_depth: 64),
+        pcm16_stereo.with(bit_depth: 8),
+        pcm16_stereo,
+        pcm16_stereo.with(bit_depth: 24),
+        pcm16_stereo.with(bit_depth: 32)
+      ]
+
+      formats.each do |sample_format|
+        20.times do
+          values = if sample_format.sample_format == :float
+                     Array.new(16) { rng.rand(-2.0..2.0) }
+                   else
+                     limit = 2**(sample_format.bit_depth - 1)
+                     Array.new(16) { rng.rand(-limit...limit) }
+                   end
+          packed = described_class.new(values, sample_format, storage: :packed)
+          canonical = described_class.new(packed.each.to_a, sample_format, storage: :array)
+
+          expect(packed).to eql(canonical)
+          expect(packed.hash).to eq(canonical.hash)
+          expect({ packed => :found }[canonical]).to eq(:found)
+        end
+      end
+    end
+
     it "optionally stores samples in packed form until random access is requested" do
       packed = described_class.new([1, -2, 3, -4], pcm16_stereo, storage: :packed)
 
@@ -324,6 +353,23 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(converted.sample_frame_count).to eq(12)
       expect(converted.samples).to all(be_between(-1.0, 1.0))
       expect(converted.samples).not_to eq(source.convert(target_format, resampler: :linear).samples)
+    end
+
+    it "rejects above-Nyquist aliases when downsampling with windowed sinc" do
+      source_format = Wavify::Core::Format.new(channels: 1, sample_rate: 48_000, bit_depth: 32, sample_format: :float)
+      target_format = source_format.with(sample_rate: 12_000)
+      source_samples = Array.new(12_000) do |index|
+        Math.sin(2.0 * Math::PI * 10_000 * index / source_format.sample_rate)
+      end
+      source = described_class.new(source_samples, source_format)
+
+      sinc = source.convert(target_format, resampler: :windowed_sinc).samples[100...-100]
+      linear = source.convert(target_format, resampler: :linear).samples[100...-100]
+      sinc_rms = Math.sqrt(sinc.sum { |sample| sample * sample } / sinc.length)
+      linear_rms = Math.sqrt(linear.sum { |sample| sample * sample } / linear.length)
+
+      expect(sinc_rms).to be < 0.01
+      expect(sinc_rms).to be < (linear_rms / 50.0)
     end
 
     it "rejects unsupported resamplers" do

@@ -1,0 +1,126 @@
+module Wavify
+  module Sequencer
+    class Pattern
+      class Step
+        attr_reader index: Integer
+        attr_reader trigger: bool
+        attr_reader accent: bool
+        attr_reader symbol: String
+        attr_reader velocity: Float
+        attr_reader probability: Float
+        attr_reader ratchet: Integer
+
+        def rest?: () -> bool
+        def trigger?: () -> bool
+        def accent?: () -> bool
+      end
+
+      include Enumerable[Step]
+
+      attr_reader resolution: Integer
+      attr_reader steps: Array[Step]
+      attr_reader notation: String
+
+      def initialize: (String notation, ?resolution: Integer) -> void
+      def each: () { (Step) -> void } -> Pattern
+              | () -> Enumerator[Step, Pattern]
+      def []: (Integer index) -> Step?
+      def length: () -> Integer
+      def size: () -> Integer
+      def trigger_indices: () -> Array[Integer]
+      def accented_indices: () -> Array[Integer]
+      def to_a: () -> Array[Step]
+    end
+
+    class NoteSequence
+      class Event
+        attr_reader index: Integer
+        attr_reader token: String
+        attr_reader midi_note: Integer?
+        attr_reader duration_denominator: Integer?
+        attr_reader duration_multiplier: Float
+        attr_reader tie: bool
+
+        def rest?: () -> bool
+        def tie?: () -> bool
+      end
+
+      include Enumerable[Event]
+
+      attr_reader default_octave: Integer
+      attr_reader events: Array[Event]
+      attr_reader notation: String
+
+      def initialize: (String notation, ?default_octave: Integer) -> void
+      def each: () { (Event) -> void } -> NoteSequence
+              | () -> Enumerator[Event, NoteSequence]
+      def []: (Integer index) -> Event?
+      def length: () -> Integer
+      def size: () -> Integer
+      def midi_notes: () -> Array[Integer?]
+      def note_events: () -> Array[Event]
+    end
+
+    class Track
+      attr_reader name: Symbol
+      attr_reader pattern: Pattern?
+      attr_reader note_sequence: NoteSequence?
+      attr_reader chord_progression: Array[untyped]?
+      attr_reader waveform: Symbol
+      attr_reader gain_db: Float
+      attr_reader pan_position: Float
+      attr_reader envelope: DSP::Envelope?
+      attr_reader effects: Array[untyped]
+      attr_reader pattern_resolution: Integer
+      attr_reader note_resolution: Integer
+      attr_reader default_octave: Integer
+      attr_reader key_root: Symbol?
+      attr_reader scale: Symbol?
+      attr_reader chord_voicing: Symbol
+      attr_reader synth_options: Hash[Symbol, untyped]
+
+      def self.parse_chords: (String | Array[untyped] chords, ?default_octave: Integer) -> Array[untyped]
+      def self.parse_chord_token: (String token, default_octave: Integer) -> untyped
+      def self.apply_chord_inversion: (Array[Integer] midi_notes, String bass_name, Integer root_midi, Integer default_octave) -> Array[Integer]
+      def self.apply_chord_voicing: (Array[Integer] midi_notes, Symbol voicing) -> Array[Integer]
+      def self.quantize_midi_note: (Integer midi_note, key: Symbol, scale: Symbol) -> Integer
+      def initialize: (String | Symbol name, **untyped options) -> void
+      def with_pattern: (String | Pattern pattern) -> Track
+      def with_notes: (String | NoteSequence notes, ?default_octave: Integer) -> Track
+      def with_chords: (String | Array[untyped] chords, ?default_octave: Integer) -> Track
+      def with_key: (String | Symbol key, ?scale: String | Symbol) -> Track
+      def with_chord_voicing: (String | Symbol voicing) -> Track
+      def with_synth: (String | Symbol waveform) -> Track
+      def with_gain: (Numeric db) -> Track
+      def with_pan: (Numeric position) -> Track
+      def with_envelope: (DSP::Envelope envelope) -> Track
+      def with_effects: (Array[untyped] effects) -> Track
+      def event_sources?: () -> bool
+      def pattern?: () -> bool
+      def notes?: () -> bool
+      def chords?: () -> bool
+      def effects?: () -> bool
+      def copy: (**untyped overrides) -> Track
+      def parse_chords: (String | Array[untyped] chords) -> Array[untyped]
+      def quantize_midi_note: (Integer midi_note) -> Integer
+    end
+
+    class Engine
+      attr_reader tempo: Float
+      attr_reader format: Core::Format
+      attr_reader beats_per_bar: Integer
+      attr_reader swing: Float
+
+      def initialize: (tempo: Numeric, ?format: Core::Format, ?beats_per_bar: Integer, ?swing: Numeric) -> void
+      def seconds_per_beat: () -> Float
+      def bar_duration_seconds: () -> Float
+      def step_duration_seconds: (Integer resolution) -> Float
+      def step_start_seconds: (Integer index, Integer resolution) -> Float
+      def step_duration_at: (Integer index, Integer resolution) -> Float
+      def expand_pattern_step: (Pattern::Step step, start_time: Numeric, duration: Numeric) -> Array[Hash[Symbol, untyped]]
+      def timeline_for_track: (Track track, bars: Integer, ?start_bar: Integer, ?start_time: Numeric?) -> Array[Hash[Symbol, untyped]]
+      def build_timeline: (tracks: Array[Track], ?arrangement: Array[Hash[Symbol, untyped]]?, ?default_bars: Integer) -> Array[Hash[Symbol, untyped]]
+      def render: (tracks: Array[Track], ?arrangement: Array[Hash[Symbol, untyped]]?, ?default_bars: Integer) -> Audio
+    end
+  end
+end

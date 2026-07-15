@@ -1,0 +1,32 @@
+module Wavify
+  module DSL
+    class SongDefinition
+      attr_reader format: Core::Format
+      attr_reader tempo: Float
+      attr_reader beats_per_bar: Integer
+      attr_reader swing: Float
+      attr_reader tracks: Array[untyped]
+      attr_reader sections: Array[untyped]
+      attr_reader default_bars: Integer
+      attr_reader random_seed: Integer
+
+      def arrangement?: () -> bool
+      def engine: () -> Sequencer::Engine
+      def sequencer_tracks: () -> Array[Sequencer::Track]
+      def validate!: (?deep: bool) -> true
+      def arrangement: () -> Array[Hash[Symbol, untyped]]
+      def duration: (?default_bars: Integer) -> Core::Duration
+      def length: (?default_bars: Integer) -> Core::Duration
+      def timeline: (?default_bars: Integer) -> Array[Hash[Symbol, untyped]]
+      def timeline_json: (?default_bars: Integer) -> String
+      def timeline_text: (?default_bars: Integer) -> String
+      def render: (?default_bars: Integer, ?stems: bool) -> Audio | Hash[Symbol, Audio]
+      def write: (String path, ?default_bars: Integer) -> Audio
+      def write_stems: (String directory, ?default_bars: Integer, ?overwrite: bool) -> Hash[Symbol, String]
+    end
+
+    def self.build_definition: (format: Core::Format, ?tempo: Numeric, ?beats_per_bar: Integer, ?swing: Numeric, ?default_bars: Integer, ?random_seed: Integer) { () -> void } -> SongDefinition
+    def self.validate: (format: Core::Format, ?tempo: Numeric, ?beats_per_bar: Integer, ?swing: Numeric, ?default_bars: Integer, ?random_seed: Integer) { () -> void } -> true
+    def self.effect: (String | Symbol name, **untyped params) -> untyped
+  end
+end

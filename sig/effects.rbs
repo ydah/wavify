@@ -1,0 +1,129 @@
+module Wavify
+  module DSP
+    module Effects
+      def self.register: (String | Symbol name, ?untyped factory) ?{ (**untyped) -> untyped } -> untyped
+      def self.unregister: (String | Symbol name) -> untyped
+      def self.build: (String | Symbol name, **untyped params) -> untyped
+      def self.registered_effects: () -> Hash[Symbol, untyped]
+
+      class EffectBase
+        def apply: (Core::SampleBuffer buffer) -> Core::SampleBuffer
+        def process: (Core::SampleBuffer buffer) -> Core::SampleBuffer
+        def flush: (?format: Core::Format?) -> Enumerator[Core::SampleBuffer, nil]?
+        def process_sample: (Numeric sample, channel: Integer, sample_rate: Integer) -> Numeric
+        def reset: () -> EffectBase
+        def build_runtime: () -> EffectBase
+        def tail_duration: () -> Float
+        def latency: () -> Float
+        def lookahead: () -> Float
+      end
+
+      class EffectChain
+        attr_reader effects: Array[untyped]
+
+        def initialize: (Array[untyped] effects) -> void
+        def apply: (Core::SampleBuffer buffer) -> Core::SampleBuffer
+        def process: (Core::SampleBuffer buffer) -> Core::SampleBuffer
+        def flush: (?format: Core::Format?) -> Enumerator[Core::SampleBuffer, nil]
+        def reset: () -> EffectChain
+        def build_runtime: () -> EffectChain
+        def tail_duration: () -> Float
+        def latency: () -> Float
+        def lookahead: () -> Float
+      end
+
+      class Delay < EffectBase
+        def self.beat: (Numeric bpm, ?division: Numeric) -> Float
+        def initialize: (?time: Numeric, ?feedback: Numeric, ?mix: Numeric, ?ping_pong: bool) -> void
+      end
+
+      class Reverb < EffectBase
+        def initialize: (?room_size: Numeric, ?damping: Numeric, ?mix: Numeric, ?pre_delay: Numeric, ?width: Numeric) -> void
+      end
+
+      class Chorus < EffectBase
+        def initialize: (?rate: Numeric, ?depth: Numeric, ?mix: Numeric, ?delay: Numeric, ?voices: Integer) -> void
+      end
+
+      class Distortion < EffectBase
+        def initialize: (?drive: Numeric, ?mix: Numeric, ?tone: Numeric) -> void
+      end
+
+      class Compressor < EffectBase
+        def initialize: (?threshold: Numeric, ?ratio: Numeric, ?attack: Numeric, ?release: Numeric, ?makeup_gain: Numeric, ?knee: Numeric, ?sidechain: Audio | Core::SampleBuffer?, ?sidechain_end: Symbol) -> void
+      end
+
+      class Limiter < EffectBase
+        def initialize: (?ceiling: Numeric, ?input_gain: Numeric, ?attack: Numeric, ?release: Numeric, ?lookahead: Numeric, ?oversampling: Integer) -> void
+      end
+
+      class SoftLimiter < EffectBase
+        def initialize: (?threshold: Numeric, ?ceiling: Numeric, ?drive: Numeric) -> void
+      end
+
+      class NoiseGate < EffectBase
+        def initialize: (?threshold: Numeric, ?floor: Numeric, ?attack: Numeric, ?hold: Numeric, ?release: Numeric) -> void
+      end
+
+      class Tremolo < EffectBase
+        def initialize: (?rate: Numeric, ?depth: Numeric, ?mix: Numeric) -> void
+      end
+
+      class Vibrato < EffectBase
+        def initialize: (?rate: Numeric, ?depth: Numeric, ?mix: Numeric) -> void
+      end
+
+      class Flanger < EffectBase
+        def initialize: (?rate: Numeric, ?depth: Numeric, ?feedback: Numeric, ?mix: Numeric, ?delay: Numeric) -> void
+      end
+
+      class Phaser < EffectBase
+        def initialize: (?rate: Numeric, ?depth: Numeric, ?feedback: Numeric, ?mix: Numeric, ?stages: Integer) -> void
+      end
+
+      class Bitcrusher < EffectBase
+        def initialize: (?bits: Integer, ?sample_rate_reduction: Integer, ?mix: Numeric) -> void
+      end
+
+      class Expander < EffectBase
+        def initialize: (?threshold: Numeric, ?ratio: Numeric, ?floor: Numeric, ?attack: Numeric, ?hold: Numeric, ?release: Numeric) -> void
+      end
+
+      class AutoPan < EffectBase
+        def initialize: (?rate: Numeric, ?depth: Numeric) -> void
+      end
+
+      class StereoWidener
+        def initialize: (?width: Numeric) -> void
+        def process: (Core::SampleBuffer buffer) -> Core::SampleBuffer
+        def apply: (Core::SampleBuffer buffer) -> Core::SampleBuffer
+        def reset: () -> StereoWidener
+        def build_runtime: () -> StereoWidener
+        def tail_duration: () -> Float
+        def latency: () -> Float
+        def lookahead: () -> Float
+      end
+
+      class EQ
+        def self.simple: (?low_gain: Numeric, ?mid_gain: Numeric, ?high_gain: Numeric) -> EQ
+        def initialize: (Array[DSP::Filter] filters) -> void
+        def apply: (Core::SampleBuffer buffer) -> Core::SampleBuffer
+        def process: (Core::SampleBuffer buffer) -> Core::SampleBuffer
+        def flush: (?format: Core::Format?) -> untyped
+        def reset: () -> EQ
+        def build_runtime: () -> EQ
+        def tail_duration: () -> Float
+        def latency: () -> Float
+        def lookahead: () -> Float
+      end
+
+      class MasteringChain < EffectChain
+        def initialize: (?highpass: Numeric, ?presence: Numeric, ?threshold: Numeric, ?ratio: Numeric, ?ceiling: Numeric) -> void
+      end
+
+      class PodcastChain < EffectChain
+        def initialize: (?gate_threshold: Numeric, ?highpass: Numeric, ?presence: Numeric, ?compression_threshold: Numeric, ?ceiling: Numeric) -> void
+      end
+    end
+  end
+end

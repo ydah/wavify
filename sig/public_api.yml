@@ -1,0 +1,111 @@
+Wavify:
+  signature_file: wavify.rbs
+  class_methods: [build, ms, seconds]
+Wavify::Adapters:
+  signature_file: wavify.rbs
+  class_methods: [find, known, load]
+Wavify::Audio:
+  signature_file: audio.rbs
+  class_methods: [info, metadata, mix, read, silence, stream, tone]
+  instance_methods: ['+', '==', append, apply, apply!, balance, bit_depth, buffer, channels, clipped?, concat, convert, crop, crossfade, dc_offset, dc_offsets, duration, each_frame, eql?, fade, fade_in, fade_in!, fade_out, fade_out!, format, frames, gain, gain!, hash, insert_silence, inspect, lufs, map_frames, map_samples, normalize, normalize!, overlay, pad_end, pad_start, pan, pan!, peak_amplitude, peak_dbfs, prepend, remove_dc_offset, repeat, repeat!, repeat_chunks, resample, reverse, reverse!, rms_amplitude, rms_dbfs, sample_frame_count, sample_peak_amplitude, sample_peak_dbfs, sample_rate, silent?, slice, split, stats, stereo_rotate, to_mono, to_stereo, trim, trim!, true_peak_amplitude, true_peak_dbfs, with_bit_depth, write, zero_crossing_rate]
+Wavify::Core::Duration:
+  signature_file: core.rbs
+  class_methods: [from_samples, parse]
+  instance_methods: ['+', '-', '<=>', eql?, hash, hours, milliseconds, minutes, seconds, to_s, total_seconds]
+Wavify::Core::Format:
+  signature_file: core.rbs
+  instance_methods: ['==', bit_depth, block_align, byte_rate, bytes_per_sample, channel_layout, channels, eql?, hash, mono?, sample_format, sample_rate, stereo?, valid_bits, with]
+Wavify::Core::SampleBuffer:
+  signature_file: core.rbs
+  class_methods: [from_normalized_samples, from_pcm_samples]
+  instance_methods: ['+', '==', concat, convert, duration, each, each_frame_sample, eql?, format, frame_view, hash, length, packed?, packed_bytesize, reverse, sample_frame_count, samples, size, slice, storage, view]
+Wavify::Core::Stream:
+  signature_file: stream.rbs
+  instance_methods: [chunk_size, drop_duration, dry_run, each, each_chunk, format, latency, lookahead, map_chunks, meter, pipe, pipeline, pipeline_steps, progress, take_duration, tee, to_audio, write_to]
+Wavify::Codecs:
+  signature_file: codecs.rbs
+  class_methods: [available_formats, detect, register, supported_formats, unregister]
+Wavify::Codecs::Registry:
+  signature_file: codecs.rbs
+  class_methods: [available_formats, detect, detect_for_read, detect_for_write, register, resolve, supported_formats, unregister]
+Wavify::Codecs::Wav:
+  signature_file: codecs.rbs
+  class_methods: [can_read?, metadata, read, stream_read, stream_write, write]
+Wavify::Codecs::Aiff:
+  signature_file: codecs.rbs
+  class_methods: [can_read?, metadata, read, stream_read, stream_write, write]
+Wavify::Codecs::Flac:
+  signature_file: codecs.rbs
+  class_methods: [can_read?, metadata, read, stream_read, stream_write, write]
+Wavify::Codecs::OggVorbis:
+  signature_file: codecs.rbs
+  class_methods: [available?, can_read?, metadata, read, runtime_diagnostics, stream_read, stream_write, write]
+Wavify::Codecs::Raw:
+  signature_file: codecs.rbs
+  class_methods: [can_read?, metadata, read, stream_read, stream_write, write]
+Wavify::DSP::Processor:
+  signature_file: dsp.rbs
+  class_methods: [build_runtime, duration, flush, process, render]
+Wavify::DSP::Headroom:
+  signature_file: dsp.rbs
+  class_methods: [apply!]
+Wavify::DSP::Automation:
+  signature_file: dsp.rbs
+  instance_methods: [apply, apply_gain, points, value_at]
+Wavify::DSP::Envelope:
+  signature_file: dsp.rbs
+  instance_methods: [apply, attack, curve, decay, gain_at, hold, latency, lookahead, release, render_with_tail, sustain, tail_duration]
+Wavify::DSP::Filter:
+  signature_file: dsp.rbs
+  class_methods: [bandpass, highpass, highshelf, lowpass, lowshelf, notch, peaking]
+  instance_methods: [apply, build_runtime, cutoff, flush, gain_db, latency, lookahead, process, process_sample, q, reset, tail_duration, type]
+Wavify::DSP::LFO:
+  signature_file: dsp.rbs
+  instance_methods: [next_value, reset, value_at]
+Wavify::DSP::LoudnessMeter:
+  signature_file: dsp.rbs
+  class_methods: [integrated, momentary, short_term, true_peak]
+Wavify::DSP::Oscillator:
+  signature_file: dsp.rbs
+  instance_methods: [each_sample, generate, reset_phase]
+Wavify::DSP::Effects:
+  signature_file: effects.rbs
+  class_methods: [build, register, registered_effects, unregister]
+Wavify::DSP::Effects::EffectBase:
+  signature_file: effects.rbs
+  instance_methods: [apply, build_runtime, flush, latency, lookahead, process, process_sample, reset, tail_duration]
+Wavify::DSP::Effects::EffectChain:
+  signature_file: effects.rbs
+  instance_methods: [apply, build_runtime, effects, flush, latency, lookahead, process, reset, tail_duration]
+Wavify::DSP::Effects::Delay:
+  signature_file: effects.rbs
+  class_methods: [beat]
+Wavify::DSP::Effects::EQ:
+  signature_file: effects.rbs
+  class_methods: [simple]
+  instance_methods: [apply, build_runtime, flush, latency, lookahead, process, reset, tail_duration]
+Wavify::DSP::Effects::Limiter:
+  signature_file: effects.rbs
+  instance_methods: [apply, flush, latency, lookahead, process, process_sample, tail_duration]
+Wavify::DSP::Effects::StereoWidener:
+  signature_file: effects.rbs
+  instance_methods: [apply, build_runtime, latency, lookahead, process, reset, tail_duration]
+Wavify::Sequencer::Pattern:
+  signature_file: sequencer.rbs
+  instance_methods: ['[]', accented_indices, each, length, notation, resolution, size, steps, to_a, trigger_indices]
+Wavify::Sequencer::NoteSequence:
+  signature_file: sequencer.rbs
+  instance_methods: ['[]', default_octave, each, events, length, midi_notes, notation, note_events, size]
+Wavify::Sequencer::Track:
+  signature_file: sequencer.rbs
+  class_methods: [apply_chord_inversion, apply_chord_voicing, parse_chord_token, parse_chords, quantize_midi_note]
+  instance_methods: [chord_progression, chord_voicing, chords?, copy, default_octave, effects, effects?, envelope, event_sources?, gain_db, key_root, name, note_resolution, note_sequence, notes?, pan_position, parse_chords, pattern, pattern?, pattern_resolution, quantize_midi_note, scale, synth_options, waveform, with_chord_voicing, with_chords, with_effects, with_envelope, with_gain, with_key, with_notes, with_pan, with_pattern, with_synth]
+Wavify::Sequencer::Engine:
+  signature_file: sequencer.rbs
+  instance_methods: [bar_duration_seconds, beats_per_bar, build_timeline, expand_pattern_step, format, render, seconds_per_beat, step_duration_at, step_duration_seconds, step_start_seconds, swing, tempo, timeline_for_track]
+Wavify::DSL:
+  signature_file: dsl.rbs
+  class_methods: [build_definition, effect, validate]
+Wavify::DSL::SongDefinition:
+  signature_file: dsl.rbs
+  instance_methods: [arrangement, arrangement?, beats_per_bar, default_bars, duration, engine, format, length, random_seed, render, sections, sequencer_tracks, swing, tempo, timeline, timeline_json, timeline_text, tracks, validate!, write, write_stems]
