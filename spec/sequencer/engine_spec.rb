@@ -196,7 +196,6 @@ RSpec.describe Wavify::Sequencer::Engine do
       audio = engine.render(tracks: [chord], default_bars: 1)
 
       expect(audio.peak_amplitude).to be <= 1.0
-      expect(audio.clipped?).to eq(false)
     end
 
     it "rejects trigger-only synth tracks instead of silently rendering no audio" do

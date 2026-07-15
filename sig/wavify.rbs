@@ -26,7 +26,7 @@ module Wavify
     def self.read: (String | IO path_or_io, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?strict: bool, ?filename: String?) -> Audio
     def self.metadata: (String | IO path_or_io, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?strict: bool, ?filename: String?) -> Hash[Symbol, untyped]
     def self.info: (String | IO path_or_io, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?strict: bool, ?filename: String?) -> Hash[Symbol, untyped]
-    def self.mix: (*Audio audios, ?strategy: Symbol, ?gains: Array[Numeric]?, ?align: Symbol) -> Audio
+    def self.mix: (*Audio audios, ?strategy: Symbol, ?gains: Array[Numeric]?, ?align: Symbol, ?headroom_smoothing: Numeric) -> Audio
     def self.silence: (Numeric | Core::Duration duration_seconds, format: Core::Format) -> Audio
 
     def format: () -> Core::Format
@@ -43,6 +43,7 @@ module Wavify
     def clipped?: (?consecutive_frames: Integer) -> bool
     def repeat: (times: Integer) -> Audio
     def repeat!: (times: Integer) -> Audio
+    def overlay: (Audio other, at: Numeric | Core::Duration, ?strategy: Symbol, ?headroom_smoothing: Numeric) -> Audio
     def ==: (untyped other) -> bool
     def eql?: (untyped other) -> bool
     def hash: () -> Integer

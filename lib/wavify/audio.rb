@@ -123,8 +123,9 @@ module Wavify
     # @param strategy [Symbol] `:clip`, `:normalize`, `:headroom`, or `:soft_limit`
     # @param gains [Array<Numeric>, nil] optional per-source gain in dB
     # @param align [Symbol] `:start`, `:center`, or `:end`
+    # @param headroom_smoothing [Numeric] seconds of gain smoothing around peaks
     # @return [Audio]
-    def self.mix(*audios, strategy: :clip, gains: nil, align: :start)
+    def self.mix(*audios, strategy: :clip, gains: nil, align: :start, headroom_smoothing: DSP::Headroom::DEFAULT_SMOOTHING_SECONDS)
       raise InvalidParameterError, "at least one Audio is required" if audios.empty?
       raise InvalidParameterError, "all arguments must be Audio instances" unless audios.all? { |audio| audio.is_a?(self) }
 
@@ -140,7 +141,6 @@ module Wavify
       max_frames = converted.map(&:sample_frame_count).max || 0
       channels = work_format.channels
       mixed = Array.new(max_frames * channels, 0.0)
-      active_sources = Array.new(mixed.length, 0)
 
       converted.each_with_index do |buffer, audio_index|
         gain_factor = db_to_amplitude(mix_gains.fetch(audio_index))
@@ -148,11 +148,10 @@ module Wavify
         buffer.samples.each_with_index do |sample, index|
           target_index = sample_offset + index
           mixed[target_index] += sample * gain_factor
-          active_sources[target_index] += 1
         end
       end
 
-      apply_mix_strategy!(mixed, mix_strategy, audios.length, active_sources: active_sources, format: work_format)
+      apply_mix_strategy!(mixed, mix_strategy, format: work_format, headroom_smoothing: headroom_smoothing)
       new(Core::SampleBuffer.new(mixed, work_format).convert(target_format))
     end
 
@@ -402,8 +401,9 @@ module Wavify
     # @param other [Audio]
     # @param at [Numeric, Core::Duration]
     # @param strategy [Symbol] mix clipping policy
+    # @param headroom_smoothing [Numeric] seconds of gain smoothing around peaks
     # @return [Audio]
-    def overlay(other, at:, strategy: :clip)
+    def overlay(other, at:, strategy: :clip, headroom_smoothing: DSP::Headroom::DEFAULT_SMOOTHING_SECONDS)
       validate_audio!(other, :other)
       start_frame = coerce_time_to_frame(at, upper_bound: nil)
       work_format = float_work_format(format)
@@ -412,25 +412,21 @@ module Wavify
       channels = work_format.channels
       mixed_length = [base.samples.length, (start_frame * channels) + overlay_buffer.samples.length].max
       mixed = Array.new(mixed_length, 0.0)
-      active_sources = Array.new(mixed_length, 0)
       base.samples.each_with_index do |sample, index|
         mixed[index] += sample
-        active_sources[index] += 1
       end
       offset = start_frame * channels
       overlay_buffer.samples.each_with_index do |sample, index|
         target_index = offset + index
         mixed[target_index] += sample
-        active_sources[target_index] += 1
       end
 
       self.class.send(
         :apply_mix_strategy!,
         mixed,
         self.class.send(:normalize_mix_strategy!, strategy),
-        2,
-        active_sources: active_sources,
-        format: work_format
+        format: work_format,
+        headroom_smoothing: headroom_smoothing
       )
       self.class.new(Core::SampleBuffer.new(mixed, work_format).convert(format))
     end
@@ -1202,7 +1198,7 @@ module Wavify
     end
     private_class_method :normalize_fade_curve!
 
-    def self.apply_mix_strategy!(samples, strategy, source_count, active_sources: nil, format: nil)
+    def self.apply_mix_strategy!(samples, strategy, format: nil, headroom_smoothing: DSP::Headroom::DEFAULT_SMOOTHING_SECONDS)
       case strategy
       when :clip
         samples.map! { |sample| clip_value(sample, -1.0, 1.0) }
@@ -1211,10 +1207,9 @@ module Wavify
       when :headroom
         DSP::Headroom.apply!(
           samples,
-          active_sources: active_sources,
           channels: format&.channels || 1,
           sample_rate: format&.sample_rate || 1,
-          fallback_sources: source_count
+          smoothing_seconds: headroom_smoothing
         )
       when :soft_limit
         samples.map! { |sample| soft_limit_value(sample) }

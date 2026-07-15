@@ -219,7 +219,6 @@ module Wavify
         total_end_time = note_events.map { |event| event[:start_time] + event[:duration] + release_seconds }.max || 0.0
         audio = Wavify::Audio.silence(total_end_time, format: track_format.with(sample_format: :float, bit_depth: 32))
         mixed = audio.buffer.samples.dup
-        active_notes = Array.new(mixed.length, 0)
 
         note_events.each do |event|
           frequencies = event[:midi_notes].map { |midi| midi_to_frequency(midi) }
@@ -232,13 +231,11 @@ module Wavify
             break if target_index >= mixed.length
 
             mixed[target_index] += sample
-            active_notes[target_index] += 1
           end
         end
 
         Wavify::DSP::Headroom.apply!(
           mixed,
-          active_sources: active_notes,
           channels: track_format.channels,
           sample_rate: track_format.sample_rate
         )

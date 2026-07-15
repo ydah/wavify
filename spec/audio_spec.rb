@@ -266,7 +266,7 @@ RSpec.describe Wavify::Audio do
 
       mixed = described_class.mix(a, b, strategy: :headroom)
 
-      expect(mixed.buffer.samples[0]).to be_within(0.0001).of(0.75)
+      expect(mixed.buffer.samples[0]).to be_within(0.0001).of(1.0)
     end
 
     it "applies headroom only near source overlaps" do
@@ -280,16 +280,37 @@ RSpec.describe Wavify::Audio do
       expect(mixed.buffer.samples.last(2)).to all(eq(1.0))
     end
 
-    it "smooths headroom gain around overlap boundaries" do
+    it "does not attenuate low-amplitude overlaps" do
       mono_format = format.with(channels: 1, sample_rate: 8_000, sample_format: :float, bit_depth: 32)
       bed = described_class.new(Wavify::Core::SampleBuffer.new(Array.new(160, 0.8), mono_format))
       clip = described_class.new(Wavify::Core::SampleBuffer.new(Array.new(32, 0.1), mono_format))
 
       mixed = bed.overlay(clip, at: 0.008, strategy: :headroom)
-      adjacent_differences = mixed.buffer.samples.each_cons(2).map { |left, right| (left - right).abs }
 
-      expect(mixed.buffer.samples[64]).to be_within(0.0001).of(0.45)
-      expect(adjacent_differences.max).to be < 0.1
+      expect(mixed.buffer.samples.first(64)).to all(eq(0.8))
+      expect(mixed.buffer.samples.slice(64, 32)).to all(be_within(0.0001).of(0.9))
+    end
+
+    it "allows callers to control anticipatory headroom smoothing" do
+      mono_format = format.with(channels: 1, sample_rate: 8_000, sample_format: :float, bit_depth: 32)
+      bed = described_class.new(Wavify::Core::SampleBuffer.new(Array.new(160, 0.8), mono_format))
+      clip = described_class.new(Wavify::Core::SampleBuffer.new(Array.new(32, 0.4), mono_format))
+
+      smoothed = bed.overlay(clip, at: 0.008, strategy: :headroom)
+      immediate = bed.overlay(clip, at: 0.008, strategy: :headroom, headroom_smoothing: 0.0)
+
+      expect(smoothed.buffer.samples[63]).to be < 0.8
+      expect(immediate.buffer.samples[63]).to eq(0.8)
+      expect(smoothed.peak_amplitude).to be <= 1.0
+      expect(immediate.peak_amplitude).to be <= 1.0
+    end
+
+    it "rejects invalid headroom smoothing" do
+      audio = described_class.new(Wavify::Core::SampleBuffer.new([0.5], format.with(channels: 1)))
+
+      expect do
+        described_class.mix(audio, strategy: :headroom, headroom_smoothing: -0.1)
+      end.to raise_error(Wavify::InvalidParameterError, /smoothing/)
     end
 
     it "can soft-limit mix peaks" do
