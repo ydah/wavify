@@ -111,10 +111,12 @@ RSpec.describe Wavify::CLI do
       song_file.flush
 
       Tempfile.create(["wavify-cli-render", ".wav"]) do |output|
+        expect(Wavify::DSL).to receive(:build_definition).with(hash_including(random_seed: 123)).and_call_original
         status, stdout, = run_cli(
           [
             "render", song_file.path, output.path,
-            "--tempo", "120", "--swing", "0.55", "--bars", "1", "--sample-rate", "8000", "--channels", "1"
+            "--tempo", "120", "--swing", "0.55", "--bars", "1", "--sample-rate", "8000", "--channels", "1",
+            "--seed", "123"
           ]
         )
 
@@ -134,7 +136,8 @@ RSpec.describe Wavify::CLI do
       RUBY
       song_file.flush
 
-      status, stdout, stderr = run_cli(["timeline", song_file.path, "--tempo", "120", "--bars", "1"])
+      expect(Wavify::DSL).to receive(:build_definition).with(hash_including(random_seed: 456)).and_call_original
+      status, stdout, stderr = run_cli(["timeline", song_file.path, "--tempo", "120", "--bars", "1", "--seed", "456"])
 
       expect(status).to eq(0)
       expect(stdout).to include("time\tbar\ttrack\tkind\tdetail", "lead", "note")
@@ -146,8 +149,8 @@ RSpec.describe Wavify::CLI do
     status, stdout, stderr = run_cli(["unknown"])
 
     expect(status).to eq(1)
-    expect(stdout).to include("usage:")
-    expect(stderr).to include("unknown command")
+    expect(stdout).to eq("")
+    expect(stderr).to include("unknown command", "usage:")
   end
 
   it "reports unexpected failures without raising a raw backtrace" do

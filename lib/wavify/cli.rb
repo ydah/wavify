@@ -24,7 +24,7 @@ module Wavify
 
       unless COMMANDS.include?(command)
         @stderr.puts "wavify: unknown command #{command.inspect}"
-        return usage(status: 1)
+        return usage(status: 1, output: @stderr)
       end
 
       options = parse_options!(@argv)
@@ -162,6 +162,7 @@ module Wavify
         opts.on("--swing AMOUNT", Float) { |value| options[:swing] = value }
         opts.on("--beats-per-bar COUNT", Integer) { |value| options[:beats_per_bar] = value }
         opts.on("--bars COUNT", Integer) { |value| options[:bars] = value }
+        opts.on("--seed INTEGER", Integer) { |value| options[:seed] = value }
         opts.on("--json") { options[:json] = true }
         opts.on("-h", "--help") { options[:help] = true }
         opts.on("--version") { options[:version] = true }
@@ -204,7 +205,8 @@ module Wavify
         tempo: options.fetch(:tempo, 120.0),
         beats_per_bar: options.fetch(:beats_per_bar, 4),
         swing: options.fetch(:swing, 0.5),
-        default_bars: options.fetch(:bars, 1)
+        default_bars: options.fetch(:bars, 1),
+        random_seed: options.fetch(:seed) { Random.new_seed }
       ) do
         instance_eval(source, path, 1)
       end
@@ -215,8 +217,8 @@ module Wavify
       0
     end
 
-    def usage(status: 0)
-      @stdout.puts "usage: wavify <#{COMMANDS.join('|')}> [options]"
+    def usage(status: 0, output: @stdout)
+      output.puts "usage: wavify <#{COMMANDS.join('|')}> [options]"
       status
     end
   end

@@ -48,7 +48,7 @@ Arrangement sections can override `tempo:` and `beats_per_bar:` and expose marke
 Swing starts at `0.5` for straight timing and applies to off-beat steps on even pattern/note grids.
 `sample_folder` resolves `sample :kick` to `kick.wav` under that folder, and `pitch:` shifts samples by semitones using resample-based playback speed changes. Use `Wavify::DSL.validate(format: ...)` to catch notation, track, and arrangement errors before rendering.
 Use `Wavify::DSL.effect(:name, MyEffect)` to make custom processors available to track-level `effect :name` calls.
-Use `song.timeline_text` or `wavify timeline song.rb` for quick terminal inspection, and `timeline_json` for visualization tools.
+Use `song.timeline_text` or `wavify timeline song.rb --seed 123` for quick terminal inspection, and `timeline_json` for visualization tools. Both `wavify render` and `wavify timeline` accept `--seed` and pass it to `random_seed:`.
 
 Trigger steps (`x`/`X`) produce audio on sample-backed DSL tracks. The lower-level sequencer engine still exposes trigger events in its timeline, but synth tracks render only note and chord events.
 
