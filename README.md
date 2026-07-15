@@ -136,7 +136,18 @@ Raw example:
 
 ```ruby
 raw_format = Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+raw_float_format = raw_format.with(bit_depth: 32, sample_format: :float)
 audio = Wavify::Audio.read("input.pcm", format: raw_format)
+big_endian = Wavify::Audio.read(
+  "input.pcm",
+  format: raw_format,
+  codec_options: { endianness: :big, signed: true }
+)
+ieee_float = Wavify::Audio.read(
+  "samples.raw",
+  format: raw_float_format,
+  codec_options: { float_domain: :ieee }
+)
 audio.write("output.wav")
 ```
 
@@ -162,6 +173,7 @@ Wavify::Codecs.supported_formats
 Wavify::Codecs.available_formats
 Wavify::Codecs.detect("input.wav")
 Wavify::Codecs.register(".custom", MyCodec)
+Wavify::Codecs.register(".custom", MyCodec, magic: "CSTM", priority: 10)
 Wavify::Codecs.unregister(".custom")
 Wavify::Adapters.known
 ```

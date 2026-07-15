@@ -1175,6 +1175,7 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
       chunks = []
 
       decoded = described_class.read(StringIO.new(chain_bytes))
+      expect(described_class).not_to receive(:read)
       described_class.stream_read(StringIO.new(chain_bytes), chunk_size: 256) do |chunk|
         chunks << chunk
       end
