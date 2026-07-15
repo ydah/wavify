@@ -262,8 +262,8 @@ module Wavify
               pattern.each do |step|
                 next unless step.trigger?
 
-                start_time = bar_base_time + section_engine.step_start_seconds(step.index, pattern.length)
-                duration = section_engine.step_duration_at(step.index, pattern.length)
+                start_time = bar_base_time + section_engine.step_start_seconds(step.index, pattern.resolution)
+                duration = section_engine.step_duration_at(step.index, pattern.resolution)
                 section_engine.expand_pattern_step(step, start_time: start_time, duration: duration).each do |expanded|
                   next unless probability_hit?(expanded.fetch(:probability), random)
 

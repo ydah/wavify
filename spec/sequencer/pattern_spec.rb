@@ -40,6 +40,16 @@ RSpec.describe Wavify::Sequencer::Pattern do
       expect(pattern[2].probability).to eq(1.0)
       expect(pattern[2].ratchet).to eq(2)
     end
+
+    it "freezes notation and parsed steps" do
+      notation = +"x---"
+      pattern = described_class.new(notation)
+      notation.replace("----")
+
+      expect(pattern.notation).to eq("x---")
+      expect(pattern).to be_frozen
+      expect(pattern.steps).to all(be_frozen)
+    end
   end
 
   describe "validation" do
@@ -69,6 +79,14 @@ RSpec.describe Wavify::Sequencer::Pattern do
       expect do
         described_class.new("x:0")
       end.to raise_error(Wavify::InvalidPatternError, /ratchet/)
+    end
+
+    it "rejects duplicate modifiers and excessive resource values" do
+      expect { described_class.new("x?50?20") }.to raise_error(Wavify::InvalidPatternError, /duplicate/)
+      expect { described_class.new("x:2:4") }.to raise_error(Wavify::InvalidPatternError, /duplicate/)
+      expect { described_class.new("x:65") }.to raise_error(Wavify::InvalidPatternError, /between 1 and 64/)
+      expect { described_class.new("x---", resolution: 2) }.to raise_error(Wavify::InvalidPatternError, /steps.*resolution/)
+      expect { described_class.new("x", resolution: 4_097) }.to raise_error(Wavify::InvalidPatternError, /4096/)
     end
   end
 end

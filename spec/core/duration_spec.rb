@@ -63,5 +63,10 @@ RSpec.describe Wavify::Core::Duration do
         first - second
       end.to raise_error(Wavify::InvalidParameterError)
     end
+
+    it "is frozen and rejects non-finite values" do
+      expect(described_class.new(1.0)).to be_frozen
+      expect { described_class.new(Float::INFINITY) }.to raise_error(Wavify::InvalidParameterError, /finite/)
+    end
   end
 end

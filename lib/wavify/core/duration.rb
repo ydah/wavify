@@ -49,11 +49,12 @@ module Wavify
 
       # @param total_seconds [Numeric] non-negative duration in seconds
       def initialize(total_seconds)
-        unless total_seconds.is_a?(Numeric) && total_seconds >= 0
-          raise InvalidParameterError, "total_seconds must be a non-negative Numeric: #{total_seconds.inspect}"
+        unless total_seconds.is_a?(Numeric) && total_seconds.respond_to?(:finite?) && total_seconds.finite? && total_seconds >= 0
+          raise InvalidParameterError, "total_seconds must be a non-negative finite Numeric: #{total_seconds.inspect}"
         end
 
         @total_seconds = total_seconds.to_f
+        freeze
       end
 
       # Compares two durations.

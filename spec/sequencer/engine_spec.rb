@@ -33,6 +33,15 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(events[2][:start_time]).to be_within(0.0001).of(2.0)
     end
 
+    it "uses the declared pattern resolution and treats omitted steps as rests" do
+      pattern = Wavify::Sequencer::Pattern.new("x-x-", resolution: 16)
+      track = Wavify::Sequencer::Track.new(:drums, pattern: pattern)
+
+      events = engine.timeline_for_track(track, bars: 1)
+
+      expect(events.map { |event| event[:start_time] }).to eq([0.0, 0.25])
+    end
+
     it "carries explicit pattern velocities into trigger events" do
       track = Wavify::Sequencer::Track.new(:drums, pattern: "x0.25---X0.9---")
       events = engine.timeline_for_track(track, bars: 1)

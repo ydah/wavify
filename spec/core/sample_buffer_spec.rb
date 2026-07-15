@@ -119,6 +119,32 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect([equal_left, equal_right, positive_zero, negative_zero]).to all(be_packed)
     end
 
+    it "keeps eql? and hash consistent across packed sample representations" do
+      formats = [
+        float_stereo,
+        float_stereo.with(bit_depth: 64),
+        pcm16_stereo.with(bit_depth: 8),
+        pcm16_stereo,
+        pcm16_stereo.with(bit_depth: 24),
+        pcm16_stereo.with(bit_depth: 32)
+      ]
+
+      formats.each do |sample_format|
+        values = if sample_format.sample_format == :float
+                   [0.1, -0.1]
+                 else
+                   [1, -1]
+                 end
+        first = described_class.new(values, sample_format, storage: :packed)
+        canonical_values = first.each.to_a
+        second = described_class.new(canonical_values, sample_format, storage: :packed)
+
+        expect(first).to eql(second), sample_format.inspect
+        expect(first.hash).to eq(second.hash), sample_format.inspect
+        expect({ first => :found }[second]).to eq(:found), sample_format.inspect
+      end
+    end
+
     it "optionally stores samples in packed form until random access is requested" do
       packed = described_class.new([1, -2, 3, -4], pcm16_stereo, storage: :packed)
 
@@ -342,6 +368,14 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect do
         described_class.new([1, 2, 3], pcm16_stereo)
       end.to raise_error(Wavify::InvalidParameterError)
+    end
+
+    it "rejects non-finite and non-real samples with their index" do
+      [Float::NAN, Float::INFINITY, Complex(1, 2)].each do |invalid|
+        expect do
+          described_class.new([0, invalid], pcm16_stereo)
+        end.to raise_error(Wavify::InvalidParameterError, /index 1.*finite real/)
+      end
     end
   end
 end

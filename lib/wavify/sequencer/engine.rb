@@ -263,7 +263,7 @@ module Wavify
       end
 
       def schedule_pattern_events(track, bars:, start_bar:, start_time:)
-        resolution = track.pattern.length
+        resolution = track.pattern.resolution
 
         (0...bars).flat_map do |bar_offset|
           track.pattern.filter(&:trigger?).flat_map do |step|

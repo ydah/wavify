@@ -21,6 +21,23 @@ RSpec.describe Wavify::DSP::Automation do
     expect(processed.samples.last).to be < 1.0
   end
 
+  it "applies gain to PCM through a normalized float workspace" do
+    pcm_format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 16, sample_format: :pcm)
+    buffer = Wavify::Core::SampleBuffer.new([1_000, -1_000], pcm_format)
+    automation = described_class.new([[0.0, 0.0]])
+
+    processed = automation.apply_gain(buffer)
+
+    expect(processed.samples).to eq([1_000, -1_000])
+  end
+
+  it "exposes immutable points" do
+    automation = described_class.new([[0.0, 1.0]])
+
+    expect(automation.points.first).to be_frozen
+    expect { automation.points.first.time = 2.0 }.to raise_error(FrozenError)
+  end
+
   it "supports custom automated transforms" do
     automation = described_class.new([[0.0, 0.0], [1.0 / 8_000, 1.0]])
     buffer = Wavify::Core::SampleBuffer.new([1.0, 1.0], format)

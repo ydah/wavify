@@ -244,7 +244,7 @@ RSpec.describe Wavify::DSL do
     it "applies swing timing to DSL timelines" do
       song = described_class.build_definition(format: format, tempo: 120, swing: 0.6) do
         track :drums do
-          pattern "xx--"
+          pattern "xx--", resolution: 4
         end
       end
 

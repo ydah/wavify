@@ -172,7 +172,7 @@ module Wavify
         @format = format
         coerced = coerce_samples(samples, format)
         @sample_count = coerced.length
-        @value_hash = sample_value_hash(coerced)
+        @value_hash = sample_value_hash(coerced, canonical_float: storage == :packed && format.sample_format == :float)
         @storage_mutex = Mutex.new
         if storage == :packed
           @packed_samples = pack_samples(coerced, format).freeze
@@ -426,7 +426,7 @@ module Wavify
         @sample_count.times.all? { left.next == right.next }
       end
 
-      def sample_value_hash(values)
+      def sample_value_hash(values, canonical_float: false)
         probe_count = [values.length, HASH_PROBE_COUNT].min
         return [@format, values.length].hash if probe_count.zero?
 
@@ -435,7 +435,14 @@ module Wavify
                   else
                     Array.new(probe_count) { |index| (index * (values.length - 1)) / (probe_count - 1) }
                   end
-        [@format, values.length, *indexes.map { |index| values.fetch(index) }].hash
+        probes = indexes.map { |index| values.fetch(index) }
+        probes.map! { |value| canonical_float_value(value) } if canonical_float
+        [@format, values.length, *probes].hash
+      end
+
+      def canonical_float_value(value)
+        directive = @format.bit_depth == 32 ? "e" : "E"
+        [value].pack(directive).unpack1(directive)
       end
 
       def packed_directive_and_width(format)
@@ -445,10 +452,12 @@ module Wavify
       end
 
       def validate_samples!(samples)
-        invalid_index = samples.index { |sample| !sample.is_a?(Numeric) }
+        invalid_index = samples.index do |sample|
+          !sample.is_a?(Numeric) || !sample.real? || !sample.respond_to?(:finite?) || !sample.finite?
+        end
         return unless invalid_index
 
-        raise InvalidParameterError, "sample at index #{invalid_index} must be Numeric"
+        raise InvalidParameterError, "sample at index #{invalid_index} must be a finite real Numeric"
       end
 
       def validate_interleaving!(sample_count, channels)

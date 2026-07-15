@@ -6,6 +6,9 @@ module Wavify
     class Pattern
       include Enumerable
 
+      MAX_RESOLUTION = 4_096
+      MAX_RATCHET = 64
+
       # Parsed pattern step value object.
       Step = Struct.new(:index, :trigger, :accent, :symbol, :velocity, :probability, :ratchet, keyword_init: true) do
         def rest?
@@ -24,9 +27,15 @@ module Wavify
       attr_reader :resolution, :steps, :notation
 
       def initialize(notation, resolution: 16)
-        @notation = notation
+        raise InvalidPatternError, "pattern notation must be String" unless notation.is_a?(String)
+
+        @notation = notation.dup.freeze
         @resolution = validate_resolution!(resolution)
-        @steps = parse_steps(notation).freeze
+        @steps = parse_steps(@notation).freeze
+        if @steps.length > @resolution
+          raise InvalidPatternError, "pattern has #{@steps.length} steps but resolution is #{@resolution}"
+        end
+        freeze
       end
 
       # Enumerates parsed steps.
@@ -73,7 +82,9 @@ module Wavify
       private
 
       def validate_resolution!(value)
-        raise InvalidPatternError, "resolution must be a positive Integer" unless value.is_a?(Integer) && value.positive?
+        unless value.is_a?(Integer) && value.between?(1, MAX_RESOLUTION)
+          raise InvalidPatternError, "resolution must be an Integer between 1 and #{MAX_RESOLUTION}"
+        end
 
         value
       end
@@ -105,9 +116,11 @@ module Wavify
               velocity: velocity,
               probability: probability,
               ratchet: ratchet
-            )
+            ).freeze
           when "-", "."
-            steps << Step.new(index: index, trigger: false, accent: false, symbol: char, velocity: 0.0, probability: 0.0, ratchet: 1)
+            steps << Step.new(
+              index: index, trigger: false, accent: false, symbol: char, velocity: 0.0, probability: 0.0, ratchet: 1
+            ).freeze
             cursor += 1
           else
             raise InvalidPatternError, "invalid pattern symbol #{char.inspect} at step #{index}"
@@ -133,9 +146,14 @@ module Wavify
       def scan_trigger_modifiers(chars, cursor, index)
         probability = 1.0
         ratchet = 1
+        seen = {}
 
         while cursor < chars.length && ["?", ":"].include?(chars[cursor])
-          case chars[cursor]
+          modifier = chars[cursor]
+          raise InvalidPatternError, "duplicate modifier #{modifier.inspect} at step #{index}" if seen[modifier]
+
+          seen[modifier] = true
+          case modifier
           when "?"
             text, cursor = scan_numeric_modifier(chars, cursor + 1, "probability", index)
             probability = parse_probability!(text, index)
@@ -180,9 +198,9 @@ module Wavify
 
       def parse_ratchet!(text, index)
         ratchet = Integer(text)
-        return ratchet if ratchet.positive?
+        return ratchet if ratchet.between?(1, MAX_RATCHET)
 
-        raise InvalidPatternError, "ratchet must be positive at step #{index}"
+        raise InvalidPatternError, "ratchet must be between 1 and #{MAX_RATCHET} at step #{index}"
       rescue ArgumentError
         raise InvalidPatternError, "invalid ratchet #{text.inspect} at step #{index}"
       end

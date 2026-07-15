@@ -20,7 +20,7 @@ module Wavify
         return @points.first.value if seconds <= @points.first.time
         return @points.last.value if seconds >= @points.last.time
 
-        right_index = @points.index { |point| point.time >= seconds }
+        right_index = @points.bsearch_index { |point| point.time >= seconds }
         left = @points.fetch(right_index - 1)
         right = @points.fetch(right_index)
         span = right.time - left.time
@@ -52,10 +52,12 @@ module Wavify
         mode = unit.to_sym
         raise InvalidParameterError, "unit must be :db or :linear" unless %i[db linear].include?(mode)
 
-        apply(buffer) do |sample, value, _time, _channel|
+        float_format = buffer.format.with(sample_format: :float, bit_depth: 32)
+        processed = apply(buffer.convert(float_format)) do |sample, value, _time, _channel|
           factor = mode == :db ? (10.0**(value / 20.0)) : value
           (sample * factor).clamp(-1.0, 1.0)
         end
+        processed.convert(buffer.format)
       rescue NoMethodError
         raise InvalidParameterError, "unit must be Symbol/String"
       end
@@ -84,7 +86,7 @@ module Wavify
                       else
                         point.to_a
                       end
-        Point.new(time: validate_time!(time), value: validate_value!(value))
+        Point.new(time: validate_time!(time), value: validate_value!(value)).freeze
       rescue KeyError, NoMethodError
         raise InvalidParameterError, "automation point must provide time and value"
       end
