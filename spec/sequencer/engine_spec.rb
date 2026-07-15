@@ -231,6 +231,21 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(audio.peak_amplitude).to be <= 1.0
     end
 
+    it "renders note voices directly into the track workspace" do
+      chord = Wavify::Sequencer::Track.new(
+        :pad,
+        chord_progression: ["Cmaj7"],
+        waveform: :sine,
+        envelope: Wavify::DSP::Envelope.new(attack: 0.01, decay: 0.02, sustain: 0.8, release: 0.01)
+      )
+      expect(Wavify::Audio).not_to receive(:tone)
+
+      audio = engine.render(tracks: [chord], default_bars: 1)
+
+      expect(audio.sample_frame_count).to be_positive
+      expect(audio.peak_amplitude).to be_positive
+    end
+
     it "rejects trigger-only synth tracks instead of silently rendering no audio" do
       drums = Wavify::Sequencer::Track.new(:drums, pattern: "x---x---")
 
