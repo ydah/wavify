@@ -101,6 +101,63 @@ RSpec.describe Wavify::Codecs::Raw do
         end
       end
     end
+
+    it "supports big-endian signed PCM" do
+      mono = format.with(channels: 1)
+      source = Wavify::Core::SampleBuffer.new([-32_768, -1, 0, 1, 32_767], mono)
+      io = StringIO.new(+"".b, "w+b")
+
+      described_class.write(io, source, format: mono, endianness: :big, signed: true)
+
+      expect(io.string).to eq(source.samples.pack("s>*"))
+      io.rewind
+      expect(described_class.read(io, format: mono, endianness: :big, signed: true)).to eq(source)
+    end
+
+    it "supports unsigned PCM words with the signed-domain midpoint" do
+      mono = format.with(channels: 1)
+      source = Wavify::Core::SampleBuffer.new([-32_768, 0, 32_767], mono)
+      io = StringIO.new(+"".b, "w+b")
+
+      described_class.write(io, source, format: mono, signed: false)
+
+      expect(io.string).to eq([0, 32_768, 65_535].pack("S<*"))
+      io.rewind
+      expect(described_class.read(io, format: mono, signed: false)).to eq(source)
+    end
+
+    it "roundtrips big-endian unsigned 24-bit PCM" do
+      mono = format.with(channels: 1, bit_depth: 24)
+      source = Wavify::Core::SampleBuffer.new([-8_388_608, 0, 8_388_607], mono)
+      io = StringIO.new(+"".b, "w+b")
+
+      described_class.write(io, source, format: mono, endianness: :big, signed: false)
+
+      expect(io.string).to eq("\x00\x00\x00\x80\x00\x00\xFF\xFF\xFF".b)
+      io.rewind
+      expect(described_class.read(io, format: mono, endianness: :big, signed: false)).to eq(source)
+    end
+
+    it "distinguishes normalized audio floats from unrestricted IEEE values" do
+      float_format = format.with(channels: 1, bit_depth: 32, sample_format: :float)
+      source = Wavify::Core::SampleBuffer.new([1.5, -2.0], float_format)
+      ieee_io = StringIO.new(+"".b, "w+b")
+
+      described_class.write(ieee_io, source, format: float_format, float_domain: :ieee)
+      ieee_io.rewind
+      decoded = described_class.read(ieee_io, format: float_format, float_domain: :ieee)
+      expect(decoded.samples).to eq([1.5, -2.0])
+
+      ieee_io.rewind
+      expect do
+        described_class.read(ieee_io, format: float_format, float_domain: :normalized)
+      end.to raise_error(Wavify::InvalidFormatError, /normalized raw float/)
+
+      normalized_io = StringIO.new(+"".b, "w+b")
+      described_class.write(normalized_io, source, format: float_format, float_domain: :normalized)
+      normalized_io.rewind
+      expect(described_class.read(normalized_io, format: float_format).samples).to eq([1.0, -1.0])
+    end
   end
 
   describe ".stream_read" do
@@ -138,6 +195,29 @@ RSpec.describe Wavify::Codecs::Raw do
       chunks = described_class.stream_read(short_io, format: format, chunk_size: 2).to_a
 
       expect(chunks.flat_map(&:samples)).to eq([1, 2, 3])
+    end
+
+    it "preserves encoding options across short reads" do
+      short_io = Class.new do
+        def initialize(bytes)
+          @io = StringIO.new(bytes)
+        end
+
+        def read(_size)
+          @io.read(1)
+        end
+      end.new([0, 32_768, 65_535].pack("S>*"))
+      mono = format.with(channels: 1)
+
+      chunks = described_class.stream_read(
+        short_io,
+        format: mono,
+        chunk_size: 2,
+        endianness: :big,
+        signed: false
+      ).to_a
+
+      expect(chunks.flat_map(&:samples)).to eq([-32_768, 0, 32_767])
     end
   end
 

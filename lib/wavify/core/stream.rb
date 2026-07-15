@@ -38,8 +38,13 @@ module Wavify
       def format
         return @format if @format
 
+        position = source_position(@source)
         metadata = @codec.metadata(@source, **metadata_probe_options)
         @format = metadata.fetch(:format)
+      ensure
+        if position && @source.respond_to?(:seek)
+          @source.seek(position, IO::SEEK_SET)
+        end
       end
 
       # Adds a processor to the stream pipeline.
@@ -487,15 +492,34 @@ module Wavify
         (duration_seconds * format.sample_rate).round
       end
 
-      def with_tee_writers(targets = @tee_targets, writers = [], &block)
-        return yield(writers) if targets.empty?
+      def with_tee_writers(targets = @tee_targets)
+        fibers = []
+        writers = []
+        targets.each do |target|
+          fiber = Fiber.new do
+            with_stream_context("stream tee", codec: target[:codec], target: target[:target]) do
+              target[:codec].stream_write(target[:target], format: target[:format], **target[:codec_options]) do |writer|
+                Fiber.yield(target.merge(writer: writer))
+              end
+            end
+          end
+          fibers << fiber
+          writers << fiber.resume
+        end
+        result = yield(writers)
+        fibers.reverse_each { |fiber| fiber.resume if fiber.alive? }
+        result
+      rescue StandardError => error
+        fibers&.reverse_each do |fiber|
+          next unless fiber.alive?
 
-        target = targets.first
-        with_stream_context("stream tee", codec: target[:codec], target: target[:target]) do
-          target[:codec].stream_write(target[:target], format: target[:format], **target[:codec_options]) do |writer|
-            with_tee_writers(targets.drop(1), writers + [target.merge(writer: writer)], &block)
+          begin
+            fiber.raise(error)
+          rescue StandardError
+            nil
           end
         end
+        raise
       end
 
       def write_tee_chunks(chunk, tee_writers)

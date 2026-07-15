@@ -297,6 +297,27 @@ RSpec.describe Wavify::Core::Stream do
     tee_output&.unlink
   end
 
+  it "opens and finalizes multiple tee writers iteratively" do
+    source = Wavify::Core::SampleBuffer.new([0.1, 0.2, 0.3, 0.4], format)
+    input = StringIO.new(+"".b, "w+b")
+    Wavify::Codecs::Wav.write(input, source, format: format)
+    input.rewind
+    outputs = Array.new(32) { StringIO.new(+"".b, "w+b") }
+
+    stream = described_class.new(input, codec: Wavify::Codecs::Wav, format: nil, chunk_size: 1)
+    outputs.each { |output| stream.tee(output, codec: :wav) }
+    stream.each_chunk.to_a
+
+    outputs.each do |output|
+      expect(output.string).to start_with("RIFF")
+      output.rewind
+      decoded = Wavify::Codecs::Wav.read(output)
+      decoded.samples.zip(source.samples).each do |actual, expected|
+        expect(actual).to be_within(1e-6).of(expected)
+      end
+    end
+  end
+
   it "dry-runs processing without writing tee outputs" do
     source = write_source_wav([0.1, 0.2, 0.3, 0.4])
     tee_output = Tempfile.new(["wavify_stream_dry_run", ".wav"])
