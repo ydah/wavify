@@ -42,6 +42,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Fixed arrangement timing across silent track sections, packed-buffer concurrency, projected metadata coordinates, and apply-only effect-chain tails.
 - Fixed CLI option ordering, help/version exit behavior, reproducible `--seed` rendering, optional OGG test setup, and codec/effect registry synchronization.
 - Fixed Windows path-output coverage by closing destination handles before atomic replacement, and bounded exact codec reads so malformed AIFF sizes stay within the public error contract.
+- Fixed sequencer chord and simultaneous-track clipping with per-voice scaling, float mix buses, and final linked limiting, while removing per-sample Enumerator resumes from voice rendering.
 
 ## [0.1.0] - 2026-03-04
 

@@ -4,6 +4,13 @@ RSpec.describe Wavify::Sequencer::Engine do
   let(:format) { Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 32, sample_format: :float) }
   let(:engine) { described_class.new(tempo: 120, format: format) }
 
+  def maximum_full_scale_run(audio, threshold: 0.999)
+    audio.buffer.samples.slice_when { |left, right| left.abs < threshold || right.abs < threshold }
+         .select { |run| run.first.abs >= threshold }
+         .map(&:length)
+         .max || 0
+  end
+
   describe "time calculations" do
     it "calculates beat and bar durations" do
       expect(engine.seconds_per_beat).to be_within(0.0001).of(0.5)
@@ -223,12 +230,44 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(audio.buffer.samples.drop(release_start).any? { |sample| sample.abs > 0.0 }).to eq(true)
     end
 
-    it "mixes chord voices with headroom" do
+    it "scales chord voices before the master bus" do
       chord = Wavify::Sequencer::Track.new(:pad, chord_progression: ["Cmaj7"], waveform: :sine)
 
       audio = engine.render(tracks: [chord], default_bars: 1)
 
-      expect(audio.peak_amplitude).to be <= 1.0
+      expect(audio.peak_amplitude).to be < 1.0
+      expect(audio.clipped?).to eq(false)
+    end
+
+    it "avoids flat tops for chords, simultaneous tracks, and arranged renders" do
+      chord = Wavify::Sequencer::Track.new(:pad, chord_progression: ["CMAJ7"], waveform: :sine)
+      first = Wavify::Sequencer::Track.new(:first, note_sequence: "C4", waveform: :sine)
+      second = Wavify::Sequencer::Track.new(:second, note_sequence: "C4", waveform: :sine)
+
+      rendered = [
+        engine.render(tracks: [chord], default_bars: 1),
+        engine.render(tracks: [first, second], default_bars: 1),
+        engine.render(
+          tracks: [chord, first],
+          arrangement: [{ name: :stack, bars: 1, tracks: %i[pad first] }]
+        )
+      ]
+
+      rendered.each do |audio|
+        expect(audio.clipped?).to eq(false)
+        expect(maximum_full_scale_run(audio)).to be <= 2
+      end
+    end
+
+    it "renders four-voice chords without per-sample enumerator resumes" do
+      chord = Wavify::Sequencer::Track.new(:pad, chord_progression: ["CMAJ7"], waveform: :sine)
+      expect_any_instance_of(Wavify::DSP::Oscillator).not_to receive(:each_sample)
+
+      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      audio = described_class.new(tempo: 60, format: format).render(tracks: [chord], default_bars: 1)
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+
+      expect(elapsed / audio.duration.total_seconds).to be < 0.5
     end
 
     it "renders note voices directly into the track workspace" do

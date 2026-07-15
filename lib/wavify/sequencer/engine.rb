@@ -16,6 +16,8 @@ module Wavify
       MAX_SECTION_REPEAT = 10_000
       # Maximum scheduled timeline events in one build.
       MAX_EVENTS = 1_000_000
+      # Final sequencer ceiling leaves conversion margin below digital full scale.
+      MASTER_CEILING_DB = -0.1
 
       attr_reader :tempo, :format, :beats_per_bar, :swing
 
@@ -126,7 +128,7 @@ module Wavify
 
         return Wavify::Audio.silence(0.0, format: @format) if rendered_audios.empty?
 
-        Wavify::Audio.mix(*rendered_audios, strategy: :headroom)
+        master_audio(rendered_audios)
       end
 
       private
@@ -240,7 +242,7 @@ module Wavify
         end
         return [] if samples.empty?
 
-        [Wavify::Audio.new(Wavify::Core::SampleBuffer.new(samples, work_format).convert(@format))]
+        [Wavify::Audio.new(Wavify::Core::SampleBuffer.new(samples, work_format))]
       end
 
       def render_track_audio(track, bars:, start_bar: 0, start_time: nil)
@@ -278,7 +280,7 @@ module Wavify
           rendered = rendered.channels == 1 ? rendered.pan(track.pan_position) : rendered.balance(track.pan_position)
         end
         rendered = apply_track_effects(rendered, track.effects) if track.effects?
-        rendered.convert(@format)
+        rendered.convert(@format.with(sample_format: :float, bit_depth: 32))
       end
 
       def render_oscillator_voices_into!(samples, frequencies:, start_frame:, duration:, track:, format:)
@@ -290,26 +292,37 @@ module Wavify
         end
 
         mono_format = format.with(channels: 1)
-        voices = frequencies.map do |frequency|
-          Wavify::DSP::Oscillator.new(
+        voice_gain = 1.0 / frequencies.length
+        channels = format.channels
+        frequencies.each do |frequency|
+          voice = Wavify::DSP::Oscillator.new(
             frequency: frequency,
             waveform: track.waveform,
             **track.synth_options
-          ).each_sample(format: mono_format)
-        end
-        channels = format.channels
-        frame_count.times do |frame_index|
-          target_frame = start_frame + frame_index
-          break if target_frame >= samples.length / channels
+          ).generate(rendered_duration, format: mono_format)
+          voice.samples.each_with_index do |sample, frame_index|
+            target_frame = start_frame + frame_index
+            break if target_frame >= samples.length / channels
 
-          value = voices.sum(&:next)
-          if track.envelope
-            time = frame_index.to_f / format.sample_rate
-            value *= track.envelope.gain_at(time, note_on_duration: duration)
+            value = sample * voice_gain
+            if track.envelope
+              time = frame_index.to_f / format.sample_rate
+              value *= track.envelope.gain_at(time, note_on_duration: duration)
+            end
+            base_index = target_frame * channels
+            channels.times { |channel| samples[base_index + channel] += value }
           end
-          base_index = target_frame * channels
-          channels.times { |channel| samples[base_index + channel] += value }
         end
+      end
+
+      def master_audio(rendered_audios)
+        work_format = @format.with(sample_format: :float, bit_depth: 32)
+        mixed = Wavify::Audio.mix(*rendered_audios, strategy: :none, format: work_format)
+        return Wavify::Audio.new(mixed.buffer.convert(@format)) if mixed.peak_amplitude <= 1.0
+
+        limiter = Wavify::DSP::Effects::Limiter.new(ceiling: MASTER_CEILING_DB, attack: 0.0)
+        limited = limiter.apply(mixed.buffer)
+        Wavify::Audio.new(limited.convert(@format))
       end
 
       def schedule_pattern_events(track, bars:, start_bar:, start_time:)
