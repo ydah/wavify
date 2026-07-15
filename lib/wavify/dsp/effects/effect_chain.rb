@@ -19,16 +19,7 @@ module Wavify
         def process(buffer)
           raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
 
-          @effects.reduce(buffer) do |current, effect|
-            if effect.respond_to?(:process)
-              effect.process(current)
-            elsif effect.respond_to?(:apply)
-              applied = effect.apply(current)
-              applied.is_a?(Wavify::Audio) ? applied.buffer : applied
-            else
-              effect.call(current)
-            end
-          end
+          @effects.reduce(buffer) { |current, effect| process_effect(effect, current) }
         end
 
         # Applies every effect using its offline entrypoint when available.
@@ -57,7 +48,7 @@ module Wavify
             next unless tail&.sample_frame_count&.positive?
 
             processed = @effects.drop(index + 1).reduce(tail) do |current, downstream|
-              downstream.respond_to?(:process) ? downstream.process(current) : downstream.call(current)
+              process_effect(downstream, current)
             end
             tails << processed
           end
@@ -88,6 +79,17 @@ module Wavify
         end
 
         private
+
+        def process_effect(effect, buffer)
+          result = if effect.respond_to?(:process)
+                     effect.process(buffer)
+                   elsif effect.respond_to?(:call)
+                     effect.call(buffer)
+                   else
+                     effect.apply(buffer)
+                   end
+          result.is_a?(Wavify::Audio) ? result.buffer : result
+        end
 
         def validate_effect!(effect)
           return effect if effect.respond_to?(:process) || effect.respond_to?(:call) || effect.respond_to?(:apply)

@@ -395,6 +395,26 @@ RSpec.describe Wavify::DSP::Effects do
       expect(chain.lookahead).to eq(0.005)
       expect(chain.tail_duration).to eq(0.005)
     end
+
+    it "passes flushed tails through apply-only downstream effects" do
+      tailing = Class.new do
+        def process(buffer) = buffer
+
+        def flush(format:)
+          Wavify::Core::SampleBuffer.new([0.25], format)
+        end
+      end.new
+      apply_only = Class.new do
+        def apply(buffer)
+          Wavify::Core::SampleBuffer.new(buffer.samples.map { |sample| sample * 2.0 }, buffer.format)
+        end
+      end.new
+      chain = described_class.new([tailing, apply_only])
+
+      chain.process(Wavify::Core::SampleBuffer.new([0.0], mono_float))
+
+      expect(chain.flush(format: mono_float).samples).to eq([0.5])
+    end
   end
 
   describe Wavify::DSP::Effects::MasteringChain do
