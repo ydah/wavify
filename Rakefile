@@ -6,6 +6,8 @@ require "json"
 require "rubocop/rake_task"
 require "rspec/core/rake_task"
 require "rbconfig"
+require "tmpdir"
+require_relative "tools/yard_coverage"
 
 RSpec::Core::RakeTask.new(:spec)
 RuboCop::RakeTask.new(:lint) do |task|
@@ -29,19 +31,31 @@ namespace :spec do
     abort("fixture generation failed") unless success
   end
 
-  desc "Run specs with SimpleCov coverage (set COVERAGE_MINIMUM=90 to enforce target)"
+  desc "Run specs with line, branch, and per-file SimpleCov coverage gates"
   task :coverage do
     ruby = RbConfig.ruby
-    env = { "COVERAGE" => "1" }
-    env["COVERAGE_MINIMUM"] = ENV["COVERAGE_MINIMUM"] if ENV["COVERAGE_MINIMUM"]
-    env["SIMPLECOV_BRANCH"] = ENV["SIMPLECOV_BRANCH"] if ENV["SIMPLECOV_BRANCH"]
+    env = {
+      "COVERAGE" => "1",
+      "SIMPLECOV_BRANCH" => ENV.fetch("SIMPLECOV_BRANCH", "1")
+    }
+    %w[
+      COVERAGE_MINIMUM
+      COVERAGE_BRANCH_MINIMUM
+      COVERAGE_MINIMUM_PER_FILE
+      COVERAGE_BRANCH_MINIMUM_PER_FILE
+    ].each do |name|
+      env[name] = ENV[name] if ENV[name]
+    end
 
     success = system(env, ruby, "-S", "bundle", "exec", "rspec")
     abort("coverage run failed") unless success
   end
 end
 
-task default: :spec
+desc "Run the local quality gate (specs, lint, signatures, and docs)"
+task check: [:spec, :lint, "types:validate", "docs:check"]
+
+task default: :check
 
 namespace :bench do
   def benchmark_scripts
@@ -75,14 +89,19 @@ namespace :bench do
     benchmark_scripts.each_key do |name|
       baseline = JSON.parse(File.read(File.join(baseline_dir, "#{name}.json")))
       current = JSON.parse(File.read(File.join(current_dir, "#{name}.json")))
-      baseline_measurements = baseline.fetch("measurements").to_h { |item| [item.fetch("label"), item.fetch("elapsed_seconds")] }
+      baseline_measurements = baseline.fetch("measurements").to_h { |item| [item.fetch("label"), item] }
+      current_measurements = current.fetch("measurements").to_h { |item| [item.fetch("label"), item] }
+      missing = baseline_measurements.keys - current_measurements.keys
+      added = current_measurements.keys - baseline_measurements.keys
+      unless missing.empty? && added.empty?
+        abort("benchmark labels changed for #{name}: removed=#{missing.inspect}, added=#{added.inspect}")
+      end
 
-      current.fetch("measurements").each do |item|
-        label = item.fetch("label")
-        next unless baseline_measurements.key?(label)
-
-        allowed = baseline_measurements.fetch(label) * threshold
-        elapsed = item.fetch("elapsed_seconds")
+      current_measurements.each do |label, item|
+        baseline_item = baseline_measurements.fetch(label)
+        baseline_median = baseline_item.fetch("median_seconds", baseline_item.fetch("elapsed_seconds"))
+        elapsed = item.fetch("median_seconds", item.fetch("elapsed_seconds"))
+        allowed = baseline_median * threshold
         abort("benchmark regression: #{name} #{label} #{elapsed}s > #{allowed.round(6)}s") if elapsed > allowed
       end
     end
@@ -155,25 +174,22 @@ namespace :docs do
 
   desc "Print YARD documentation coverage stats"
   task :stats do
-    ruby = RbConfig.ruby
-    success = system(ruby, "-S", "bundle", "exec", "yard", "stats")
-    abort("yard stats failed") unless success
+    report = Wavify::Tools::YardCoverage.calculate
+    puts format(
+      "YARD objects: %<total>d (%<undocumented>d undocumented)\n%<percent>.2f%% documented",
+      **report
+    )
   end
 
   desc "Enforce minimum YARD documentation percentage (YARD_MINIMUM, default: 85)"
   task :check do
-    ruby = RbConfig.ruby
     minimum = ENV.fetch("YARD_MINIMUM", "85").to_f
-    output = IO.popen([ruby, "-S", "bundle", "exec", "yard", "stats"], chdir: __dir__, err: %i[child out], &:read)
-    puts output
-
-    match = output.match(/([0-9]+\.[0-9]+)% documented/)
-    abort("yard stats output did not include documentation percentage") unless match
-
-    percent = match[1].to_f
+    report = Wavify::Tools::YardCoverage.calculate
+    percent = report.fetch(:percent)
+    puts format("YARD objects: %<total>d (%<undocumented>d undocumented)", **report)
     abort("documentation coverage #{percent}% is below minimum #{minimum}%") if percent < minimum
 
-    puts "docs check ok: #{percent}% >= #{minimum}%"
+    puts format("docs check ok: %.2f%% >= %.2f%%", percent, minimum)
   end
 
   desc "Smoke-run short example scripts (self-contained demo mode)"
@@ -251,6 +267,50 @@ namespace :release do
     Rake::Task["build"].invoke
   end
 
-  desc "Run release readiness checks (changelog, gemspec, gem build)"
-  task check: %i[check_changelog check_gemspec build_package]
+  desc "Install the built gem into an isolated GEM_HOME and smoke-test require and CLI"
+  task smoke_package: :build_package do
+    spec = load_release_spec!
+    package = File.expand_path("pkg/#{spec.file_name}", __dir__)
+    assert_release_check!(File.file?(package), "built gem is missing: #{package}")
+
+    Dir.mktmpdir("wavify-gem-smoke-") do |gem_home|
+      bindir = File.join(gem_home, "bin")
+      env = { "GEM_HOME" => gem_home, "GEM_PATH" => gem_home }
+      ruby = RbConfig.ruby
+      Bundler.with_unbundled_env do
+        installed = system(
+          env,
+          ruby,
+          "-S",
+          "gem",
+          "install",
+          "--local",
+          "--no-document",
+          "--install-dir",
+          gem_home,
+          "--bindir",
+          bindir,
+          package
+        )
+        assert_release_check!(installed, "failed to install built gem")
+
+        require_ok = system(env, ruby, "-e", 'require "wavify"; abort unless Wavify::VERSION')
+        assert_release_check!(require_ok, 'installed gem failed to require "wavify"')
+
+        executable = File.join(bindir, "wavify")
+        assert_release_check!(File.file?(executable), "installed CLI executable is missing")
+        assert_release_check!(system(env, ruby, executable, "--help", out: File::NULL), "installed CLI --help failed")
+      end
+
+      gem_root = File.join(gem_home, "gems", spec.full_name)
+      %w[lib/wavify.rb sig/wavify.rbs README.md CHANGELOG.md LICENSE].each do |relative_path|
+        assert_release_check!(File.file?(File.join(gem_root, relative_path)), "installed gem is missing #{relative_path}")
+      end
+    end
+
+    puts "release check ok: isolated gem install, require, and CLI smoke test"
+  end
+
+  desc "Run release readiness checks (changelog, gemspec, build, install, require, CLI)"
+  task check: %i[check_changelog check_gemspec smoke_package]
 end

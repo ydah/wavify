@@ -4,6 +4,7 @@ module Wavify
   module DSP
     # Shared invocation and result contract for stateful audio processors.
     module Processor
+      # Maximum number of frames requested from a processor tail at once.
       TAIL_CHUNK_FRAMES = 4_096
 
       module_function

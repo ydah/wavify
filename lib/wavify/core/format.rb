@@ -18,6 +18,7 @@ module Wavify
         top_center top_front_left top_front_center top_front_right top_back_left
         top_back_center top_back_right
       ].freeze
+      # Conventional speaker order used when no explicit channel layout exists.
       DEFAULT_CHANNEL_LAYOUTS = {
         1 => %i[front_center],
         2 => %i[front_left front_right],

@@ -6,7 +6,9 @@ module Wavify
     class Pattern
       include Enumerable
 
+      # Highest supported step-grid resolution per bar.
       MAX_RESOLUTION = 4_096
+      # Highest supported retrigger count for one pattern step.
       MAX_RATCHET = 64
 
       # Parsed pattern step value object.

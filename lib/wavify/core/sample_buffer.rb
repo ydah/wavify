@@ -14,6 +14,7 @@ module Wavify
     class SampleBuffer
       include Enumerable
 
+      # Number of packed samples unpacked per sequential enumeration batch.
       PACKED_ENUMERATION_CHUNK_SAMPLES = 4_096
 
       # Builds integer PCM samples without normalized-float ambiguity.
@@ -184,7 +185,9 @@ module Wavify
         end
       end
 
+      # Supported internal storage backends.
       STORAGE_TYPES = %i[array packed].freeze
+      # Number of representative samples included in the constant-time hash.
       HASH_PROBE_COUNT = 8
       StorageState = Struct.new(:samples, :packed_samples, :type, keyword_init: true) # :nodoc:
 

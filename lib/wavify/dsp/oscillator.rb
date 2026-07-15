@@ -6,12 +6,19 @@ module Wavify
     class Oscillator
       # Supported waveform symbols.
       WAVEFORMS = %i[sine square sawtooth triangle pulse white_noise pink_noise].freeze
+      # Sample count in each band-limited triangle wavetable.
       TRIANGLE_TABLE_SIZE = 2_048
+      # Highest odd harmonic considered when building triangle tables.
       TRIANGLE_MAX_HARMONIC = 255
+      # Maximum number of sample-rate/frequency-specific tables retained.
       TRIANGLE_TABLE_CACHE_LIMIT = 8
+      # Maximum duration accepted by one eager generation call.
       MAX_DURATION_SECONDS = 3_600.0
+      # Maximum number of frames allocated by one eager generation call.
       MAX_GENERATE_FRAMES = 50_000_000
+      # Absolute input guard before output-format Nyquist validation.
       MAX_FREQUENCY = 1_000_000.0
+      # Maximum number of detuned oscillator voices.
       MAX_UNISON = 64
 
       # @param phase [Numeric] initial phase in cycles (`0.0..1.0` wraps)

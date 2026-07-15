@@ -5,8 +5,11 @@ module Wavify
   module DSP
     # Stateful biquad filter with common factory constructors.
     class Filter
+      # Minimum tail window used to drain an IIR filter.
       DEFAULT_TAIL_SECONDS = 0.05
+      # Hard limit on automatic filter tail rendering.
       MAX_TAIL_SECONDS = 10.0
+      # Amplitude below which an IIR tail is treated as silent.
       TAIL_AMPLITUDE = 1.0e-6
 
       attr_reader :type, :cutoff, :q, :gain_db

@@ -6,6 +6,21 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ## [Unreleased]
 
+### Added
+
+- Added namespace-split RBS signatures with implementation parity checks, randomized codec parser tests, and storage/hash properties.
+- Added branch and per-file coverage gates, minimum/latest dependency jobs, and scheduled Ruby head/latest-runner canaries.
+
+### Changed
+
+- Pinned CI actions and stable runner images, made benchmark reports use repeated median/p95 samples, and made the default Rake task run the local quality gate.
+- Made gem packaging independent of Git metadata and tied source/changelog metadata to the release version tag.
+
+### Fixed
+
+- Fixed release verification to install the built gem in isolation and smoke-test its require path, CLI, signatures, and documentation files.
+- Replaced locale-sensitive YARD output parsing with registry-based coverage calculation and documented the native OGG support matrix.
+
 ## [0.2.0] - 2026-07-15
 
 ### Added

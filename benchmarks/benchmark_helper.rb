@@ -47,13 +47,39 @@ module WavifyBenchmarks
     end
 
     def measure(label)
+      runs = int_env("BENCH_RUNS", 3)
+      raise ArgumentError, "BENCH_RUNS must be a positive Integer" unless runs.positive?
+
       result = nil
-      elapsed = Benchmark.realtime do
-        result = yield
+      samples = Array.new(runs) do
+        Benchmark.realtime do
+          result = yield
+        end
       end
-      puts format("  %<label>-32s %<elapsed>8.4fs", label: label, elapsed: elapsed)
-      measurements << { label: label, elapsed_seconds: elapsed.round(6) }
-      [elapsed, result]
+      sorted = samples.sort
+      median = percentile(sorted, 0.5)
+      p95 = percentile(sorted, 0.95)
+      puts format(
+        "  %<label>-32s median %<median>8.4fs  p95 %<p95>8.4fs  n=%<runs>d",
+        label: label,
+        median: median,
+        p95: p95,
+        runs: runs
+      )
+      measurements << {
+        label: label,
+        elapsed_seconds: median.round(6),
+        median_seconds: median.round(6),
+        p95_seconds: p95.round(6),
+        samples_seconds: samples.map { |sample| sample.round(6) },
+        runs: runs
+      }
+      [median, result]
+    end
+
+    def percentile(sorted_samples, fraction)
+      index = ((sorted_samples.length - 1) * fraction).ceil
+      sorted_samples.fetch(index)
     end
 
     def measurements

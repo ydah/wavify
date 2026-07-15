@@ -169,11 +169,19 @@ Wavify::Adapters.known
 ### OGG Vorbis notes
 
 - `read` / `stream_read` support sequential chained streams and interleaved multi-stream OGG.
-- Single-logical-stream `stream_read` is incremental; chained and interleaved inputs currently buffer complete logical streams while combining them.
+- `stream_read` incrementally processes pages, packets, native synthesis, resampling, and mixed output chunks.
 - Interleaved multi-stream decode is mixed into one output stream.
 - If interleaved streams have different sample rates, they are resampled to the first logical stream's sample rate before mix.
 - OGG support is optional; `wavify doctor` reports whether the native gems are installed.
 - MP3, AAC, FFmpeg, MIDI, and spectrogram support are adapter-gem boundaries; use `Wavify::Adapters.load(:ffmpeg)` after installing a matching adapter gem.
+
+Native support matrix:
+
+| Platform | Core codecs | OGG Vorbis native CI | Support status |
+|----------|-------------|-----------------------|----------------|
+| Linux (Ubuntu 24.04) | Tested | Tested with `libogg-dev` / `libvorbis-dev` | Supported |
+| macOS 14 | Tested | Not run | Core supported; OGG native best-effort |
+| Windows Server 2022 | Tested | Not run | Core supported; OGG native best-effort |
 
 ## Sequencer DSL
 
@@ -311,10 +319,15 @@ bundle install
 Run tests:
 
 ```bash
+bundle exec rake
 bundle exec rspec
-bundle exec rake spec:coverage COVERAGE_MINIMUM=90
+SIMPLECOV_BRANCH=1 COVERAGE_MINIMUM=90 COVERAGE_BRANCH_MINIMUM=70 \
+  COVERAGE_MINIMUM_PER_FILE=60 COVERAGE_BRANCH_MINIMUM_PER_FILE=40 \
+  bundle exec rake spec:coverage
 bundle exec rake types:validate
 ```
+
+The default `rake` task runs specs, lint, RBS/API parity validation, and the documentation gate.
 
 Generate/check docs:
 
@@ -344,6 +357,8 @@ Release checks:
 ```bash
 bundle exec rake release:check
 ```
+
+The release check builds the gem, installs it into an isolated `GEM_HOME`, then verifies `require "wavify"`, CLI help, and packaged public files.
 
 ## License
 
