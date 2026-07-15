@@ -31,6 +31,15 @@ RSpec.describe Wavify::DSP::Automation do
     expect(processed.samples).to eq([1_000, -1_000])
   end
 
+  it "preserves above-full-scale gain in float buffers" do
+    buffer = Wavify::Core::SampleBuffer.new([0.75], format)
+    automation = described_class.new([[0.0, 6.0206]])
+
+    processed = automation.apply_gain(buffer)
+
+    expect(processed.samples.first).to be_within(0.0001).of(1.5)
+  end
+
   it "exposes immutable points" do
     automation = described_class.new([[0.0, 1.0]])
 

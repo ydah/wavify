@@ -55,7 +55,7 @@ module Wavify
         float_format = buffer.format.with(sample_format: :float, bit_depth: 32)
         processed = apply(buffer.convert(float_format)) do |sample, value, _time, _channel|
           factor = mode == :db ? (10.0**(value / 20.0)) : value
-          (sample * factor).clamp(-1.0, 1.0)
+          sample * factor
         end
         processed.convert(buffer.format)
       rescue NoMethodError

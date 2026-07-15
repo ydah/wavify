@@ -101,5 +101,16 @@ RSpec.describe Wavify::Core::Format do
       expect(left.hash).to eq(right.hash)
       expect(left).not_to eq(different)
     end
+
+    it "normalizes an explicit nil layout to the default channel layout" do
+      default = described_class.new(channels: 2, sample_rate: 44_100, bit_depth: 16)
+      explicit_nil = described_class.new(channels: 2, sample_rate: 44_100, bit_depth: 16, channel_layout: nil)
+      buffer = Wavify::Core::SampleBuffer.new([0, 0], default)
+
+      expect(explicit_nil.channel_layout).to eq(%i[front_left front_right])
+      expect(explicit_nil).to eq(default)
+      expect(explicit_nil.hash).to eq(default.hash)
+      expect(buffer.convert(explicit_nil)).to equal(buffer)
+    end
   end
 end

@@ -45,6 +45,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Fixed sequencer chord and simultaneous-track clipping with per-voice scaling, float mix buses, and final linked limiting, while removing per-sample Enumerator resumes from voice rendering.
 - Smoothed NoiseGate gain transitions, separated Limiter window detection from current-frame safety clamps, and isolated offline limiting from active streaming state.
 - Restored eager arrangement validation while keeping repeat expansion lazy, and reused sequencer engines across repeated tempo/meter sections.
+- Normalized explicit nil channel layouts, made dynamic processor flush dispatch format-aware, and preserved above-full-scale Automation gain in float workspaces.
 
 ## [0.1.0] - 2026-03-04
 

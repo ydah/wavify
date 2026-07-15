@@ -62,4 +62,36 @@ RSpec.describe Wavify::DSP::Processor do
 
     expect(described_class.flush(processor, format: format).to_a).to eq([])
   end
+
+  it "passes format through dynamic flush dispatch" do
+    processor = Class.new do
+      attr_reader :flushed_format
+
+      def respond_to_missing?(name, include_private = false)
+        name == :flush || super
+      end
+
+      def method_missing(name, **options)
+        return super unless name == :flush
+
+        @flushed_format = options.fetch(:format)
+        nil
+      end
+    end.new
+
+    expect(described_class.flush(processor, format: format).to_a).to eq([])
+    expect(processor.flushed_format).to equal(format)
+  end
+
+  it "does not swallow argument errors raised inside flush" do
+    processor = Class.new do
+      def flush(format:)
+        raise ArgumentError, "invalid internal state for #{format.sample_rate}"
+      end
+    end.new
+
+    expect do
+      described_class.flush(processor, format: format)
+    end.to raise_error(ArgumentError, /invalid internal state/)
+  end
 end

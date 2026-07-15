@@ -46,7 +46,11 @@ module Wavify
         @sample_format = validate_sample_format(sample_format)
         @bit_depth = validate_bit_depth(bit_depth, @sample_format)
         @valid_bits = validate_valid_bits(valid_bits || @bit_depth)
-        requested_layout = channel_layout.equal?(UNSPECIFIED_LAYOUT) ? DEFAULT_CHANNEL_LAYOUTS[@channels] : channel_layout
+        requested_layout = if channel_layout.equal?(UNSPECIFIED_LAYOUT) || channel_layout.nil?
+                             DEFAULT_CHANNEL_LAYOUTS[@channels]
+                           else
+                             channel_layout
+                           end
         @channel_layout = validate_channel_layout(requested_layout)
         freeze
       end
