@@ -63,6 +63,18 @@ RSpec.describe Wavify::DSP::Oscillator do
       expect(chunks).to eq(continuous.generate(0.01, format: mono_float).samples)
     end
 
+    it "requires a phase reset before changing sample rate" do
+      oscillator = described_class.new(waveform: :sine, frequency: 100)
+      oscillator.generate(0.005, format: mono_float)
+
+      expect do
+        oscillator.generate(0.005, format: mono_float.with(sample_rate: 16_000))
+      end.to raise_error(Wavify::InvalidParameterError, /reset_phase/)
+
+      oscillator.reset_phase
+      expect(oscillator.generate(0.005, format: mono_float.with(sample_rate: 16_000)).sample_frame_count).to eq(80)
+    end
+
     it "generates independent noise values for each channel" do
       stereo = mono_float.with(channels: 2)
       oscillator = described_class.new(waveform: :white_noise, frequency: 1, random: Random.new(123))
@@ -83,6 +95,18 @@ RSpec.describe Wavify::DSP::Oscillator do
       end
       error = samples.zip(expected).map { |actual, reference| (actual - reference).abs }.max
       expect(error).to be < 0.001
+    end
+
+    it "bounds the triangle wavetable cache" do
+      oscillator = described_class.new(waveform: :triangle, frequency: 4_000)
+
+      9.times do |offset|
+        sample_rate = 8_000 + (offset * 1_000)
+        oscillator.reset_phase.generate(1.0 / sample_rate, format: mono_float.with(sample_rate: sample_rate))
+      end
+
+      tables = oscillator.instance_variable_get(:@triangle_tables)
+      expect(tables.length).to eq(described_class::TRIANGLE_TABLE_CACHE_LIMIT)
     end
   end
 

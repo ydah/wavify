@@ -11,6 +11,8 @@ module Wavify
       STEP_SECONDS = 0.1
 
       class << self
+        # Measures integrated loudness. Inputs shorter than the BS.1770 400 ms
+        # block are treated as a single partial block.
         def integrated(samples, sample_rate:, channels:)
           return -Float::INFINITY if samples.empty?
 
@@ -67,14 +69,22 @@ module Wavify
 
         def apply_biquad(samples, coefficients, channels)
           b0, b1, b2, a1, a2 = coefficients
-          states = Array.new(channels) { [0.0, 0.0, 0.0, 0.0] }
-          samples.each_with_index.map do |sample, index|
-            state = states.fetch(index % channels)
-            x1, x2, y1, y2 = state
-            value = (b0 * sample) + (b1 * x1) + (b2 * x2) - (a1 * y1) - (a2 * y2)
-            state.replace([sample, x1, value, y1])
-            value
+          x1 = Array.new(channels, 0.0)
+          x2 = Array.new(channels, 0.0)
+          y1 = Array.new(channels, 0.0)
+          y2 = Array.new(channels, 0.0)
+          output = Array.new(samples.length)
+          samples.each_with_index do |sample, index|
+            channel = index % channels
+            value = (b0 * sample) + (b1 * x1.fetch(channel)) + (b2 * x2.fetch(channel)) -
+                    (a1 * y1.fetch(channel)) - (a2 * y2.fetch(channel))
+            x2[channel] = x1.fetch(channel)
+            x1[channel] = sample
+            y2[channel] = y1.fetch(channel)
+            y1[channel] = value
+            output[index] = value
           end
+          output
         end
 
         def block_energies(samples, sample_rate:, channels:)

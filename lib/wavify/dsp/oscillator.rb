@@ -8,6 +8,7 @@ module Wavify
       WAVEFORMS = %i[sine square sawtooth triangle pulse white_noise pink_noise].freeze
       TRIANGLE_TABLE_SIZE = 2_048
       TRIANGLE_MAX_HARMONIC = 255
+      TRIANGLE_TABLE_CACHE_LIMIT = 8
 
       # @param phase [Numeric] initial phase in cycles (`0.0..1.0` wraps)
       def initialize(waveform:, frequency:, amplitude: 1.0, phase: 0.0, pulse_width: 0.5, detune: 0.0, unison: 1,
@@ -18,6 +19,7 @@ module Wavify
         @initial_phase = validate_phase!(phase)
         @phase = @initial_phase
         @sample_position = 0
+        @sample_rate = nil
         @pulse_width = validate_pulse_width!(pulse_width)
         @detune = validate_detune!(detune)
         @unison = validate_unison!(unison)
@@ -29,17 +31,21 @@ module Wavify
       def reset_phase(phase = @initial_phase)
         @phase = validate_phase!(phase)
         @sample_position = 0
+        @sample_rate = nil
         reset_pink_noise!
         self
       end
 
-      # Generates a finite sample buffer in the requested format.
+      # Generates the next finite sample buffer in the requested format.
+      # Calls are stateful and continue oscillator phase. Call {#reset_phase}
+      # before changing sample rate or when repeatable output is required.
       #
       # @param duration_seconds [Numeric]
       # @param format [Wavify::Core::Format]
       # @return [Wavify::Core::SampleBuffer]
       def generate(duration_seconds, format:)
         validate_format!(format)
+        prepare_sample_rate!(format.sample_rate)
         unless duration_seconds.is_a?(Numeric) && duration_seconds >= 0
           raise InvalidParameterError, "duration_seconds must be a non-negative Numeric"
         end
@@ -61,12 +67,13 @@ module Wavify
         Core::SampleBuffer.new(samples, format)
       end
 
-      # Returns an infinite enumerator of mono sample values.
+      # Returns a stateful infinite enumerator of mono sample values.
       #
       # @param format [Wavify::Core::Format]
       # @return [Enumerator<Float>]
       def each_sample(format:)
         validate_format!(format)
+        prepare_sample_rate!(format.sample_rate)
 
         Enumerator.new do |yielder|
           loop do
@@ -133,6 +140,14 @@ module Wavify
 
       def validate_format!(format)
         raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
+      end
+
+      def prepare_sample_rate!(sample_rate)
+        if @sample_rate && @sample_rate != sample_rate
+          raise InvalidParameterError, "sample_rate cannot change while phase is active; call reset_phase first"
+        end
+
+        @sample_rate = sample_rate
       end
 
       def sample_at(index, sample_rate)
@@ -205,15 +220,16 @@ module Wavify
 
       def triangle_wavetable(frequency, sample_rate)
         key = [frequency, sample_rate]
-        @triangle_tables[key] ||= begin
-          highest = [((sample_rate / 2.0) / frequency).floor, TRIANGLE_MAX_HARMONIC].min
-          harmonics = (1..highest).step(2).to_a
-          scale = 8.0 / (Math::PI * Math::PI)
-          Array.new(TRIANGLE_TABLE_SIZE) do |index|
-            phase = index.to_f / TRIANGLE_TABLE_SIZE
-            scale * harmonics.sum { |harmonic| Math.cos(2.0 * Math::PI * harmonic * phase) / (harmonic * harmonic) }
-          end.freeze
-        end
+        return @triangle_tables.fetch(key) if @triangle_tables.key?(key)
+
+        @triangle_tables.shift if @triangle_tables.length >= TRIANGLE_TABLE_CACHE_LIMIT
+        highest = [((sample_rate / 2.0) / frequency).floor, TRIANGLE_MAX_HARMONIC].min
+        harmonics = (1..highest).step(2).to_a
+        scale = 8.0 / (Math::PI * Math::PI)
+        @triangle_tables[key] = Array.new(TRIANGLE_TABLE_SIZE) do |index|
+          phase = index.to_f / TRIANGLE_TABLE_SIZE
+          scale * harmonics.sum { |harmonic| Math.cos(2.0 * Math::PI * harmonic * phase) / (harmonic * harmonic) }
+        end.freeze
       end
 
       def polyblep(phase, phase_step)

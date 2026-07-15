@@ -39,41 +39,35 @@ module Wavify
           Core::SampleBuffer.new(output, float_format).convert(buffer.format)
         end
 
-        # Processes a single sample for one channel.
+        # Compression requires a complete frame so the detector can remain
+        # stereo-linked. Use #process with a SampleBuffer.
         #
         # @param sample [Numeric]
         # @param channel [Integer]
         # @param sample_rate [Integer]
         # @return [Float]
-        def process_sample(sample, channel:, sample_rate:)
-          x = sample.to_f
-          process_sample_with_level(x, x.abs, channel: channel, sample_rate: sample_rate)
+        def process_sample(_sample, channel:, sample_rate:)
+          raise NotImplementedError, "Compressor requires frame-aware #apply or #process"
         end
 
         private
 
-        def process_sample_with_level(sample, level, channel:, sample_rate:)
-          sample * gain_for_detector_level(level)
-        end
-
         def gain_for_detector_level(level)
-          envelope = @envelopes.fetch(0)
-          coeff = level > envelope ? @attack_coefficient : @release_coefficient
-          envelope += (1.0 - coeff) * (level - envelope)
-          @envelopes[0] = envelope
+          coeff = level > @envelope ? @attack_coefficient : @release_coefficient
+          @envelope += (1.0 - coeff) * (level - @envelope)
 
-          gain_for_envelope(envelope)
+          gain_for_envelope(@envelope)
         end
 
         def prepare_runtime_state(sample_rate:, channels:)
-          @envelopes = [0.0]
+          @envelope = 0.0
           @threshold_linear = 10.0**(@threshold_db / 20.0)
           @attack_coefficient = time_coefficient(@attack, sample_rate)
           @release_coefficient = time_coefficient(@release, sample_rate)
         end
 
         def reset_runtime_state
-          @envelopes = []
+          @envelope = 0.0
           @threshold_linear = nil
           @attack_coefficient = nil
           @release_coefficient = nil

@@ -174,6 +174,12 @@ RSpec.describe Wavify::DSP::Effects do
         expect(left / right).to be_within(0.0001).of(4.0)
       end
     end
+
+    it "rejects sample-wise processing that cannot preserve stereo linking" do
+      expect do
+        described_class.new.process_sample(1.0, channel: 0, sample_rate: 44_100)
+      end.to raise_error(NotImplementedError, /frame-aware/)
+    end
   end
 
   describe Wavify::DSP::Effects::Limiter do
