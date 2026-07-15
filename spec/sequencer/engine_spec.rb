@@ -288,15 +288,19 @@ RSpec.describe Wavify::Sequencer::Engine do
       end
     end
 
-    it "renders four-voice chords without per-sample enumerator resumes" do
+    it "generates four-voice chords once per voice without sample enumerators" do
       chord = Wavify::Sequencer::Track.new(:pad, chord_progression: ["CMAJ7"], waveform: :sine)
+      generate_calls = 0
       expect_any_instance_of(Wavify::DSP::Oscillator).not_to receive(:each_sample)
+      allow_any_instance_of(Wavify::DSP::Oscillator).to receive(:generate).and_wrap_original do |method, *args, **kwargs|
+        generate_calls += 1
+        method.call(*args, **kwargs)
+      end
 
-      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       audio = described_class.new(tempo: 60, format: format).render(tracks: [chord], default_bars: 1)
-      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
 
-      expect(elapsed / audio.duration.total_seconds).to be < 0.5
+      expect(generate_calls).to eq(4)
+      expect(audio.duration.total_seconds).to eq(4.0)
     end
 
     it "renders note voices directly into the track workspace" do
