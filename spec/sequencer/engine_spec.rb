@@ -150,6 +150,35 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(timeline.map { |event| event[:bar] }.uniq).to eq([0, 1, 2])
     end
 
+    it "validates arrangement sections before lazy repeat expansion" do
+      lead = Wavify::Sequencer::Track.new(:lead, note_sequence: "C4")
+      track_map = { lead: lead }
+
+      expect do
+        engine.send(:normalize_arrangement, [{ bars: 0, tracks: [:lead] }], track_map)
+      end.to raise_error(Wavify::SequencerError, /section bars/)
+      expect do
+        engine.send(:normalize_arrangement, [{ bars: 1, tracks: [:missing] }], track_map)
+      end.to raise_error(Wavify::SequencerError, /unknown tracks/)
+    end
+
+    it "reuses section engines across repeated tempo and meter settings" do
+      lead = Wavify::Sequencer::Track.new(:lead, note_sequence: "C4")
+      allow(described_class).to receive(:new).and_call_original
+
+      engine.build_timeline(
+        tracks: [lead],
+        arrangement: [{ name: :riff, bars: 1, tracks: [:lead], repeat: 3, tempo: 90, beats_per_bar: 3 }]
+      )
+
+      expect(described_class).to have_received(:new).with(
+        tempo: 90.0,
+        format: format,
+        beats_per_bar: 3,
+        swing: 0.5
+      ).once
+    end
+
     it "supports section tempo, meter, and marker metadata" do
       lead = Wavify::Sequencer::Track.new(:lead, note_sequence: "C4")
 

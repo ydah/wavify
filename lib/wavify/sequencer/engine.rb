@@ -26,6 +26,7 @@ module Wavify
         @format = validate_format!(format)
         @beats_per_bar = validate_beats_per_bar!(beats_per_bar)
         @swing = validate_swing!(swing)
+        @section_engine_cache = {}
       end
 
       # @return [Float] seconds per beat at the current tempo
@@ -151,10 +152,8 @@ module Wavify
           raise SequencerError, "arrangement exceeds #{MAX_ARRANGEMENT_SECTIONS} sections"
         end
 
-        expanded_count = arrangement.sum do |section|
-          repeat = section.is_a?(Hash) ? section.fetch(:repeat, 1) : 1
-          repeat.is_a?(Integer) ? repeat : 1
-        end
+        normalized_sections = arrangement.map { |section| normalize_arrangement_section(section, track_map) }
+        expanded_count = normalized_sections.sum { |section| section.fetch(:repeat) }
         if expanded_count > MAX_EXPANDED_SECTIONS
           raise SequencerError, "expanded arrangement exceeds #{MAX_EXPANDED_SECTIONS} sections"
         end
@@ -162,42 +161,70 @@ module Wavify
         Enumerator.new do |yielder|
           cursor_bar = 0
           cursor_time = Rational(0, 1)
-          arrangement.each do |section|
-            raise SequencerError, "section must be a Hash" unless section.is_a?(Hash)
-
-            name = section.fetch(:name, "section_#{cursor_bar}").to_sym
-            bars = section.fetch(:bars)
-            unless bars.is_a?(Integer) && bars.between?(1, MAX_BARS)
-              raise SequencerError, "section bars must be an Integer in 1..#{MAX_BARS}"
-            end
-            repeat = section.fetch(:repeat, 1)
-            unless repeat.is_a?(Integer) && repeat.between?(1, MAX_SECTION_REPEAT)
-              raise SequencerError, "section repeat must be an Integer in 1..#{MAX_SECTION_REPEAT}"
-            end
-            tempo = normalize_section_tempo(section[:tempo] || @tempo)
-            beats_per_bar = validate_beats_per_bar!(section[:beats_per_bar] || @beats_per_bar)
-            markers = normalize_section_markers(section.fetch(:markers, []))
-
-            track_names = Array(section.fetch(:tracks)).map(&:to_sym)
-            unknown = track_names - track_map.keys
-            raise SequencerError, "unknown tracks in section #{name}: #{unknown.join(', ')}" unless unknown.empty?
-
-            repeat.times do |repeat_index|
-              section_engine = self.class.new(tempo: tempo, format: @format, beats_per_bar: beats_per_bar, swing: @swing)
+          normalized_sections.each do |section|
+            name = section[:name] || :"section_#{cursor_bar}"
+            section_engine = engine_for_section(section)
+            section.fetch(:repeat).times do |repeat_index|
               yielder << {
                 name: repeated_section_name(name, repeat_index),
-                bars: bars,
-                tracks: track_names,
+                bars: section.fetch(:bars),
+                tracks: section.fetch(:tracks),
                 start_bar: cursor_bar,
                 start_time: cursor_time,
-                tempo: tempo,
-                beats_per_bar: beats_per_bar,
-                markers: markers
+                tempo: section.fetch(:tempo),
+                beats_per_bar: section.fetch(:beats_per_bar),
+                markers: section.fetch(:markers)
               }
-              cursor_bar += bars
-              cursor_time += bars * section_engine.send(:bar_duration_time)
+              cursor_bar += section.fetch(:bars)
+              cursor_time += section.fetch(:bars) * section_engine.send(:bar_duration_time)
             end
           end
+        end
+      end
+
+      def normalize_arrangement_section(section, track_map)
+        raise SequencerError, "section must be a Hash" unless section.is_a?(Hash)
+
+        bars = section[:bars]
+        unless bars.is_a?(Integer) && bars.between?(1, MAX_BARS)
+          raise SequencerError, "section bars must be an Integer in 1..#{MAX_BARS}"
+        end
+        repeat = section.fetch(:repeat, 1)
+        unless repeat.is_a?(Integer) && repeat.between?(1, MAX_SECTION_REPEAT)
+          raise SequencerError, "section repeat must be an Integer in 1..#{MAX_SECTION_REPEAT}"
+        end
+
+        name = normalize_section_name(section[:name]) if section.key?(:name)
+        track_names = normalize_section_track_names(section[:tracks])
+        unknown = track_names - track_map.keys
+        section_label = name || :unnamed
+        raise SequencerError, "unknown tracks in section #{section_label}: #{unknown.join(', ')}" unless unknown.empty?
+
+        {
+          name: name,
+          bars: bars,
+          repeat: repeat,
+          tracks: track_names,
+          tempo: normalize_section_tempo(section[:tempo] || @tempo),
+          beats_per_bar: validate_beats_per_bar!(section[:beats_per_bar] || @beats_per_bar),
+          markers: normalize_section_markers(section.fetch(:markers, []))
+        }
+      end
+
+      def normalize_section_name(name)
+        value = name.to_sym
+        raise SequencerError, "section name must not be empty" if value.to_s.empty?
+
+        value
+      rescue NoMethodError
+        raise SequencerError, "section name must be Symbol/String"
+      end
+
+      def normalize_section_track_names(tracks)
+        Array(tracks).map do |track_name|
+          track_name.to_sym
+        rescue NoMethodError
+          raise SequencerError, "section tracks must be Symbols/Strings"
         end
       end
 
@@ -497,10 +524,14 @@ module Wavify
       end
 
       def engine_for_section(section)
-        self.class.new(
-          tempo: section[:tempo] || @tempo,
+        tempo = section[:tempo] || @tempo
+        beats_per_bar = section[:beats_per_bar] || @beats_per_bar
+        return self if tempo == @tempo && beats_per_bar == @beats_per_bar
+
+        @section_engine_cache[[tempo, beats_per_bar]] ||= self.class.new(
+          tempo: tempo,
           format: @format,
-          beats_per_bar: section[:beats_per_bar] || @beats_per_bar,
+          beats_per_bar: beats_per_bar,
           swing: @swing
         )
       end
