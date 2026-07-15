@@ -670,6 +670,34 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
       expect(parsed_metadatas.map { |metadata| metadata[:format].channels }.uniq).to eq([2])
     end
 
+    it "spools multistream pages outside Ruby heap when requested" do
+      bytes = build_interleaved_ogg_multistream_bytes(
+        "spec/fixtures/audio/stereo_vorbis_44100.ogg",
+        "spec/fixtures/audio/xiph_test-short_floor0_residue0.ogg"
+      )
+      streams, = described_class.send(
+        :read_ogg_logical_stream_chains,
+        StringIO.new(bytes),
+        storage: :tempfile
+      )
+
+      expect(streams).to all(include(:io))
+      expect(streams).to all(satisfy { |stream| !stream.key?(:bytes) })
+      expect(streams.sum { |stream| stream.fetch(:io).size }).to eq(bytes.bytesize)
+      expect(streams).to all(include(physical_page_indices: []))
+    ensure
+      described_class.send(:close_logical_streams, streams)
+    end
+
+    it "scans metadata packets incrementally" do
+      expect(described_class).not_to receive(:read_ogg_packets)
+
+      metadata = described_class.metadata("spec/fixtures/audio/stereo_vorbis_44100.ogg")
+
+      expect(metadata[:ogg_packet_count]).to be > 3
+      expect(metadata[:vorbis_audio_packet_count]).to be_positive
+    end
+
     it "concatenates chained buffers by converting mixed channel layouts to the first format" do
       stereo_format = Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
       mono_format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
@@ -721,9 +749,12 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
       mono_chunk = Wavify::Core::SampleBuffer.new([0.5], mono_format)
       yielded = []
 
-      allow(described_class).to receive(:read_ogg_logical_stream_chains_from_input).and_wrap_original do |_original, io_or_path, with_info: false|
+      allow(described_class).to receive(:read_ogg_logical_stream_chains_from_input).and_wrap_original do |
+        _original, io_or_path, with_info: false, storage: :memory
+      |
         expect(io_or_path).to eq("dummy.ogg")
         expect(with_info).to eq(true)
+        expect(storage).to eq(:tempfile)
         [
           [{ bytes: "a".b }, { bytes: "b".b }],
           { interleaved_multistream: false }
