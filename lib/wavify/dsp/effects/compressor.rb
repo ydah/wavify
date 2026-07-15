@@ -46,7 +46,7 @@ module Wavify
         # @param channel [Integer]
         # @param sample_rate [Integer]
         # @return [Float]
-        def process_sample(_sample, channel:, sample_rate:)
+        def process_sample(sample, channel:, sample_rate:)
           raise NotImplementedError, "Compressor requires frame-aware #apply or #process"
         end
 
