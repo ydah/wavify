@@ -1158,12 +1158,14 @@ module Wavify
           same_sample_rate = stream_metadatas.all? { |metadata| metadata.fetch(:format).sample_rate == target_format.sample_rate }
 
           unless same_sample_rate
-            chained_streams.each do |stream|
-              normalized = normalize_vorbis_logical_stream_buffer_for_target(
-                read(logical_stream_io(stream)),
-                target_format
+            chained_streams.zip(stream_metadatas).each do |stream, metadata|
+              stream_vorbis_logical_stream_resampled!(
+                stream,
+                source_format: metadata.fetch(:format),
+                target_format: target_format,
+                chunk_size: chunk_size,
+                &block
               )
-              each_sample_buffer_frame_slice(normalized, chunk_size, &block)
             end
             return true
           end
@@ -1179,6 +1181,39 @@ module Wavify
           true
         ensure
           close_logical_streams(chained_streams)
+        end
+
+        def stream_vorbis_logical_stream_resampled!(stream, source_format:, target_format:, chunk_size:)
+          return enum_for(
+            __method__,
+            stream,
+            source_format: source_format,
+            target_format: target_format,
+            chunk_size: chunk_size
+          ) unless block_given?
+
+          resampler = build_vorbis_streaming_linear_resampler_state(
+            source_format: source_format,
+            target_sample_rate: target_format.sample_rate
+          )
+          stream_read(logical_stream_io(stream), chunk_size: chunk_size) do |chunk|
+            unless resampler
+              yield(chunk.format == target_format ? chunk : chunk.convert(target_format))
+              next
+            end
+
+            feed_vorbis_streaming_linear_resampler_chunk!(resampler, chunk)
+            while (output = drain_vorbis_streaming_linear_resampler_chunk!(resampler, max_frames: chunk_size))
+              yield(output.format == target_format ? output : output.convert(target_format))
+            end
+          end
+          return true unless resampler
+
+          finish_vorbis_streaming_linear_resampler!(resampler)
+          while (output = drain_vorbis_streaming_linear_resampler_chunk!(resampler, max_frames: chunk_size))
+            yield(output.format == target_format ? output : output.convert(target_format))
+          end
+          true
         end
 
         def concatenate_vorbis_sample_buffers(buffers, target_format: nil)
