@@ -257,27 +257,22 @@ module Wavify
         total_end_frame = note_events.map do |event|
           event.fetch(:start_frame) + event.fetch(:duration_frames) + release_frames
         end.max || 0
-        audio = Wavify::Audio.silence(
-          total_end_frame.to_f / track_format.sample_rate,
-          format: track_format.with(sample_format: :float, bit_depth: 32)
-        )
-        mixed = audio.buffer.samples.dup
+        work_format = track_format.with(sample_format: :float, bit_depth: 32)
+        mixed = Array.new(total_end_frame * work_format.channels, 0.0)
 
         note_events.each do |event|
           frequencies = event[:midi_notes].map { |midi| midi_to_frequency(midi) }
-          note_audio = render_chord_tone(frequencies, event[:duration], track, track_format.with(sample_format: :float, bit_depth: 32))
-          start_frame = event.fetch(:start_frame)
-          start_index = start_frame * track_format.channels
-
-          note_audio.buffer.samples.each_with_index do |sample, index|
-            target_index = start_index + index
-            break if target_index >= mixed.length
-
-            mixed[target_index] += sample
-          end
+          render_oscillator_voices_into!(
+            mixed,
+            frequencies: frequencies,
+            start_frame: event.fetch(:start_frame),
+            duration: event.fetch(:duration),
+            track: track,
+            format: work_format
+          )
         end
 
-        rendered = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(mixed, track_format.with(sample_format: :float, bit_depth: 32)))
+        rendered = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(mixed, work_format))
         rendered = rendered.gain(track.gain_db) if track.gain_db != 0.0
         if track.pan_position != 0.0
           rendered = rendered.channels == 1 ? rendered.pan(track.pan_position) : rendered.balance(track.pan_position)
@@ -286,26 +281,35 @@ module Wavify
         rendered.convert(@format)
       end
 
-      def render_chord_tone(frequencies, duration, track, format)
-        rendered_duration = duration + (track.envelope&.release || 0.0)
-        note_audios = frequencies.map do |frequency|
-          tone = Wavify::Audio.tone(
-            frequency: frequency,
-            duration: rendered_duration,
-            format: format,
-            waveform: track.waveform,
-            **track.synth_options
-          )
-          if track.envelope
-            tone.apply(lambda do |buffer|
-              track.envelope.apply(buffer, note_on_duration: duration)
-            end)
-          else
-            tone
-          end
+      def render_oscillator_voices_into!(samples, frequencies:, start_frame:, duration:, track:, format:)
+        rendered_duration = duration.to_f + (track.envelope&.release || 0.0)
+        frame_count = (rendered_duration * format.sample_rate).round
+        if rendered_duration > Wavify::DSP::Oscillator::MAX_DURATION_SECONDS ||
+           frame_count > Wavify::DSP::Oscillator::MAX_GENERATE_FRAMES
+          raise SequencerError, "one sequencer note exceeds the oscillator frame limit"
         end
 
-        Wavify::Audio.mix(*note_audios, strategy: :none)
+        mono_format = format.with(channels: 1)
+        voices = frequencies.map do |frequency|
+          Wavify::DSP::Oscillator.new(
+            frequency: frequency,
+            waveform: track.waveform,
+            **track.synth_options
+          ).each_sample(format: mono_format)
+        end
+        channels = format.channels
+        frame_count.times do |frame_index|
+          target_frame = start_frame + frame_index
+          break if target_frame >= samples.length / channels
+
+          value = voices.sum(&:next)
+          if track.envelope
+            time = frame_index.to_f / format.sample_rate
+            value *= track.envelope.gain_at(time, note_on_duration: duration)
+          end
+          base_index = target_frame * channels
+          channels.times { |channel| samples[base_index + channel] += value }
+        end
       end
 
       def schedule_pattern_events(track, bars:, start_bar:, start_time:)
