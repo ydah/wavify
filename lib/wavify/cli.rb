@@ -139,7 +139,17 @@ module Wavify
 
     def check_codec(name, codec)
       if codec.available?
-        @stdout.puts "#{name}: ok"
+        diagnostics = codec.respond_to?(:runtime_diagnostics) ? codec.runtime_diagnostics : nil
+        if diagnostics && !diagnostics[:compatible]
+          missing = diagnostics.fetch(:missing_native_methods).join(", ")
+          @stdout.puts "#{name}: incompatible native API (missing: #{missing})"
+        elsif diagnostics
+          versions = diagnostics.fetch(:versions).filter_map { |gem, version| "#{gem} #{version}" if version }.join(", ")
+          suffix = versions.empty? ? "" : " (#{versions})"
+          @stdout.puts "#{name}: ok#{suffix}"
+        else
+          @stdout.puts "#{name}: ok"
+        end
       else
         @stdout.puts "#{name}: missing optional gems (add ogg-ruby and vorbis to your Gemfile)"
       end

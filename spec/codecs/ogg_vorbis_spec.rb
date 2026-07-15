@@ -339,7 +339,7 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
   describe ".metadata" do
     it "parses OGG pages and Vorbis headers including continued packets" do
       vendor = "wavify-test-vendor-#{'x' * 240}"
-      comments = ["ARTIST=wavify", "TITLE=OGG metadata spec"]
+      comments = ["ARTIST=wavify", "ARTIST=second", "TITLE=OGG metadata spec"]
       identification = build_identification_packet(channels: 2, sample_rate: 48_000)
       comment_packet = build_comment_packet(vendor: vendor, comments: comments)
       setup = build_setup_packet("dummy-setup-data")
@@ -392,6 +392,9 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
       expect(metadata[:duration].total_seconds).to eq(1.0)
       expect(metadata[:vendor]).to eq(vendor)
       expect(metadata[:comments]).to include("artist" => "wavify", "title" => "OGG metadata spec")
+      expect(metadata[:comment_values]["artist"]).to eq(%w[wavify second])
+      expect(metadata[:raw_comments]).to include("ARTIST=wavify", "ARTIST=second")
+      expect(metadata[:sample_frame_count_estimated]).to eq(true)
       expect(metadata[:ogg_serial_number]).to eq(serial)
       expect(metadata[:ogg_page_count]).to eq(5)
       expect(metadata[:ogg_packet_count]).to eq(4)
@@ -691,6 +694,9 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
       expect(mixed.format).to eq(stereo_format)
       expect(mixed.sample_frame_count).to eq(2)
       expect(mixed.samples).to eq([1.0, 0.25, -0.75, -1.0])
+
+      headroom = described_class.send(:mix_vorbis_sample_buffers, [stereo, mono], strategy: :headroom)
+      expect(headroom.samples).to eq([0.875, 0.125, -0.375, -0.625])
     end
 
     it "resamples a sample buffer with linear interpolation to a target sample rate" do
@@ -855,6 +861,18 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
       expect(final_bytesize).to be > header_bytesize
     end
 
+    it "writes at the caller position and truncates stale output bytes" do
+      io = StringIO.new(+"prefix-stale bytes".b, "r+b")
+      io.pos = 7
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
+
+      described_class.stream_write(io, format: format) { |_writer| nil }
+
+      expect(io.string).to start_with("prefix-OggS")
+      expect(io.string).not_to include("stale bytes")
+      expect(io.pos).to eq(io.string.bytesize)
+    end
+
     it "encodes a silent buffer via write using libvorbis" do
       format = Wavify::Core::Format.new(channels: 2, sample_rate: 48_000, bit_depth: 32, sample_format: :float)
       buffer = Wavify::Core::SampleBuffer.new([0.0] * (2 * 1025), format)
@@ -968,6 +986,60 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
       expect(chunks).not_to be_empty
       expect(chunks).to all(be_a(Wavify::Core::SampleBuffer))
       expect(chunks.sum(&:sample_frame_count)).to eq(metadata[:sample_frame_count])
+    end
+
+    it "yields a chunk before reading a large logical stream to EOF" do
+      streams = described_class.send(
+        :read_ogg_logical_stream_chains_from_input,
+        "spec/fixtures/audio/xiph_chain-test3_mixed_format.ogg"
+      )
+      bytes = streams.first.fetch(:bytes)
+      tracking_io = Class.new do
+        attr_reader :bytes_read
+
+        def initialize(data)
+          @io = StringIO.new(data)
+          @bytes_read = 0
+        end
+
+        def read(length = nil)
+          data = @io.read(length)
+          @bytes_read += data&.bytesize.to_i
+          data
+        end
+
+        def seek(...) = @io.seek(...)
+        def pos = @io.pos
+      end.new(bytes)
+      first_chunk = nil
+
+      catch(:first_chunk) do
+        described_class.stream_read(tracking_io, chunk_size: 256) do |chunk|
+          first_chunk = chunk
+          throw :first_chunk
+        end
+      end
+
+      expect(first_chunk.sample_frame_count).to eq(256)
+      expect(tracking_io.bytes_read).to be < bytes.bytesize
+    end
+
+    it "clears native header state when context construction fails" do
+      allow(Vorbis::Native).to receive(:vorbis_synthesis_headerin).and_return(-1)
+      expect(Vorbis::Native).to receive(:vorbis_comment_clear).once.and_call_original
+      expect(Vorbis::Native).to receive(:vorbis_info_clear).once.and_call_original
+
+      expect do
+        described_class.send(:build_vorbis_decode_context, "spec/fixtures/audio/stereo_vorbis_44100.ogg")
+      end.to raise_error(Wavify::InvalidFormatError, /header parse failed/)
+    end
+
+    it "raises instead of silently dropping corrupt audio packets" do
+      allow(Vorbis::Native).to receive(:vorbis_synthesis).and_return(-1)
+
+      expect do
+        described_class.read("spec/fixtures/audio/stereo_vorbis_44100.ogg")
+      end.to raise_error(Wavify::InvalidFormatError, /packet decode failed/)
     end
 
     it "streams and reads a same-format chained OGG Vorbis fixture" do

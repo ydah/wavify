@@ -87,6 +87,7 @@ module Wavify
         end
 
         def prepare_output!(io, owned:)
+          io.binmode if io.respond_to?(:binmode)
           return io.pos if owned
           return nil unless io.respond_to?(:pos)
 

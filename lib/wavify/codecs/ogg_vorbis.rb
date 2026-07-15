@@ -47,15 +47,36 @@ module Wavify
           DEPENDENCY_LOAD_ERRORS.empty?
         end
 
+        def runtime_diagnostics
+          return { available: false, compatible: false, missing: DEPENDENCY_LOAD_ERRORS.keys.freeze } unless available?
+
+          required_native_methods = %i[
+            vorbis_info_init vorbis_info_clear vorbis_comment_init vorbis_comment_clear
+            vorbis_synthesis_headerin vorbis_synthesis_init vorbis_block_init
+            vorbis_synthesis vorbis_synthesis_blockin vorbis_synthesis_pcmout vorbis_synthesis_read
+          ]
+          missing_methods = required_native_methods.reject { |method| Vorbis::Native.respond_to?(method) }
+          {
+            available: true,
+            compatible: missing_methods.empty?,
+            missing_native_methods: missing_methods.freeze,
+            versions: {
+              "ogg-ruby" => Gem.loaded_specs["ogg-ruby"]&.version&.to_s,
+              "vorbis" => Gem.loaded_specs["vorbis"]&.version&.to_s
+            }.freeze
+          }.freeze
+        end
+
         # @param io_or_path [String, IO]
         # @return [Boolean]
         def can_read?(io_or_path)
           return true if io_or_path.is_a?(String) && EXTENSIONS.include?(File.extname(io_or_path).downcase)
           return false unless io_or_path.respond_to?(:read)
 
-          magic = io_or_path.read(4)
-          io_or_path.rewind if io_or_path.respond_to?(:rewind)
+          magic = probe_bytes(io_or_path, 4)
           magic == "OggS"
+        rescue StreamError
+          false
         end
 
         # Reads OGG Vorbis audio.
@@ -64,10 +85,15 @@ module Wavify
         #   OGG logical streams are concatenated and normalized to the first
         #   logical stream format (including resampling). Interleaved
         #   multi-stream OGG logical streams are mixed.
-        def read(io_or_path, format: nil)
+        def read(io_or_path, format: nil, mix_strategy: :clip)
           ensure_available!
+          mix_strategy = validate_vorbis_mix_strategy!(mix_strategy)
 
-          if (chained_decoded = decode_chained_vorbis_read_if_needed(io_or_path, target_format: format))
+          if (chained_decoded = decode_chained_vorbis_read_if_needed(
+            io_or_path,
+            target_format: format,
+            mix_strategy: mix_strategy
+          ))
             return chained_decoded
           end
 
@@ -95,12 +121,22 @@ module Wavify
         #   OGG logical streams are concatenated and normalized to the first
         #   logical stream format during streaming (including resampling).
         #   Interleaved multi-stream OGG logical streams are mixed.
-        def stream_read(io_or_path, chunk_size: 4096, &block)
-          return enum_for(__method__, io_or_path, chunk_size: chunk_size) unless block_given?
+        def stream_read(io_or_path, chunk_size: 4096, mix_strategy: :clip, &block)
+          unless block_given?
+            return enum_for(__method__, io_or_path, chunk_size: chunk_size, mix_strategy: mix_strategy)
+          end
           ensure_available!
           raise InvalidParameterError, "chunk_size must be a positive Integer" unless chunk_size.is_a?(Integer) && chunk_size.positive?
+          mix_strategy = validate_vorbis_mix_strategy!(mix_strategy)
 
-          return nil if stream_chained_vorbis_if_needed(io_or_path, chunk_size: chunk_size, &block)
+          if multistream_ogg_prefix?(io_or_path)
+            return nil if stream_chained_vorbis_if_needed(
+              io_or_path,
+              chunk_size: chunk_size,
+              mix_strategy: mix_strategy,
+              &block
+            )
+          end
 
           decode_context = build_vorbis_decode_context(io_or_path)
           run_vorbis_decode_pipeline(decode_context, streaming: true, chunk_size: chunk_size, &block)
@@ -129,8 +165,7 @@ module Wavify
           )
 
           io, close_io = open_output(io_or_path)
-          io.rewind if io.respond_to?(:rewind)
-          io.truncate(0) if close_io && io.respond_to?(:truncate)
+          prepare_output!(io, owned: close_io)
 
           encoder = Vorbis::Encoder.new(
             channels: target_format.channels,
@@ -138,7 +173,7 @@ module Wavify
             quality: encode_quality
           )
 
-          encoder.write_headers { |page_bytes| io.write(page_bytes) }
+          encoder.write_headers { |page_bytes| write_all(io, page_bytes) }
 
           writer = lambda do |chunk|
             raise InvalidParameterError, "stream chunk must be Core::SampleBuffer" unless chunk.is_a?(Core::SampleBuffer)
@@ -150,15 +185,14 @@ module Wavify
             buffer.samples.each_slice(target_format.channels) do |frame|
               frame.each_with_index { |sample, ch| channels_data[ch] << sample.to_f }
             end
-            encoder.encode(channels_data) { |page_bytes| io.write(page_bytes) }
+            encoder.encode(channels_data) { |page_bytes| write_all(io, page_bytes) }
           end
 
           yield writer
 
-          encoder.finish { |page_bytes| io.write(page_bytes) }
+          encoder.finish { |page_bytes| write_all(io, page_bytes) }
           encoder.close
-          io.flush if io.respond_to?(:flush)
-          io.rewind if io.respond_to?(:rewind)
+          finalize_output!(io, owned: close_io)
           io_or_path
         rescue StandardError
           begin
@@ -230,7 +264,6 @@ module Wavify
         end
 
         def read_ogg_logical_stream_chains(io)
-          io.rewind
           sync = Ogg::SyncState.new
           streams_by_serial = {}
           total_page_count = 0
@@ -347,7 +380,6 @@ module Wavify
         # :data, :kind, :granule_position keys, and ogg_info is a Hash with
         # page-level statistics.
         def read_ogg_packets(io)
-          io.rewind
           sync = Ogg::SyncState.new
           stream_state = nil
           serial_number = nil
@@ -418,6 +450,117 @@ module Wavify
           sync&.clear
         end
 
+        def build_ogg_packet_reader(io)
+          {
+            io: io,
+            sync: Ogg::SyncState.new,
+            stream_state: nil,
+            serial_number: nil,
+            page_count: 0,
+            bos_page_count: 0,
+            eos_page_count: 0,
+            continued_page_count: 0,
+            max_granule_position: nil,
+            input_eof: false,
+            closed: false
+          }
+        end
+
+        def next_ogg_packet!(reader)
+          loop do
+            if (packet = reader[:stream_state]&.packetout)
+              granule_position = packet.granulepos == -1 ? nil : packet.granulepos
+              if granule_position
+                reader[:max_granule_position] = [reader[:max_granule_position] || 0, granule_position].max
+              end
+              return {
+                data: packet.data,
+                bos: packet.bos?,
+                eos: packet.eos?,
+                packetno: packet.packetno,
+                kind: classify_vorbis_packet(packet.data),
+                granule_position: granule_position
+              }
+            end
+
+            if (page = reader.fetch(:sync).pageout)
+              serial_number = page.serialno
+              if reader[:serial_number] && serial_number != reader[:serial_number]
+                raise UnsupportedFormatError, "multiple OGG logical streams require the multistream decoder"
+              end
+              if reader[:page_count].zero? && !page.bos?
+                raise InvalidFormatError, "first OGG page must have BOS flag"
+              end
+
+              reader[:serial_number] ||= serial_number
+              reader[:stream_state] ||= Ogg::StreamState.new(serial_number)
+              reader.fetch(:stream_state).pagein(page)
+              reader[:page_count] += 1
+              reader[:bos_page_count] += 1 if page.bos?
+              reader[:eos_page_count] += 1 if page.eos?
+              reader[:continued_page_count] += 1 if page.continued?
+              next
+            end
+
+            return nil if reader[:input_eof]
+
+            data = reader.fetch(:io).read(4096)
+            if data.nil? || data.empty?
+              reader[:input_eof] = true
+            else
+              reader.fetch(:sync).write(data)
+            end
+          end
+        rescue Ogg::CorruptDataError, Ogg::SyncCorruptDataError => e
+          raise InvalidFormatError, "OGG data corrupt or invalid checksum: #{e.message}"
+        rescue Ogg::StreamCorruptDataError => e
+          raise InvalidFormatError, "OGG stream sequence error: #{e.message}"
+        end
+
+        def close_ogg_packet_reader(reader)
+          return unless reader && !reader[:closed]
+
+          reader[:stream_state]&.clear
+          reader[:sync]&.clear
+          reader[:closed] = true
+        end
+
+        def multistream_ogg_prefix?(io_or_path, probe_size: 4096, tail_probe_size: 65_536)
+          io, close_io = open_input(io_or_path)
+          ensure_seekable!(io)
+          original_position = io.pos
+          bytes = +"".b
+          while bytes.bytesize < probe_size
+            chunk = io.read(probe_size - bytes.bytesize)
+            break if chunk.nil? || chunk.empty?
+
+            bytes << chunk
+          end
+          io.seek(0, IO::SEEK_END)
+          input_end = io.pos
+          tail_start = [original_position + bytes.bytesize, input_end - tail_probe_size].max
+          if tail_start < input_end
+            io.seek(tail_start, IO::SEEK_SET)
+            tail = io.read(tail_probe_size)
+            bytes << tail if tail
+          end
+
+          sync = Ogg::SyncState.new
+          sync.write(bytes)
+          serial_numbers = []
+          while (page = sync.pageout)
+            serial_numbers << page.serialno
+            return true if serial_numbers.uniq.length > 1
+          end
+          false
+        rescue Ogg::CorruptDataError, Ogg::SyncCorruptDataError
+          false
+        ensure
+          sync&.clear
+          io.seek(original_position, IO::SEEK_SET) if original_position && io
+          io.close if close_io && io
+        end
+
         # ---------------------------------------------------------------------------
         # Vorbis decode (using Vorbis::Native synthesis functions)
         # ---------------------------------------------------------------------------
@@ -425,8 +568,8 @@ module Wavify
         def build_vorbis_decode_context(io_or_path)
           io, close_io = open_input(io_or_path)
           ensure_seekable!(io)
-
-          packet_entries, ogg_info = read_ogg_packets(io)
+          packet_reader = build_ogg_packet_reader(io)
+          packet_entries = Array.new(3) { next_ogg_packet!(packet_reader) }
           raise InvalidFormatError, "missing Vorbis identification header" if packet_entries[0].nil?
           raise InvalidFormatError, "missing Vorbis comment header" if packet_entries[1].nil?
           raise InvalidFormatError, "missing Vorbis setup header" if packet_entries[2].nil?
@@ -434,7 +577,9 @@ module Wavify
           info_ptr = FFI::MemoryPointer.new(Vorbis::Native::VorbisInfo.size)
           comment_ptr = FFI::MemoryPointer.new(Vorbis::Native::VorbisComment.size)
           Vorbis::Native.vorbis_info_init(info_ptr)
+          info_initialized = true
           Vorbis::Native.vorbis_comment_init(comment_ptr)
+          comment_initialized = true
 
           packet_entries.first(3).each_with_index do |entry, idx|
             pkt = Ogg::Packet.new(
@@ -451,30 +596,34 @@ module Wavify
           channels = vinfo[:channels]
           sample_rate = vinfo[:rate]
 
-          audio_packets = packet_entries.drop(3).select { |e| e.fetch(:kind) == :audio }
-          raise InvalidFormatError, "OGG Vorbis stream does not contain audio packets" if audio_packets.empty?
-
           format = Core::Format.new(channels: channels, sample_rate: sample_rate, bit_depth: 32, sample_format: :float)
 
-          {
+          context = {
             format: format,
             channels: channels,
             sample_rate: sample_rate,
-            audio_packets: audio_packets,
-            sample_frame_count: ogg_info[:max_granule_position],
+            packet_reader: packet_reader,
+            io: io,
+            close_io: close_io,
             info_ptr: info_ptr,
             comment_ptr: comment_ptr
           }
+          ownership_transferred = true
+          context
         ensure
-          io.close if close_io && io
+          unless ownership_transferred
+            Vorbis::Native.vorbis_comment_clear(comment_ptr) if comment_initialized
+            Vorbis::Native.vorbis_info_clear(info_ptr) if info_initialized
+            close_ogg_packet_reader(packet_reader)
+            io.close if close_io && io
+          end
         end
 
         def run_vorbis_decode_pipeline(decode_context, streaming: false, chunk_size: nil, &block)
           info_ptr = decode_context.fetch(:info_ptr)
           comment_ptr = decode_context.fetch(:comment_ptr)
-          audio_packets = decode_context.fetch(:audio_packets)
+          packet_reader = decode_context.fetch(:packet_reader)
           channels = decode_context.fetch(:channels)
-          max_granule = decode_context.fetch(:sample_frame_count)
           format = decode_context.fetch(:format)
 
           dsp_ptr = FFI::MemoryPointer.new(Vorbis::Native::VorbisDspState.size)
@@ -493,10 +642,16 @@ module Wavify
 
           block_initialized = true
 
-          all_samples = []
+          samples = []
+          emitted_sample_count = 0
+          audio_packet_count = 0
+          chunk_sample_count = streaming ? chunk_size * channels : nil
           ptr_size = FFI::Pointer.size
 
-          audio_packets.each do |entry|
+          while (entry = next_ogg_packet!(packet_reader))
+            next unless entry.fetch(:kind) == :audio
+
+            audio_packet_count += 1
             pkt = Ogg::Packet.new(
               data: entry.fetch(:data),
               bos: entry.fetch(:bos, false),
@@ -504,7 +659,11 @@ module Wavify
               granulepos: entry[:granule_position].nil? ? -1 : entry[:granule_position],
               packetno: entry.fetch(:packetno, 0)
             )
-            next unless Vorbis::Native.vorbis_synthesis(block_ptr, pkt.native).zero?
+            synthesis_result = Vorbis::Native.vorbis_synthesis(block_ptr, pkt.native)
+            unless synthesis_result.zero?
+              raise InvalidFormatError,
+                    "Vorbis packet decode failed (packet #{entry.fetch(:packetno)}, code #{synthesis_result})"
+            end
 
             Vorbis::Native.vorbis_synthesis_blockin(dsp_ptr, block_ptr)
 
@@ -513,34 +672,42 @@ module Wavify
               n.times do |i|
                 channels.times do |ch|
                   ch_ptr = ch_array_ptr.get_pointer(ch * ptr_size)
-                  all_samples << ch_ptr.get_float(i * 4)
+                  samples << ch_ptr.get_float(i * 4)
                 end
               end
               Vorbis::Native.vorbis_synthesis_read(dsp_ptr, n)
+
+              while streaming && samples.length > chunk_sample_count
+                chunk_samples = samples.slice!(0, chunk_sample_count)
+                yield Core::SampleBuffer.new(chunk_samples, format)
+                emitted_sample_count += chunk_samples.length
+              end
             end
           end
+          raise InvalidFormatError, "OGG Vorbis stream does not contain audio packets" if audio_packet_count.zero?
 
+          max_granule = packet_reader.fetch(:max_granule_position)
           if max_granule&.positive?
-            target_sample_count = max_granule * channels
-            all_samples = all_samples.first(target_sample_count) if all_samples.length > target_sample_count
+            remaining_sample_count = [(max_granule * channels) - emitted_sample_count, 0].max
+            samples = samples.first(remaining_sample_count) if samples.length > remaining_sample_count
           end
 
-          result_buffer = Core::SampleBuffer.new(all_samples, format)
-
           if streaming && block
-            each_sample_buffer_frame_slice(result_buffer, chunk_size, &block)
+            each_sample_buffer_frame_slice(Core::SampleBuffer.new(samples, format), chunk_size, &block)
             nil
           elsif block
-            yield result_buffer
+            yield Core::SampleBuffer.new(samples, format)
             nil
           else
-            result_buffer
+            Core::SampleBuffer.new(samples, format)
           end
         ensure
           Vorbis::Native.vorbis_block_clear(block_ptr) if block_initialized
           Vorbis::Native.vorbis_dsp_clear(dsp_ptr) if dsp_initialized
           Vorbis::Native.vorbis_comment_clear(comment_ptr) if comment_ptr
           Vorbis::Native.vorbis_info_clear(info_ptr) if info_ptr
+          close_ogg_packet_reader(packet_reader)
+          decode_context[:io].close if decode_context[:close_io] && decode_context[:io]
         end
 
         # ---------------------------------------------------------------------------
@@ -556,7 +723,9 @@ module Wavify
           info_ptr = FFI::MemoryPointer.new(Vorbis::Native::VorbisInfo.size)
           comment_ptr = FFI::MemoryPointer.new(Vorbis::Native::VorbisComment.size)
           Vorbis::Native.vorbis_info_init(info_ptr)
+          info_initialized = true
           Vorbis::Native.vorbis_comment_init(comment_ptr)
+          comment_initialized = true
 
           setup_parsed = false
           saved_channels = nil
@@ -603,8 +772,11 @@ module Wavify
           end
 
           vc = Vorbis::Native::VorbisComment.new(comment_ptr)
-          vendor = vc[:vendor].null? ? nil : vc[:vendor].read_string
+          vendor = vc[:vendor].null? ? nil : vc[:vendor].read_string.force_encoding(Encoding::UTF_8).scrub
           comments_hash = {}
+          comment_values = Hash.new { |hash, key| hash[key] = [] }
+          raw_comments = []
+          raw_comment_bytes = []
           n_comments = vc[:comments]
           if n_comments.positive? && !vc[:user_comments].null?
             user_comments_ptr = vc[:user_comments]
@@ -617,8 +789,15 @@ module Wavify
               next unless len.positive?
 
               str = str_ptr.read_bytes(len)
-              key, value = str.split("=", 2)
-              comments_hash[key.downcase] = value if key && value
+              raw_comment_bytes << str.b.dup.freeze
+              display = str.force_encoding(Encoding::UTF_8).scrub
+              raw_comments << display
+              key, value = display.split("=", 2)
+              if key && value
+                normalized_key = key.downcase
+                comments_hash[normalized_key] ||= value
+                comment_values[normalized_key] << value
+              end
             end
           end
 
@@ -633,9 +812,14 @@ module Wavify
           {
             format: format,
             sample_frame_count: sample_frame_count,
+            granule_position_frame_count: sample_frame_count,
+            sample_frame_count_estimated: !sample_frame_count.nil?,
             duration: duration,
             vendor: vendor,
             comments: comments_hash,
+            comment_values: comment_values.transform_values(&:freeze).freeze,
+            raw_comments: raw_comments.freeze,
+            raw_comment_bytes: raw_comment_bytes.freeze,
             nominal_bitrate: nominal_bitrate_raw.positive? ? nominal_bitrate_raw : nil,
             minimum_bitrate: minimum_bitrate_raw.positive? ? minimum_bitrate_raw : nil,
             maximum_bitrate: maximum_bitrate_raw.positive? ? maximum_bitrate_raw : nil,
@@ -699,8 +883,8 @@ module Wavify
             setup_header_size: packet_entries[2]&.fetch(:data)&.bytesize
           }
         ensure
-          Vorbis::Native.vorbis_comment_clear(comment_ptr) if comment_ptr
-          Vorbis::Native.vorbis_info_clear(info_ptr) if info_ptr
+          Vorbis::Native.vorbis_comment_clear(comment_ptr) if comment_initialized
+          Vorbis::Native.vorbis_info_clear(info_ptr) if info_initialized
         end
 
         # ---------------------------------------------------------------------------
@@ -829,16 +1013,20 @@ module Wavify
         # Chained / interleaved stream decoding (high-level helpers)
         # ---------------------------------------------------------------------------
 
-        def decode_chained_vorbis_read_if_needed(io_or_path, target_format: nil)
+        def decode_chained_vorbis_read_if_needed(io_or_path, target_format: nil, mix_strategy: :clip)
+          original_position = io_or_path.pos if !io_or_path.is_a?(String) && io_or_path.respond_to?(:pos)
           chained_streams, physical_ogg_info = read_ogg_logical_stream_chains_from_input(io_or_path, with_info: true)
-          return nil unless chained_streams.length > 1
+          unless chained_streams.length > 1
+            io_or_path.seek(original_position, IO::SEEK_SET) if original_position && io_or_path.respond_to?(:seek)
+            return nil
+          end
 
           if physical_ogg_info[:interleaved_multistream]
             decoded_buffers = chained_streams.map do |stream|
               read(StringIO.new(stream.fetch(:bytes)))
             end
 
-            return mix_vorbis_sample_buffers(decoded_buffers, target_format: target_format)
+            return mix_vorbis_sample_buffers(decoded_buffers, target_format: target_format, strategy: mix_strategy)
           end
 
           decoded_buffers = chained_streams.map do |stream|
@@ -848,7 +1036,7 @@ module Wavify
           concatenate_vorbis_sample_buffers(decoded_buffers, target_format: target_format)
         end
 
-        def stream_chained_vorbis_if_needed(io_or_path, chunk_size:, &block)
+        def stream_chained_vorbis_if_needed(io_or_path, chunk_size:, mix_strategy: :clip, &block)
           chained_streams, physical_ogg_info = read_ogg_logical_stream_chains_from_input(io_or_path, with_info: true)
           return false unless chained_streams.length > 1
 
@@ -861,7 +1049,9 @@ module Wavify
               chained_streams,
               chunk_size: chunk_size,
               target_format: target_format,
-              stream_metadatas: stream_metadatas, &block
+              stream_metadatas: stream_metadatas,
+              mix_strategy: mix_strategy,
+              &block
             )
           end
 
@@ -912,7 +1102,7 @@ module Wavify
           end
         end
 
-        def mix_vorbis_sample_buffers(buffers, target_format: nil)
+        def mix_vorbis_sample_buffers(buffers, target_format: nil, strategy: :clip)
           buffers = Array(buffers)
           raise InvalidFormatError, "OGG Vorbis multi-stream decode did not produce any logical streams" if buffers.empty?
 
@@ -934,12 +1124,37 @@ module Wavify
               mixed_samples[index] += sample.to_f
             end
           end
-          mixed_samples.map! { |sample| [[sample, -1.0].max, 1.0].min }
+          apply_vorbis_mix_strategy!(mixed_samples, strategy, source_count: converted.length)
 
           mixed = Core::SampleBuffer.new(mixed_samples, work_format)
           return mixed if mixed.format == resolved_target_format
 
           mixed.convert(resolved_target_format)
+        end
+
+        def apply_vorbis_mix_strategy!(samples, strategy, source_count:)
+          strategy = validate_vorbis_mix_strategy!(strategy)
+          case strategy
+          when :clip
+            samples.map! { |sample| sample.clamp(-1.0, 1.0) }
+          when :normalize
+            peak = samples.map(&:abs).max.to_f
+            samples.map! { |sample| sample / peak } if peak > 1.0
+          when :headroom
+            samples.map! { |sample| sample / source_count } if source_count > 1
+          when :soft_limit
+            samples.map! { |sample| Math.tanh(sample) }
+          end
+          samples
+        end
+
+        def validate_vorbis_mix_strategy!(strategy)
+          value = strategy.to_sym
+          return value if %i[clip normalize headroom soft_limit].include?(value)
+
+          raise InvalidParameterError, "mix_strategy must be :clip, :normalize, :headroom, or :soft_limit"
+        rescue NoMethodError
+          raise InvalidParameterError, "mix_strategy must be Symbol/String"
         end
 
         def normalize_vorbis_logical_stream_buffer_for_target(buffer, target_format)
@@ -1029,7 +1244,8 @@ module Wavify
           chained_streams,
           chunk_size:,
           target_format: nil,
-          stream_metadatas: nil, &block
+          stream_metadatas: nil,
+          mix_strategy: :clip, &block
         )
           unless block_given?
             return enum_for(
@@ -1037,7 +1253,8 @@ module Wavify
               chained_streams,
               chunk_size: chunk_size,
               target_format: target_format,
-              stream_metadatas: stream_metadatas
+              stream_metadatas: stream_metadatas,
+              mix_strategy: mix_strategy
             )
           end
 
@@ -1059,7 +1276,8 @@ module Wavify
                 streams,
                 stream_metadatas: metadatas,
                 target_format: resolved_target_format,
-                chunk_size: chunk_size, &block
+                chunk_size: chunk_size,
+                mix_strategy: mix_strategy, &block
               )
             end
           end
@@ -1079,7 +1297,7 @@ module Wavify
             active_chunks = chunks.compact
             break if active_chunks.empty?
 
-            yield mix_vorbis_sample_buffers(active_chunks)
+            yield mix_vorbis_sample_buffers(active_chunks, strategy: mix_strategy)
           end
 
           true
@@ -1089,7 +1307,8 @@ module Wavify
           chained_streams,
           stream_metadatas:,
           target_format:,
-          chunk_size:
+          chunk_size:,
+          mix_strategy: :clip
         )
           unless block_given?
             return enum_for(
@@ -1097,7 +1316,8 @@ module Wavify
               chained_streams,
               stream_metadatas: stream_metadatas,
               target_format: target_format,
-              chunk_size: chunk_size
+              chunk_size: chunk_size,
+              mix_strategy: mix_strategy
             )
           end
 
@@ -1148,7 +1368,7 @@ module Wavify
             mixed_inputs = stream_states.map do |stream_state|
               take_vorbis_interleaved_stream_pending_chunk!(stream_state, frame_count: emit_frames)
             end.compact
-            yield mix_vorbis_sample_buffers(mixed_inputs, target_format: target_work_format)
+            yield mix_vorbis_sample_buffers(mixed_inputs, target_format: target_work_format, strategy: mix_strategy)
           end
 
           true
@@ -1448,31 +1668,6 @@ module Wavify
           :unknown
         end
 
-        # ---------------------------------------------------------------------------
-        # IO helpers
-        # ---------------------------------------------------------------------------
-
-        def open_input(io_or_path)
-          return [io_or_path, false] if io_or_path.respond_to?(:read)
-          raise InvalidParameterError, "input path must be String or IO: #{io_or_path.inspect}" unless io_or_path.is_a?(String)
-
-          [File.open(io_or_path, "rb"), true]
-        rescue Errno::ENOENT
-          raise InvalidFormatError, "input file not found: #{io_or_path}"
-        end
-
-        def open_output(io_or_path)
-          return [io_or_path, false] if io_or_path.respond_to?(:write)
-          raise InvalidParameterError, "output path must be String or IO: #{io_or_path.inspect}" unless io_or_path.is_a?(String)
-
-          [File.open(io_or_path, "wb"), true]
-        end
-
-        def ensure_seekable!(io)
-          return if io.respond_to?(:seek) && io.respond_to?(:rewind)
-
-          raise StreamError, "OGG Vorbis codec requires seekable IO"
-        end
       end
     end
   end
