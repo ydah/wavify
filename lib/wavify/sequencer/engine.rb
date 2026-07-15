@@ -48,6 +48,21 @@ module Wavify
         pair_duration * (index.even? ? @swing : (1.0 - @swing))
       end
 
+      def expand_pattern_step(step, start_time:, duration:)
+        ratchet = step.ratchet || 1
+        event_duration = duration / ratchet
+        Array.new(ratchet) do |ratchet_index|
+          {
+            start_time: start_time + (event_duration * ratchet_index),
+            duration: event_duration,
+            velocity: step.velocity,
+            probability: step.probability || 1.0,
+            ratchet_index: ratchet_index,
+            ratchet_count: ratchet
+          }
+        end
+      end
+
       def timeline_for_track(track, bars:, start_bar: 0, start_time: nil)
         raise SequencerError, "track must be a Sequencer::Track" unless track.is_a?(Track)
         raise SequencerError, "bars must be a positive Integer" unless bars.is_a?(Integer) && bars.positive?
@@ -293,22 +308,6 @@ module Wavify
           result
         end
       end
-
-      def expand_pattern_step(step, start_time:, duration:)
-        ratchet = step.ratchet || 1
-        event_duration = duration / ratchet
-        Array.new(ratchet) do |ratchet_index|
-          {
-            start_time: start_time + (event_duration * ratchet_index),
-            duration: event_duration,
-            velocity: step.velocity,
-            probability: step.probability || 1.0,
-            ratchet_index: ratchet_index,
-            ratchet_count: ratchet
-          }
-        end
-      end
-      public :expand_pattern_step
 
       def note_duration_and_next_index(events, start_index, resolution)
         event = events.fetch(start_index)
