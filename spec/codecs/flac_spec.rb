@@ -367,6 +367,21 @@ RSpec.describe Wavify::Codecs::Flac do
       expect(metadata[:md5]).to eq("0" * 32)
     end
 
+    it "preserves probe position and parses an embedded stream" do
+      bytes = build_flac_bytes_with_streaminfo(
+        sample_rate: 44_100,
+        channels: 1,
+        bit_depth: 16,
+        total_samples: 0
+      )
+      io = StringIO.new("prefix" + bytes)
+      io.pos = 6
+
+      expect(described_class.can_read?(io)).to be(true)
+      expect(io.pos).to eq(6)
+      expect(described_class.metadata(io)[:format].sample_rate).to eq(44_100)
+    end
+
     it "parses SEEKTABLE and Vorbis Comment metadata blocks" do
       streaminfo = build_streaminfo_bytes(
         sample_rate: 44_100,
@@ -417,6 +432,28 @@ RSpec.describe Wavify::Codecs::Flac do
         Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
       )
       expect(buffer.samples).to eq([0, 1000, -1000, 32_767])
+    end
+
+
+    it "maps 12-bit and 20-bit streams into aligned PCM containers" do
+      [
+        { bits: 12, container: 16, source: [0, 2047, -2048], aligned: [0, 32_752, -32_768] },
+        { bits: 20, container: 24, source: [0, 524_287, -524_288], aligned: [0, 8_388_592, -8_388_608] }
+      ].each do |entry|
+        frame = build_flac_frame_16bit([entry.fetch(:source)], channel_sample_sizes: [entry.fetch(:bits)])
+        bytes = build_flac_bytes_with_streaminfo(
+          sample_rate: 44_100,
+          channels: 1,
+          bit_depth: entry.fetch(:bits),
+          total_samples: entry.fetch(:source).length,
+          frame_bytes: frame
+        )
+
+        buffer = described_class.read(StringIO.new(bytes))
+        expect(buffer.format.bit_depth).to eq(entry.fetch(:container))
+        expect(buffer.format.valid_bits).to eq(entry.fetch(:bits))
+        expect(buffer.samples).to eq(entry.fetch(:aligned))
+      end
     end
 
     it "decodes constant subframes" do
@@ -655,8 +692,8 @@ RSpec.describe Wavify::Codecs::Flac do
 
       described_class.write(io, buffer, format: format)
 
-      decoded = described_class.read(io)
-      metadata = described_class.metadata(io)
+      decoded = described_class.read(StringIO.new(io.string))
+      metadata = described_class.metadata(StringIO.new(io.string))
 
       expect(decoded.samples).to eq(samples)
       expect(decoded.format).to eq(format)
@@ -699,7 +736,7 @@ RSpec.describe Wavify::Codecs::Flac do
       subframe_type = (first_subframe_header_byte >> 1) & 0x3F
 
       expect(subframe_type).to eq(10) # fixed predictor order 2
-      expect(described_class.read(io).samples).to eq(samples)
+      expect(described_class.read(StringIO.new(io.string)).samples).to eq(samples)
     end
 
     it "accepts a codec-specific block size option" do
@@ -710,10 +747,10 @@ RSpec.describe Wavify::Codecs::Flac do
 
       described_class.write(io, buffer, format: format, block_size: 3)
 
-      metadata = described_class.metadata(io)
+      metadata = described_class.metadata(StringIO.new(io.string))
       expect(metadata[:min_block_size]).to eq(3)
       expect(metadata[:max_block_size]).to eq(3)
-      expect(described_class.read(io).samples).to eq(samples)
+      expect(described_class.read(StringIO.new(io.string)).samples).to eq(samples)
     end
 
     it "accepts compression level and Vorbis Comment write options" do
@@ -722,10 +759,46 @@ RSpec.describe Wavify::Codecs::Flac do
       io = StringIO.new(+"")
 
       described_class.write(io, buffer, format: format, compression_level: 0, comments: { artist: "Wavify" })
-      metadata = described_class.metadata(io)
+      metadata = described_class.metadata(StringIO.new(io.string))
 
       expect(metadata[:max_block_size]).to eq(1024)
       expect(metadata[:comments]).to eq("artist" => "Wavify")
+    end
+
+
+    it "preserves duplicate Vorbis Comment values" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      io = StringIO.new(+"")
+
+      described_class.write(
+        io,
+        Wavify::Core::SampleBuffer.new([0], format),
+        format: format,
+        comments: ["ARTIST=First", "ARTIST=Second"]
+      )
+      metadata = described_class.metadata(StringIO.new(io.string))
+
+      expect(metadata[:comment_values]).to eq("artist" => %w[First Second])
+      expect(metadata[:raw_comments]).to eq(["ARTIST=First", "ARTIST=Second"])
+    end
+
+
+    it "roundtrips PCM whose valid bits are narrower than its container" do
+      format = Wavify::Core::Format.new(
+        channels: 1,
+        sample_rate: 44_100,
+        bit_depth: 16,
+        valid_bits: 12,
+        sample_format: :pcm
+      )
+      samples = [0, 32_752, -32_768]
+      io = StringIO.new(+"")
+
+      described_class.write(io, Wavify::Core::SampleBuffer.new(samples, format), format: format)
+      decoded = described_class.read(StringIO.new(io.string))
+
+      expect(decoded.format).to eq(format)
+      expect(decoded.samples).to eq(samples)
     end
 
     it "accepts mid-side stereo coding and round-trips samples" do
@@ -739,7 +812,7 @@ RSpec.describe Wavify::Codecs::Flac do
       frame = io.string.byteslice(4 + 4 + 34, io.string.bytesize - (4 + 4 + 34))
       channel_assignment = frame.getbyte(3) >> 4
       expect(channel_assignment).to eq(10)
-      expect(described_class.read(io).samples).to eq(samples)
+      expect(described_class.read(StringIO.new(io.string)).samples).to eq(samples)
     end
 
     it "accepts LPC predictor encoding and round-trips samples" do
@@ -754,7 +827,7 @@ RSpec.describe Wavify::Codecs::Flac do
       first_subframe_header_byte = frame.getbyte(7)
       subframe_type = (first_subframe_header_byte >> 1) & 0x3F
       expect(subframe_type).to be_between(32, 63)
-      expect(described_class.read(io).samples).to eq(samples)
+      expect(described_class.read(StringIO.new(io.string)).samples).to eq(samples)
     end
 
     it "derives LPC coefficients from the input autocorrelation" do
@@ -801,8 +874,8 @@ RSpec.describe Wavify::Codecs::Flac do
         writer.call(chunk2)
       end
 
-      decoded = described_class.read(io)
-      metadata = described_class.metadata(io)
+      decoded = described_class.read(StringIO.new(io.string))
+      metadata = described_class.metadata(StringIO.new(io.string))
 
       expect(decoded.samples).to eq(samples1 + samples2)
       expect(decoded.format).to eq(format)
@@ -823,12 +896,12 @@ RSpec.describe Wavify::Codecs::Flac do
         writer.call(Wavify::Core::SampleBuffer.new(samples2, format))
       end
 
-      metadata = described_class.metadata(io)
+      metadata = described_class.metadata(StringIO.new(io.string))
 
       expect(metadata[:sample_frame_count]).to eq(8)
       expect(metadata[:min_block_size]).to eq(4)
       expect(metadata[:max_block_size]).to eq(4)
-      expect(described_class.read(io).samples).to eq(samples1 + samples2)
+      expect(described_class.read(StringIO.new(io.string)).samples).to eq(samples1 + samples2)
     end
 
     it "supports source_chunk block size strategy for variable frame sizes" do
@@ -842,12 +915,12 @@ RSpec.describe Wavify::Codecs::Flac do
         writer.call(Wavify::Core::SampleBuffer.new(samples2, format))
       end
 
-      metadata = described_class.metadata(io)
+      metadata = described_class.metadata(StringIO.new(io.string))
 
       expect(metadata[:sample_frame_count]).to eq(8)
       expect(metadata[:min_block_size]).to eq(3)
       expect(metadata[:max_block_size]).to eq(5)
-      expect(described_class.read(io).samples).to eq(samples1 + samples2)
+      expect(described_class.read(StringIO.new(io.string)).samples).to eq(samples1 + samples2)
     end
   end
 

@@ -7,6 +7,20 @@ RSpec.describe Wavify::Codecs::Aiff do
     it "detects aiff extension" do
       expect(described_class.can_read?("demo.aiff")).to be(true)
     end
+
+    it "preserves the caller position and reads an embedded container" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 8, sample_format: :pcm)
+      bytes = build_aiff_bytes(
+        ["COMM", described_class.send(:build_comm_chunk, format, 1)],
+        ["SSND", [0, 0].pack("N2") + "\x00"]
+      )
+      io = StringIO.new("prefix" + bytes)
+      io.pos = 6
+
+      expect(described_class.can_read?(io)).to be(true)
+      expect(io.pos).to eq(6)
+      expect(described_class.read(io).samples).to eq([0])
+    end
   end
 
   describe "roundtrip pcm" do
@@ -53,13 +67,17 @@ RSpec.describe Wavify::Codecs::Aiff do
       end
     end
 
-    it "does not truncate caller-owned IO before writing" do
+    it "writes at the caller position and truncates stale trailing bytes" do
       format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 8, sample_format: :pcm)
       buffer = Wavify::Core::SampleBuffer.new([0], format)
-      io = StringIO.new(+"existing bytes", "r+b")
-      expect(io).not_to receive(:truncate)
+      io = StringIO.new(+"prefix-existing bytes", "r+b")
+      io.pos = 7
 
       described_class.write(io, buffer)
+
+      expect(io.string).to start_with("prefix-FORM")
+      expect(io.string).not_to include("existing bytes")
+      expect(io.pos).to eq(io.string.bytesize)
     end
   end
 
@@ -187,6 +205,22 @@ RSpec.describe Wavify::Codecs::Aiff do
         expect(chunks.flat_map(&:samples)).to eq(buffer.samples)
       end
     end
+
+
+    it "writes SSND bytes incrementally without retaining all stream chunks" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 16, sample_format: :pcm)
+      io = StringIO.new(+"", "w+b")
+
+      described_class.stream_write(io, format: format) do |writer|
+        header_bytes = io.string.bytesize
+        writer.call(Wavify::Core::SampleBuffer.new([100, 200], format))
+        expect(io.string.bytesize).to eq(header_bytes + 4)
+        writer.call(Wavify::Core::SampleBuffer.new([-100], format))
+      end
+
+      decoded = described_class.read(StringIO.new(io.string))
+      expect(decoded.samples).to eq([100, 200, -100])
+    end
   end
 
   describe "error handling" do
@@ -224,7 +258,30 @@ RSpec.describe Wavify::Codecs::Aiff do
 
       expect do
         described_class.metadata(StringIO.new(bytes))
-      end.to raise_error(Wavify::InvalidFormatError, /missing padding byte/)
+      end.to raise_error(Wavify::InvalidFormatError, /FORM size exceeds|missing padding byte/)
+    end
+
+
+    it "honors FORM boundaries and validates SSND offsets and frame counts" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 8, sample_format: :pcm)
+      valid = build_aiff_bytes(
+        ["COMM", described_class.send(:build_comm_chunk, format, 1)],
+        ["SSND", [0, 0].pack("N2") + "\x00"]
+      )
+      bad_offset = build_aiff_bytes(
+        ["COMM", described_class.send(:build_comm_chunk, format, 1)],
+        ["SSND", [2, 0].pack("N2")]
+      )
+      bad_count = build_aiff_bytes(
+        ["COMM", described_class.send(:build_comm_chunk, format, 2)],
+        ["SSND", [0, 0].pack("N2") + "\x00"]
+      )
+
+      expect(described_class.read(StringIO.new(valid + "trailing bytes")).samples).to eq([0])
+      expect { described_class.metadata(StringIO.new(bad_offset)) }
+        .to raise_error(Wavify::InvalidFormatError, /offset/)
+      expect { described_class.metadata(StringIO.new(bad_count)) }
+        .to raise_error(Wavify::InvalidFormatError, /COMM declares/)
     end
   end
 

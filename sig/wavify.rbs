@@ -70,10 +70,12 @@ module Wavify
       attr_reader channels: Integer
       attr_reader sample_rate: Integer
       attr_reader bit_depth: Integer
+      attr_reader valid_bits: Integer
       attr_reader sample_format: Symbol
+      attr_reader channel_layout: Array[Symbol]?
 
-      def initialize: (channels: Integer, sample_rate: Integer, bit_depth: Integer, ?sample_format: Symbol) -> void
-      def with: (?channels: Integer, ?sample_rate: Integer, ?bit_depth: Integer, ?sample_format: Symbol) -> Format
+      def initialize: (channels: Integer, sample_rate: Integer, bit_depth: Integer, ?sample_format: Symbol, ?valid_bits: Integer?, ?channel_layout: Array[Symbol]?) -> void
+      def with: (?channels: Integer, ?sample_rate: Integer, ?bit_depth: Integer, ?sample_format: Symbol, ?valid_bits: Integer?, ?channel_layout: Array[Symbol]?) -> Format
     end
 
     class SampleBuffer

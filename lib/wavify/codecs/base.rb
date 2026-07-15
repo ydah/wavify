@@ -86,6 +86,29 @@ module Wavify
           [File.open(io_or_path, "wb"), true]
         end
 
+        def prepare_output!(io, owned:)
+          return io.pos if owned
+          return nil unless io.respond_to?(:pos)
+
+          start_position = io.pos
+          if io.respond_to?(:size) && io.size > start_position && !io.respond_to?(:truncate)
+            raise StreamError, "caller-owned IO with trailing data must support truncate"
+          end
+          start_position
+        rescue IOError, SystemCallError => e
+          raise StreamError, "output IO position is unavailable: #{e.message}"
+        end
+
+        def finalize_output!(io, owned:)
+          io.flush if io.respond_to?(:flush)
+          return unless io.respond_to?(:pos)
+
+          end_position = io.pos
+          io.truncate(end_position) if !owned && io.respond_to?(:truncate)
+        rescue IOError, SystemCallError => e
+          raise StreamError, "failed to finalize output IO: #{e.message}"
+        end
+
         def read_exact(io, size, message)
           data = +"".b
           while data.bytesize < size
@@ -108,6 +131,21 @@ module Wavify
             data << chunk
           end
           data
+        end
+
+        def probe_bytes(io, size)
+          ensure_seekable!(io)
+          original_position = io.pos
+          data = +"".b
+          while data.bytesize < size
+            chunk = io.read(size - data.bytesize)
+            break if chunk.nil? || chunk.empty?
+
+            data << chunk
+          end
+          data
+        ensure
+          io.seek(original_position, IO::SEEK_SET) if defined?(original_position) && original_position
         end
 
         def write_all(io, data)

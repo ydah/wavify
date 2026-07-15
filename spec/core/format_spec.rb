@@ -63,6 +63,23 @@ RSpec.describe Wavify::Core::Format do
         described_class.new(channels: 2, sample_rate: 44_100, bit_depth: 16, sample_format: :mulaw)
       end.to raise_error(Wavify::UnsupportedFormatError)
     end
+
+    it "separates significant PCM bits from their storage container" do
+      format = described_class.new(channels: 1, sample_rate: 44_100, bit_depth: 16, valid_bits: 12)
+
+      expect(format.valid_bits).to eq(12)
+      expect(format.bytes_per_sample).to eq(2)
+      expect(format.channel_layout).to eq([:front_center])
+    end
+
+    it "validates channel layouts and significant bits" do
+      expect do
+        described_class.new(channels: 2, sample_rate: 44_100, bit_depth: 16, valid_bits: 17)
+      end.to raise_error(Wavify::InvalidFormatError, /valid_bits/)
+      expect do
+        described_class.new(channels: 2, sample_rate: 44_100, bit_depth: 16, channel_layout: [:front_left])
+      end.to raise_error(Wavify::InvalidFormatError, /channel_layout/)
+    end
   end
 
   describe "derived values" do

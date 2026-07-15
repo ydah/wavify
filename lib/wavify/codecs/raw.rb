@@ -50,9 +50,9 @@ module Wavify
           buffer = sample_buffer.format == target_format ? sample_buffer : sample_buffer.convert(target_format)
 
           io, close_io = open_output(io_or_path)
+          prepare_output!(io, owned: close_io)
           write_all(io, encode_samples(buffer.samples, target_format))
-          io.flush if io.respond_to?(:flush)
-          io.rewind if io.respond_to?(:rewind)
+          finalize_output!(io, owned: close_io)
           io_or_path
         ensure
           io.close if close_io && io
@@ -102,6 +102,7 @@ module Wavify
 
           target_format = validate_format!(format)
           io, close_io = open_output(io_or_path)
+          prepare_output!(io, owned: close_io)
 
           writer = lambda do |sample_buffer|
             raise InvalidParameterError, "stream chunk must be Core::SampleBuffer" unless sample_buffer.is_a?(Core::SampleBuffer)
@@ -111,8 +112,7 @@ module Wavify
           end
 
           yield writer
-          io.flush if io.respond_to?(:flush)
-          io.rewind if io.respond_to?(:rewind)
+          finalize_output!(io, owned: close_io)
           io_or_path
         ensure
           io.close if close_io && io
@@ -154,12 +154,13 @@ module Wavify
         end
 
         def byte_size_without_consuming!(io)
+          return io.size - io.pos if io.respond_to?(:size) && io.respond_to?(:pos)
           return io.size if io.respond_to?(:size)
 
           if io.respond_to?(:pos) && io.respond_to?(:seek)
             original_position = io.pos
             io.seek(0, IO::SEEK_END)
-            byte_size = io.pos
+            byte_size = io.pos - original_position
             io.seek(original_position, IO::SEEK_SET)
             return byte_size
           end

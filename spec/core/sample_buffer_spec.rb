@@ -58,6 +58,17 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(sliced.sample_frame_count).to eq(2)
     end
 
+    it "validates lazy frame-view slices consistently" do
+      buffer = described_class.new([1, 2, 3, 4], pcm16_stereo)
+
+      expect do
+        buffer.frame_view.slice(-1, 1)
+      end.to raise_error(Wavify::InvalidParameterError, /start_frame/)
+      expect do
+        buffer.frame_view.slice(0, 1.5)
+      end.to raise_error(Wavify::InvalidParameterError, /frame_length/)
+    end
+
     it "returns an empty buffer for out-of-range slices" do
       buffer = described_class.new([1, 2, 3, 4], pcm16_stereo)
       sliced = buffer.slice(10, 2)

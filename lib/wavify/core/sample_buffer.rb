@@ -54,6 +54,13 @@ module Wavify
         end
 
         def slice(start_frame, frame_length)
+          unless start_frame.is_a?(Integer) && start_frame >= 0
+            raise InvalidParameterError, "start_frame must be a non-negative Integer: #{start_frame.inspect}"
+          end
+          unless frame_length.is_a?(Integer) && frame_length >= 0
+            raise InvalidParameterError, "frame_length must be a non-negative Integer: #{frame_length.inspect}"
+          end
+
           self.class.new(@samples, @channels, start_frame: @start_frame + start_frame, frame_count: frame_length)
         end
 
@@ -156,8 +163,9 @@ module Wavify
 
       STORAGE_TYPES = %i[array packed].freeze
       HASH_PROBE_COUNT = 8
+      StorageState = Struct.new(:samples, :packed_samples, :type, keyword_init: true) # :nodoc:
 
-      attr_reader :format, :duration, :storage
+      attr_reader :format, :duration
 
       # @param samples [Array<Numeric>] interleaved sample values
       # @param format [Format] sample encoding and channel layout
@@ -174,37 +182,39 @@ module Wavify
         @sample_count = coerced.length
         @value_hash = sample_value_hash(coerced, canonical_float: storage == :packed && format.sample_format == :float)
         @storage_mutex = Mutex.new
-        if storage == :packed
-          @packed_samples = pack_samples(coerced, format).freeze
-          @samples = nil
-        else
-          @packed_samples = nil
-          @samples = coerced.freeze
-        end
-        @storage = storage
+        @storage_state = if storage == :packed
+                           storage_state(samples: nil, packed_samples: pack_samples(coerced, format).freeze, type: :packed)
+                         else
+                           storage_state(samples: coerced.freeze, packed_samples: nil, type: :array)
+                         end
         @duration = Duration.from_samples(sample_frame_count, format.sample_rate)
       end
 
       # Materializes packed storage on first random-access use.
       def samples
-        return @samples if @samples
+        state = @storage_state
+        return state.samples if state.samples
 
         @storage_mutex.synchronize do
-          return @samples if @samples
+          state = @storage_state
+          return state.samples if state.samples
 
-          @samples = unpack_samples(@packed_samples, @format).freeze
-          @packed_samples = nil
-          @storage = :array
+          materialized = unpack_samples(state.packed_samples, @format).freeze
+          @storage_state = storage_state(samples: materialized, packed_samples: nil, type: :array)
         end
-        @samples
+        @storage_state.samples
+      end
+
+      def storage
+        @storage_state.type
       end
 
       def packed?
-        @storage == :packed
+        @storage_state.type == :packed
       end
 
       def packed_bytesize
-        @packed_samples&.bytesize || 0
+        @storage_state.packed_samples&.bytesize || 0
       end
 
       # Value equality for immutable samples and format metadata.
@@ -239,7 +249,7 @@ module Wavify
 
         return each_packed_sample(&) if packed?
 
-        @samples.each(&)
+        @storage_state.samples.each(&)
       end
 
       # @return [Integer] number of interleaved samples
@@ -292,7 +302,8 @@ module Wavify
         converted_samples = convert_channels_interleaved(
           normalized_samples,
           source_channels: @format.channels,
-          target_channels: new_format.channels
+          target_channels: new_format.channels,
+          source_layout: @format.channel_layout
         )
         converted_samples = resample_interleaved(
           converted_samples,
@@ -383,17 +394,25 @@ module Wavify
       end
 
       def pack_pcm24(samples)
-        samples.flat_map do |sample|
+        packed = String.new(capacity: samples.length * 3, encoding: Encoding::BINARY)
+        samples.each do |sample|
           value = sample.negative? ? sample + 0x1000000 : sample
-          [value & 0xFF, (value >> 8) & 0xFF, (value >> 16) & 0xFF]
-        end.pack("C*")
+          packed << (value & 0xFF) << ((value >> 8) & 0xFF) << ((value >> 16) & 0xFF)
+        end
+        packed
       end
 
       def unpack_pcm24(bytes)
-        bytes.bytes.each_slice(3).map do |low, middle, high|
+        samples = Array.new(bytes.bytesize / 3)
+        samples.length.times do |index|
+          offset = index * 3
+          low = bytes.getbyte(offset)
+          middle = bytes.getbyte(offset + 1)
+          high = bytes.getbyte(offset + 2)
           value = low | (middle << 8) | (high << 16)
-          value.anybits?(0x800000) ? value - 0x1000000 : value
+          samples[index] = value.anybits?(0x800000) ? value - 0x1000000 : value
         end
+        samples
       end
 
       def each_packed_sample
@@ -417,7 +436,12 @@ module Wavify
       end
 
       def storage_snapshot
-        @storage_mutex.synchronize { [@samples, @packed_samples] }
+        state = @storage_mutex.synchronize { @storage_state }
+        [state.samples, state.packed_samples]
+      end
+
+      def storage_state(samples:, packed_samples:, type:)
+        StorageState.new(samples: samples, packed_samples: packed_samples, type: type).freeze
       end
 
       def sample_values_equal?(other)
@@ -472,26 +496,28 @@ module Wavify
           if format.sample_format == :float
             sample.to_f.clamp(-1.0, 1.0)
           else
-            coerce_pcm_sample(sample, format.bit_depth)
+            coerce_pcm_sample(sample, format)
           end
         end
       end
 
-      def coerce_pcm_sample(sample, bit_depth)
+      def coerce_pcm_sample(sample, format)
         if sample.is_a?(Float) && sample.between?(-1.0, 1.0)
-          float_to_pcm(sample, bit_depth)
+          float_to_pcm(sample, format)
         else
-          min = -(2**(bit_depth - 1))
-          max = (2**(bit_depth - 1)) - 1
-          sample.to_i.clamp(min, max)
+          shift = format.bit_depth - format.valid_bits
+          min = -(2**(format.valid_bits - 1)) << shift
+          max = ((2**(format.valid_bits - 1)) - 1) << shift
+          (sample.to_i.clamp(min, max) >> shift) << shift
         end
       end
 
       def to_normalized_float(sample, format)
         return sample.to_f.clamp(-1.0, 1.0) if format.sample_format == :float
 
-        positive_scale = ((2**(format.bit_depth - 1)) - 1).to_f
-        negative_scale = (2**(format.bit_depth - 1)).to_f
+        shift = format.bit_depth - format.valid_bits
+        positive_scale = (((2**(format.valid_bits - 1)) - 1) << shift).to_f
+        negative_scale = ((2**(format.valid_bits - 1)) << shift).to_f
         scale = sample.negative? ? negative_scale : positive_scale
         (sample.to_f / scale).clamp(-1.0, 1.0)
       end
@@ -501,11 +527,11 @@ module Wavify
         return value if format.sample_format == :float
 
         value = apply_tpdf_dither(value, format, dither_rng) if dither_rng
-        float_to_pcm(value, format.bit_depth)
+        float_to_pcm(value, format)
       end
 
       def apply_tpdf_dither(value, format, rng)
-        max = ((2**(format.bit_depth - 1)) - 1).to_f
+        max = ((2**(format.valid_bits - 1)) - 1).to_f
         (value + ((rng.rand - rng.rand) / max)).clamp(-1.0, 1.0)
       end
 
@@ -513,17 +539,17 @@ module Wavify
         return false unless requested && new_format.sample_format == :pcm
         return true if @format.sample_format == :float
 
-        @format.bit_depth > new_format.bit_depth
+        @format.valid_bits > new_format.valid_bits
       end
 
-      def float_to_pcm(sample, bit_depth)
-        max = (2**(bit_depth - 1)) - 1
-        min = -(2**(bit_depth - 1))
+      def float_to_pcm(sample, format)
+        max = (2**(format.valid_bits - 1)) - 1
+        min = -(2**(format.valid_bits - 1))
         scale = sample.negative? ? -min : max
-        (sample * scale).round.clamp(min, max)
+        ((sample * scale).round.clamp(min, max)) << (format.bit_depth - format.valid_bits)
       end
 
-      def convert_channels_interleaved(samples, source_channels:, target_channels:)
+      def convert_channels_interleaved(samples, source_channels:, target_channels:, source_layout: nil)
         return samples if samples.empty? || source_channels == target_channels
 
         output = []
@@ -533,7 +559,7 @@ module Wavify
                       elsif source_channels == 1
                         Array.new(target_channels, frame.first)
                       elsif source_channels > 2 && target_channels == 2
-                        downmix_to_stereo(frame)
+                        downmix_to_stereo(frame, source_layout)
                       elsif source_channels > target_channels
                         truncate_and_fold(frame, target_channels)
                       else
@@ -570,7 +596,8 @@ module Wavify
                 source_position,
                 channel,
                 channels,
-                source_frame_count
+                source_frame_count,
+                target_sample_rate
               )
             end
             next
@@ -589,8 +616,9 @@ module Wavify
         output
       end
 
-      def windowed_sinc_sample(samples, source_position, channel, channels, source_frame_count)
-        radius = 8
+      def windowed_sinc_sample(samples, source_position, channel, channels, source_frame_count, target_sample_rate)
+        cutoff = [1.0, target_sample_rate.to_f / @format.sample_rate].min
+        radius = (8 / cutoff).ceil.clamp(8, 64)
         center = source_position.floor
         start_index = [center - radius + 1, 0].max
         end_index = [center + radius, source_frame_count - 1].min
@@ -598,7 +626,7 @@ module Wavify
         weight_sum = 0.0
         (start_index..end_index).each do |source_index|
           distance = source_position - source_index
-          weight = sinc(distance) * hann_window(distance, radius)
+          weight = cutoff * sinc(distance * cutoff) * hann_window(distance, radius)
           weighted_sum += samples.fetch((source_index * channels) + channel) * weight
           weight_sum += weight
         end
@@ -625,18 +653,21 @@ module Wavify
         ((source_frame_count * target_sample_rate.to_f) / @format.sample_rate).round
       end
 
-      def downmix_to_stereo(frame)
-        left = frame[0] || 0.0
-        right = frame[1] || left
-        center = frame[2] || 0.0
-        lfe = frame[3] || 0.0
-        left_surround = frame[4] || 0.0
-        right_surround = frame[5] || 0.0
-        extras = (frame[6..] || []).sum
+      def downmix_to_stereo(frame, source_layout)
+        positions = source_layout || default_channel_layout(frame.length)
+        by_position = positions.zip(frame).to_h
+        left = by_position.fetch(:front_left, frame[0] || 0.0)
+        right = by_position.fetch(:front_right, frame[1] || left)
+        center = by_position.fetch(:front_center, 0.0)
+        lfe = by_position.fetch(:low_frequency, 0.0)
+        left_surround = by_position.fetch(:side_left, by_position.fetch(:back_left, 0.0))
+        right_surround = by_position.fetch(:side_right, by_position.fetch(:back_right, 0.0))
+        known = %i[front_left front_right front_center low_frequency side_left side_right back_left back_right]
+        extras = by_position.reject { |position, _| known.include?(position) }.values.sum
 
         left_mix = left + (center * 0.707) + (lfe * 0.5) + (left_surround * 0.707) + (extras * 0.5)
         right_mix = right + (center * 0.707) + (lfe * 0.5) + (right_surround * 0.707) + (extras * 0.5)
-        [left_mix.clamp(-1.0, 1.0), right_mix.clamp(-1.0, 1.0)]
+        [left_mix, right_mix]
       end
 
       def truncate_and_fold(frame, target_channels)
@@ -645,7 +676,20 @@ module Wavify
         return reduced if extras.empty?
 
         extra_mix = extras.sum / target_channels.to_f
-        reduced.map { |sample| (sample + extra_mix).clamp(-1.0, 1.0) }
+        reduced.map { |sample| sample + extra_mix }
+      end
+
+      def default_channel_layout(channels)
+        {
+          1 => %i[front_center],
+          2 => %i[front_left front_right],
+          3 => %i[front_left front_right front_center],
+          4 => %i[front_left front_right back_left back_right],
+          5 => %i[front_left front_right front_center back_left back_right],
+          6 => %i[front_left front_right front_center low_frequency side_left side_right],
+          7 => %i[front_left front_right front_center low_frequency back_center side_left side_right],
+          8 => %i[front_left front_right front_center low_frequency back_left back_right side_left side_right]
+        }.fetch(channels) { Array.new(channels) { |index| :"channel_#{index}" } }
       end
 
       def upmix_with_duplication(frame, target_channels)

@@ -11,6 +11,16 @@ RSpec.describe Wavify::Codecs::Wav do
     it "returns false for unsupported input" do
       expect(described_class.can_read?("sample.mp3")).to be(false)
     end
+
+    it "probes and reads from the caller's current IO position" do
+      fmt_chunk = [1, 1, 8_000, 8_000, 1, 8].pack("v v V V v v")
+      io = StringIO.new("prefix" + build_wave_bytes(["fmt ", fmt_chunk], ["data", "\x80"]))
+      io.pos = 6
+
+      expect(described_class.can_read?(io)).to be(true)
+      expect(io.pos).to eq(6)
+      expect(described_class.read(io).samples).to eq([0])
+    end
   end
 
   describe "roundtrip encoding/decoding" do
@@ -96,14 +106,18 @@ RSpec.describe Wavify::Codecs::Wav do
       end
     end
 
-    it "does not truncate caller-owned IO before writing" do
+    it "writes at the caller position and truncates stale trailing bytes" do
       format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 8, sample_format: :pcm)
-      io = StringIO.new(+"existing bytes", "r+b")
-      expect(io).not_to receive(:truncate)
+      io = StringIO.new(+"prefix-existing bytes", "r+b")
+      io.pos = 7
 
       described_class.stream_write(io, format: format) do |writer|
         writer.call(Wavify::Core::SampleBuffer.new([0], format))
       end
+
+      expect(io.string).to start_with("prefix-RIFF")
+      expect(io.string).not_to include("existing bytes")
+      expect(io.pos).to eq(io.string.bytesize)
     end
   end
 
@@ -125,7 +139,7 @@ RSpec.describe Wavify::Codecs::Wav do
     it "parses smpl loops when chunk exists" do
       fmt_chunk = [1, 1, 44_100, 44_100, 1, 8].pack("v v V V v v")
       smpl_header = [0, 0, 0, 60, 0, 0, 0, 1, 0].pack("V9")
-      smpl_loop = [7, 0, 10, 100, 0, 2].pack("V6")
+      smpl_loop = [7, 0, 1, 3, 0, 2].pack("V6")
       smpl_chunk = smpl_header + smpl_loop
       data_chunk = [128, 128, 128, 128].pack("C*")
       bytes = build_wave_bytes(
@@ -147,9 +161,9 @@ RSpec.describe Wavify::Codecs::Wav do
           {
             identifier: 7,
             type: :forward,
-            start_frame: 10,
-            end_frame: 100,
-            length_frames: 91,
+            start_frame: 1,
+            end_frame: 3,
+            length_frames: 3,
             play_count: 2
           }
         ])
@@ -270,7 +284,7 @@ RSpec.describe Wavify::Codecs::Wav do
       guid_tail = [0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71].pack("C*")
       pcm_guid = [1, 0, 0x10].pack("V v v") + guid_tail
       fmt_chunk = [0xFFFE, 1, 8_000, 32_000, 4, 32, 22, 24, 4].pack("v v V V v v v v V") + pcm_guid
-      bytes = build_wave_bytes(["fmt ", fmt_chunk], ["data", [0, 0x7FFFFF00].pack("l<*")])
+      bytes = build_wave_bytes(["fmt ", fmt_chunk], ["data", [0, 0x7FFFFFFF].pack("l<*")])
 
       Tempfile.create(["wavify-valid-bits", ".wav"]) do |file|
         file.binmode
@@ -281,8 +295,21 @@ RSpec.describe Wavify::Codecs::Wav do
         expect(metadata[:format].bit_depth).to eq(32)
         expect(metadata[:container_bit_depth]).to eq(32)
         expect(metadata[:valid_bits_per_sample]).to eq(24)
+        expect(metadata[:format].valid_bits).to eq(24)
+        expect(metadata[:channel_layout]).to eq([:front_center])
         expect(described_class.read(file.path).samples).to eq([0, 0x7FFFFF00])
       end
+    end
+
+    it "rejects an extensible subformat whose full GUID is unknown" do
+      invalid_guid = described_class::PCM_SUBFORMAT_GUID.dup
+      invalid_guid.setbyte(15, invalid_guid.getbyte(15) ^ 0xFF)
+      fmt_chunk = [0xFFFE, 1, 8_000, 16_000, 2, 16, 22, 16, 4].pack("v v V V v v v v V") + invalid_guid
+      bytes = build_wave_bytes(["fmt ", fmt_chunk], ["data", [0].pack("s<")])
+
+      expect do
+        described_class.metadata(StringIO.new(bytes))
+      end.to raise_error(Wavify::UnsupportedFormatError, /subformat GUID/)
     end
 
     it "strips repeated NUL padding from WAV strings" do
@@ -370,6 +397,25 @@ RSpec.describe Wavify::Codecs::Wav do
         expect(decoded.samples).to eq([0, 1])
       end
     end
+
+    it "stops at the declared RIFF boundary and ignores trailing bytes" do
+      fmt_chunk = [1, 1, 8_000, 8_000, 1, 8].pack("v v V V v v")
+      bytes = build_wave_bytes(["fmt ", fmt_chunk], ["data", "\x80"]) + "not-a-chunk"
+
+      expect(described_class.read(StringIO.new(bytes)).samples).to eq([0])
+    end
+
+    it "rejects duplicate format and truncated count tables" do
+      fmt_chunk = [1, 1, 8_000, 8_000, 1, 8].pack("v v V V v v")
+      duplicate = build_wave_bytes(["fmt ", fmt_chunk], ["fmt ", fmt_chunk], ["data", "\x80"])
+      cue = [1].pack("V")
+      truncated_cue = build_wave_bytes(["fmt ", fmt_chunk], ["cue ", cue], ["data", "\x80"])
+
+      expect { described_class.metadata(StringIO.new(duplicate)) }
+        .to raise_error(Wavify::InvalidFormatError, /duplicate/)
+      expect { described_class.metadata(StringIO.new(truncated_cue)) }
+        .to raise_error(Wavify::InvalidFormatError, /truncated cue/)
+    end
   end
 
   describe "error handling" do
@@ -436,6 +482,7 @@ RSpec.describe Wavify::Codecs::Wav do
       body << chunk_data
       body << "\x00" if chunk_data.bytesize.odd?
     end
+    body[12, 8] = [body.bytesize].pack("Q<")
 
     +"RF64" << [0xFFFF_FFFF].pack("V") << body
   end

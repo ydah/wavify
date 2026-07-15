@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "tempfile"
+
 module Wavify
   module Core
     # Lazy streaming pipeline for chunk-based audio processing.
@@ -584,11 +586,24 @@ module Wavify
       end
 
       def with_output_target(path_or_io, overwrite:)
-        return yield(path_or_io) if overwrite || !path_or_io.is_a?(String)
+        return yield(path_or_io) unless path_or_io.is_a?(String)
 
-        File.open(path_or_io, "wbx") { |io| yield(io) }
+        expanded_path = File.expand_path(path_or_io)
+        temporary = Tempfile.new([".wavify-", File.extname(path_or_io)], File.dirname(expanded_path), binmode: true)
+        yield temporary
+        temporary.flush
+        temporary.fsync
+        temporary.close
+        if overwrite
+          File.rename(temporary.path, expanded_path)
+        else
+          File.link(temporary.path, expanded_path)
+          File.unlink(temporary.path)
+        end
       rescue Errno::EEXIST
         raise InvalidParameterError, "output file already exists: #{path_or_io}"
+      ensure
+        temporary&.close!
       end
 
       def validate_pipeline_name!(name)

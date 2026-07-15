@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "tempfile"
+
 module Wavify
   # High-level immutable audio object backed by a {Core::SampleBuffer}.
   #
@@ -942,11 +944,24 @@ module Wavify
     end
 
     def with_output_target(path, overwrite:)
-      return yield(path) if overwrite || !path.is_a?(String)
+      return yield(path) unless path.is_a?(String)
 
-      File.open(path, "wbx") { |io| yield(io) }
+      expanded_path = File.expand_path(path)
+      temporary = Tempfile.new([".wavify-", File.extname(path)], File.dirname(expanded_path), binmode: true)
+      yield temporary
+      temporary.flush
+      temporary.fsync
+      temporary.close
+      if overwrite
+        File.rename(temporary.path, expanded_path)
+      else
+        File.link(temporary.path, expanded_path)
+        File.unlink(temporary.path)
+      end
     rescue Errno::EEXIST
       raise InvalidParameterError, "output file already exists: #{path}"
+    ensure
+      temporary&.close!
     end
 
     def validate_audio!(audio, name)

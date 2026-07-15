@@ -11,30 +11,60 @@ module Wavify
       PCM_BIT_DEPTHS = [8, 16, 24, 32].freeze
       # Allowed bit depths for floating point samples.
       FLOAT_BIT_DEPTHS = [32, 64].freeze
+      # Speaker positions understood by channel-layout-aware conversions.
+      CHANNEL_POSITIONS = %i[
+        front_left front_right front_center low_frequency back_left back_right
+        front_left_of_center front_right_of_center back_center side_left side_right
+        top_center top_front_left top_front_center top_front_right top_back_left
+        top_back_center top_back_right
+      ].freeze
+      DEFAULT_CHANNEL_LAYOUTS = {
+        1 => %i[front_center],
+        2 => %i[front_left front_right],
+        3 => %i[front_left front_right front_center],
+        4 => %i[front_left front_right back_left back_right],
+        5 => %i[front_left front_right front_center back_left back_right],
+        6 => %i[front_left front_right front_center low_frequency side_left side_right],
+        7 => %i[front_left front_right front_center low_frequency back_center side_left side_right],
+        8 => %i[front_left front_right front_center low_frequency back_left back_right side_left side_right]
+      }.transform_values(&:freeze).freeze
+      UNSPECIFIED_LAYOUT = Object.new.freeze # :nodoc:
 
-      attr_reader :channels, :sample_rate, :bit_depth, :sample_format
+      attr_reader :channels, :sample_rate, :bit_depth, :valid_bits, :sample_format, :channel_layout
 
       # @param channels [Integer] number of interleaved channels (1..32)
       # @param sample_rate [Integer] sampling rate in Hz
       # @param bit_depth [Integer] bits per sample
+      # @param valid_bits [Integer, nil] significant bits within the sample container
       # @param sample_format [Symbol,String] `:pcm` or `:float`
-      def initialize(channels:, sample_rate:, bit_depth:, sample_format: :pcm)
+      # @param channel_layout [Array<Symbol>, nil] ordered speaker positions
+      def initialize(channels:, sample_rate:, bit_depth:, sample_format: :pcm, valid_bits: nil,
+                     channel_layout: UNSPECIFIED_LAYOUT)
         @channels = validate_channels(channels)
         @sample_rate = validate_sample_rate(sample_rate)
         @sample_format = validate_sample_format(sample_format)
         @bit_depth = validate_bit_depth(bit_depth, @sample_format)
+        @valid_bits = validate_valid_bits(valid_bits || @bit_depth)
+        requested_layout = channel_layout.equal?(UNSPECIFIED_LAYOUT) ? DEFAULT_CHANNEL_LAYOUTS[@channels] : channel_layout
+        @channel_layout = validate_channel_layout(requested_layout)
         freeze
       end
 
       # Returns a new format with one or more fields replaced.
       #
       # @return [Format]
-      def with(channels: nil, sample_rate: nil, bit_depth: nil, sample_format: nil)
+      def with(channels: nil, sample_rate: nil, bit_depth: nil, sample_format: nil, valid_bits: nil,
+               channel_layout: UNSPECIFIED_LAYOUT)
+        target_channels = channels || @channels
+        target_bit_depth = bit_depth || @bit_depth
+        target_sample_format = sample_format || @sample_format
         self.class.new(
-          channels: channels || @channels,
+          channels: target_channels,
           sample_rate: sample_rate || @sample_rate,
-          bit_depth: bit_depth || @bit_depth,
-          sample_format: sample_format || @sample_format
+          bit_depth: target_bit_depth,
+          sample_format: target_sample_format,
+          valid_bits: valid_bits || preserved_valid_bits(target_bit_depth, target_sample_format),
+          channel_layout: resolved_channel_layout(channel_layout, target_channels)
         )
       end
 
@@ -68,17 +98,19 @@ module Wavify
       def ==(other)
         return false unless other.is_a?(Format)
 
-        @channels == other.channels &&
+          @channels == other.channels &&
           @sample_rate == other.sample_rate &&
           @bit_depth == other.bit_depth &&
-          @sample_format == other.sample_format
+          @valid_bits == other.valid_bits &&
+          @sample_format == other.sample_format &&
+          @channel_layout == other.channel_layout
       end
 
       alias eql? ==
 
       # @return [Integer] hash value compatible with {#eql?}
       def hash
-        [@channels, @sample_rate, @bit_depth, @sample_format].hash
+        [@channels, @sample_rate, @bit_depth, @valid_bits, @sample_format, @channel_layout].hash
       end
 
       private
@@ -118,6 +150,52 @@ module Wavify
         end
 
         bit_depth
+      end
+
+      def validate_valid_bits(valid_bits)
+        unless valid_bits.is_a?(Integer) && valid_bits.positive? && valid_bits <= @bit_depth
+          raise InvalidFormatError, "valid_bits must be an Integer between 1 and #{@bit_depth}: #{valid_bits.inspect}"
+        end
+        if @sample_format == :float && valid_bits != @bit_depth
+          raise InvalidFormatError, "floating-point valid_bits must equal bit_depth"
+        end
+
+        valid_bits
+      end
+
+      def validate_channel_layout(channel_layout)
+        return nil if channel_layout.nil?
+        raise InvalidFormatError, "channel_layout must be an Array" unless channel_layout.is_a?(Array)
+        unless channel_layout.length == @channels
+          raise InvalidFormatError, "channel_layout must contain exactly #{@channels} positions"
+        end
+
+        normalized = channel_layout.map do |position|
+          value = position.to_sym
+          unless CHANNEL_POSITIONS.include?(value)
+            raise InvalidFormatError, "unsupported channel position: #{position.inspect}"
+          end
+
+          value
+        rescue NoMethodError
+          raise InvalidFormatError, "channel positions must be Symbol/String: #{position.inspect}"
+        end
+        raise InvalidFormatError, "channel_layout positions must be unique" unless normalized.uniq.length == normalized.length
+
+        normalized.freeze
+      end
+
+      def preserved_valid_bits(target_bit_depth, target_sample_format)
+        return @valid_bits if target_bit_depth == @bit_depth && target_sample_format.to_sym == @sample_format
+
+        nil
+      end
+
+      def resolved_channel_layout(channel_layout, target_channels)
+        return channel_layout unless channel_layout.equal?(UNSPECIFIED_LAYOUT)
+        return @channel_layout if target_channels == @channels
+
+        DEFAULT_CHANNEL_LAYOUTS[target_channels]
       end
 
       # Stereo 44.1kHz 16-bit PCM preset.

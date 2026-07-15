@@ -182,6 +182,7 @@ RSpec.describe Wavify::Audio do
       source_buffer = Wavify::Core::SampleBuffer.new([100, -100, 200], raw_format)
       io = StringIO.new
       Wavify::Codecs::Raw.write(io, source_buffer, format: raw_format)
+      io.rewind
 
       loaded = described_class.read(io, filename: "clip.raw", format: raw_format)
 
@@ -208,6 +209,27 @@ RSpec.describe Wavify::Audio do
 
         expect(source_audio.write(path, overwrite: false)).to equal(source_audio)
         expect(described_class.read(path)).to eq(source_audio)
+      end
+    end
+
+
+    it "keeps an existing path intact when an overwrite fails" do
+      failing_codec = Class.new(Wavify::Codecs::Base) do
+        def self.write(io, _buffer, format:, **)
+          io.write("partial #{format.sample_rate}")
+          raise "encode failed"
+        end
+      end
+      audio = described_class.silence(0.001, format: format)
+
+      Tempfile.create(["wavify-atomic", ".wav"]) do |file|
+        file.write("original")
+        file.flush
+
+        expect do
+          audio.write(file.path, codec: failing_codec)
+        end.to raise_error(RuntimeError, /encode failed/)
+        expect(File.binread(file.path)).to eq("original")
       end
     end
   end
@@ -243,6 +265,7 @@ RSpec.describe Wavify::Audio do
       source_buffer = Wavify::Core::SampleBuffer.new([100, -100, 200, -200], raw_format)
       io = StringIO.new
       Wavify::Codecs::Raw.write(io, source_buffer, format: raw_format)
+      io.rewind
 
       stream = described_class.stream(io, filename: "clip.raw", format: raw_format, chunk_size: 2)
 

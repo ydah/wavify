@@ -29,6 +29,17 @@ RSpec.describe Wavify::Codecs::Raw do
       end
     end
 
+    it "writes at the current position and removes stale trailing bytes" do
+      mono = format.with(channels: 1)
+      io = StringIO.new(+"prefix-stale", "r+b")
+      io.pos = 7
+
+      described_class.write(io, Wavify::Core::SampleBuffer.new([100], mono), format: mono)
+
+      expect(io.string).to eq("prefix-" + [100].pack("s<"))
+      expect(io.pos).to eq(io.string.bytesize)
+    end
+
     it "requires format when reading" do
       Tempfile.create(["wavify", ".raw"]) do |file|
         file.write("\x00\x00".b)

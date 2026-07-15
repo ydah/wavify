@@ -180,9 +180,10 @@ module Wavify
           return true if io_or_path.is_a?(String) && EXTENSIONS.include?(File.extname(io_or_path).downcase)
           return false unless io_or_path.respond_to?(:read)
 
-          magic = io_or_path.read(4)
-          io_or_path.rewind if io_or_path.respond_to?(:rewind)
+          magic = probe_bytes(io_or_path, 4)
           magic == "fLaC"
+        rescue StreamError
+          false
         end
 
         # Reads a FLAC stream and returns decoded samples.
@@ -221,25 +222,15 @@ module Wavify
           vorbis_comments = normalize_vorbis_comments(comments)
           normalized_stereo_coding = normalize_stereo_coding!(stereo_coding)
           normalized_predictor = normalize_predictor!(predictor)
-
-          io, close_io = open_output(io_or_path)
-          io.rewind if io.respond_to?(:rewind)
-          io.truncate(0) if close_io && io.respond_to?(:truncate)
-          io.write(
-            encode_verbatim_stream(
-              buffer,
-              target_format,
-              block_size: target_block_size,
-              comments: vorbis_comments,
-              stereo_coding: normalized_stereo_coding,
-              predictor: normalized_predictor
-            )
-          )
-          io.flush if io.respond_to?(:flush)
-          io.rewind if io.respond_to?(:rewind)
-          io_or_path
-        ensure
-          io.close if close_io && io
+          stream_write(
+            io_or_path,
+            format: target_format,
+            block_size: target_block_size,
+            block_size_strategy: :fixed,
+            comments: vorbis_comments,
+            stereo_coding: normalized_stereo_coding,
+            predictor: normalized_predictor
+          ) { |writer| writer.call(buffer) }
         end
 
         # Streams FLAC decoding as chunked sample buffers.
@@ -312,8 +303,7 @@ module Wavify
           normalized_predictor = normalize_predictor!(predictor)
           io, close_io = open_output(io_or_path)
           ensure_seekable!(io)
-          io.rewind if io.respond_to?(:rewind)
-          io.truncate(0) if close_io && io.respond_to?(:truncate)
+          prepare_output!(io, owned: close_io)
 
           header = write_stream_header(io, comments: vorbis_comments)
           total_sample_frames = 0
@@ -327,11 +317,12 @@ module Wavify
             raise InvalidParameterError, "stream chunk must be Core::SampleBuffer" unless chunk.is_a?(Core::SampleBuffer)
 
             buffer = chunk.format == target_format ? chunk : chunk.convert(target_format)
-            header.fetch(:md5).update(pcm_bytes_for_md5(buffer.samples, target_format))
+            encoded_samples = unalign_encoded_samples(buffer.samples, target_format)
+            header.fetch(:md5).update(flac_md5_bytes(encoded_samples, target_format.valid_bits))
             total_sample_frames += buffer.sample_frame_count
 
             if stream_write_options[:strategy] == :fixed
-              pending_samples.concat(buffer.samples)
+              pending_samples.concat(encoded_samples)
               fixed_chunk_sample_count = stream_write_options.fetch(:block_size) * target_format.channels
 
               while (pending_samples.length - pending_offset) >= fixed_chunk_sample_count
@@ -343,7 +334,7 @@ module Wavify
                   stereo_coding: normalized_stereo_coding,
                   predictor: normalized_predictor
                 )
-                io.write(encoded.fetch(:bytes))
+                write_all(io, encoded.fetch(:bytes))
                 next_frame_number = encoded.fetch(:next_frame_number)
                 merge_encode_stats!(encode_stats, encoded)
                 pending_offset += fixed_chunk_sample_count
@@ -355,26 +346,26 @@ module Wavify
               end
             elsif stream_write_options[:strategy] == :source_chunk
               encoded = encode_verbatim_frames(
-                buffer.samples,
+                encoded_samples,
                 target_format,
                 start_frame_number: next_frame_number,
                 block_size: buffer.sample_frame_count,
                 stereo_coding: normalized_stereo_coding,
                 predictor: normalized_predictor
               )
-              io.write(encoded.fetch(:bytes))
+              write_all(io, encoded.fetch(:bytes))
               next_frame_number = encoded.fetch(:next_frame_number)
               merge_encode_stats!(encode_stats, encoded)
             else
               encoded = encode_verbatim_frames(
-                buffer.samples,
+                encoded_samples,
                 target_format,
                 start_frame_number: next_frame_number,
                 block_size: stream_write_options.fetch(:block_size),
                 stereo_coding: normalized_stereo_coding,
                 predictor: normalized_predictor
               )
-              io.write(encoded.fetch(:bytes))
+              write_all(io, encoded.fetch(:bytes))
               next_frame_number = encoded.fetch(:next_frame_number)
               merge_encode_stats!(encode_stats, encoded)
             end
@@ -392,14 +383,13 @@ module Wavify
               stereo_coding: normalized_stereo_coding,
               predictor: normalized_predictor
             )
-            io.write(encoded.fetch(:bytes))
+            write_all(io, encoded.fetch(:bytes))
             next_frame_number = encoded.fetch(:next_frame_number)
             merge_encode_stats!(encode_stats, encoded)
           end
 
           finalize_stream_header(io, header, target_format, total_sample_frames, encode_stats)
-          io.flush if io.respond_to?(:flush)
-          io.rewind if io.respond_to?(:rewind)
+          finalize_output!(io, owned: close_io)
           io_or_path
         ensure
           io.close if close_io && io
@@ -421,7 +411,6 @@ module Wavify
         private
 
         def parse_metadata(io)
-          io.rewind
           marker = read_exact(io, 4, "missing FLAC stream marker")
           raise InvalidFormatError, "invalid FLAC stream marker" unless marker == "fLaC"
 
@@ -454,7 +443,10 @@ module Wavify
             seekpoints: seektable&.fetch(:points) || [],
             vorbis_comment: vorbis_comment,
             vendor: vorbis_comment&.fetch(:vendor),
-            comments: vorbis_comment&.fetch(:comments) || {}
+            comments: vorbis_comment&.fetch(:comments) || {},
+            comment_values: vorbis_comment&.fetch(:comment_values) || {},
+            raw_comments: vorbis_comment&.fetch(:raw) || [],
+            raw_comment_bytes: vorbis_comment&.fetch(:raw_bytes) || []
           )
         end
 
@@ -468,19 +460,26 @@ module Wavify
           packed = data[10, 8].unpack1("Q>")
           sample_rate = (packed >> 44) & 0xFFFFF
           channels = ((packed >> 41) & 0x7) + 1
-          bit_depth = ((packed >> 36) & 0x1F) + 1
+          encoded_bit_depth = ((packed >> 36) & 0x1F) + 1
           total_samples = packed & 0xFFFFFFFFF
           md5 = data[18, 16].unpack1("H*")
+          container_bit_depth = [8, 16, 24, 32].find { |depth| depth >= encoded_bit_depth }
+          unless container_bit_depth
+            raise UnsupportedFormatError, "unsupported FLAC sample size: #{encoded_bit_depth} bits"
+          end
 
           format = Core::Format.new(
             channels: channels,
             sample_rate: sample_rate,
-            bit_depth: bit_depth,
-            sample_format: :pcm
+            bit_depth: container_bit_depth,
+            sample_format: :pcm,
+            valid_bits: encoded_bit_depth
           )
 
           {
             format: format,
+            encoded_bit_depth: encoded_bit_depth,
+            container_bit_depth: container_bit_depth,
             sample_frame_count: total_samples,
             duration: Core::Duration.from_samples(total_samples, sample_rate),
             min_block_size: min_block_size,
@@ -513,15 +512,29 @@ module Wavify
           comment_count, offset = read_vorbis_comment_uint32(data, offset, "comment count")
 
           raw = []
+          raw_bytes = []
           comments = {}
+          comment_values = Hash.new { |hash, key| hash[key] = [] }
           comment_count.times do
             text, offset = read_vorbis_comment_string(data, offset, "comment")
-            raw << text
-            key, value = text.split("=", 2)
-            comments[key.downcase] = value if key && value
+            raw_bytes << text.b.dup.freeze
+            display_text = text.scrub
+            raw << display_text
+            key, value = display_text.split("=", 2)
+            if key && value
+              normalized_key = key.downcase
+              comments[normalized_key] ||= value
+              comment_values[normalized_key] << value
+            end
           end
 
-          { vendor: vendor, raw: raw, comments: comments }
+          {
+            vendor: vendor.scrub,
+            raw: raw.freeze,
+            raw_bytes: raw_bytes.freeze,
+            comments: comments.freeze,
+            comment_values: comment_values.transform_values(&:freeze).freeze
+          }
         end
 
         def read_vorbis_comment_uint32(data, offset, label)
@@ -569,14 +582,14 @@ module Wavify
         end
 
         def write_stream_header(io, comments: nil)
-          io.write("fLaC")
-          io.write(metadata_block_header(STREAMINFO_BLOCK_TYPE, STREAMINFO_LENGTH, last: comments.nil?))
+          write_all(io, "fLaC")
+          write_all(io, metadata_block_header(STREAMINFO_BLOCK_TYPE, STREAMINFO_LENGTH, last: comments.nil?))
           streaminfo_offset = io.pos
-          io.write("\x00" * STREAMINFO_LENGTH)
+          write_all(io, "\x00" * STREAMINFO_LENGTH)
           if comments
             comment_block = build_vorbis_comment_block(comments)
-            io.write(metadata_block_header(VORBIS_COMMENT_BLOCK_TYPE, comment_block.bytesize, last: true))
-            io.write(comment_block)
+            write_all(io, metadata_block_header(VORBIS_COMMENT_BLOCK_TYPE, comment_block.bytesize, last: true))
+            write_all(io, comment_block)
           end
           { streaminfo_offset: streaminfo_offset }
         end
@@ -584,7 +597,8 @@ module Wavify
         def finalize_stream_header(io, header, format, total_sample_frames, encode_stats)
           file_end = io.pos
           io.seek(header.fetch(:streaminfo_offset), IO::SEEK_SET)
-          io.write(
+          write_all(
+            io,
             build_streaminfo_bytes(
               format: format,
               sample_frame_count: total_sample_frames,
@@ -610,7 +624,10 @@ module Wavify
 
         def build_vorbis_comment_block(comments)
           vendor = "Wavify"
-          entries = comments.map { |key, value| "#{key.to_s.upcase}=#{value}" }
+          entries = comments.map do |entry|
+            key, value = entry.split("=", 2)
+            "#{key.upcase}=#{value}"
+          end
           bytes = [vendor.bytesize].pack("V") + vendor + [entries.length].pack("V")
           entries.each do |entry|
             bytes << [entry.bytesize].pack("V")
@@ -624,13 +641,15 @@ module Wavify
 
           normalized = case comments
                        when Hash
-                         comments.transform_keys(&:to_s).transform_values(&:to_s)
+                         comments.flat_map do |key, value|
+                           Array(value).map { |entry| "#{key}=#{entry}" }
+                         end
                        when Array
-                         comments.each_with_object({}) do |entry, result|
+                         comments.map do |entry|
                            key, value = entry.to_s.split("=", 2)
                            raise InvalidParameterError, "FLAC comments must be KEY=VALUE strings" unless key && value
 
-                           result[key] = value
+                           "#{key}=#{value}"
                          end
                        else
                          raise InvalidParameterError, "comments must be a Hash or Array"
@@ -792,7 +811,7 @@ module Wavify
           independent = {
             channel_assignment: format.channels - 1,
             channel_samples: channel_samples,
-            sample_sizes: Array.new(format.channels, format.bit_depth)
+            sample_sizes: Array.new(format.channels, format.valid_bits)
           }
           return [independent] unless format.channels == 2
           return [independent] if stereo_coding == :independent
@@ -804,7 +823,7 @@ module Wavify
           mid_side = {
             channel_assignment: 10,
             channel_samples: [mid, side],
-            sample_sizes: [format.bit_depth, format.bit_depth + 1]
+            sample_sizes: [format.valid_bits, format.valid_bits + 1]
           }
           stereo_coding == :mid_side ? [mid_side] : [independent, mid_side]
         end
@@ -1191,7 +1210,7 @@ module Wavify
           size = block_size.to_i
           raise InvalidParameterError, "FLAC block_size must be a positive Integer" unless size.positive?
 
-          [size, 65_536].min
+          [size, 65_535].min
         end
 
         def build_streaminfo_bytes(format:, sample_frame_count:, stats:, md5_hex:)
@@ -1206,7 +1225,7 @@ module Wavify
 
           packed = ((format.sample_rate & 0xFFFFF) << 44) |
                    (((format.channels - 1) & 0x7) << 41) |
-                   (((format.bit_depth - 1) & 0x1F) << 36) |
+                   (((format.valid_bits - 1) & 0x1F) << 36) |
                    (sample_frame_count & 0xFFFFFFFFF)
 
           [min_block_size, max_block_size].pack("n2") +
@@ -1217,22 +1236,41 @@ module Wavify
         end
 
         def pcm_md5_hex(samples, format)
-          Digest::MD5.hexdigest(pcm_bytes_for_md5(samples, format))
+          encoded_samples = unalign_encoded_samples(samples, format)
+          Digest::MD5.hexdigest(flac_md5_bytes(encoded_samples, format.valid_bits))
         end
 
         def pcm_bytes_for_md5(samples, format)
-          case format.bit_depth
-          when 8
-            samples.pack("c*")
-          when 16
-            samples.pack("s<*")
-          when 24
-            encode_pcm24_le(samples)
-          when 32
-            samples.pack("l<*")
-          else
-            raise UnsupportedFormatError, "unsupported FLAC MD5 PCM bit depth: #{format.bit_depth}"
+          encoded_samples = unalign_encoded_samples(samples, format)
+          flac_md5_bytes(encoded_samples, format.valid_bits)
+        end
+
+        def flac_md5_bytes(samples, valid_bits)
+          byte_width = (valid_bits + 7) / 8
+          mask = (1 << (byte_width * 8)) - 1
+          bytes = String.new(capacity: samples.length * byte_width, encoding: Encoding::BINARY)
+          samples.each do |sample|
+            value = sample & mask
+            byte_width.times do
+              bytes << (value & 0xFF)
+              value >>= 8
+            end
           end
+          bytes
+        end
+
+        def unalign_encoded_samples(samples, format)
+          shift = format.bit_depth - format.valid_bits
+          return samples if shift.zero?
+
+          samples.map { |sample| sample >> shift }
+        end
+
+        def align_decoded_samples(samples, format)
+          shift = format.bit_depth - format.valid_bits
+          return samples if shift.zero?
+
+          samples.map { |sample| sample << shift }
         end
 
         def encode_pcm24_le(samples)
@@ -1314,8 +1352,9 @@ module Wavify
               remaining_frames -= decoded_frame_count
             end
 
-            md5&.update(pcm_bytes_for_md5(frame_samples, format))
-            yield frame_samples unless frame_samples.empty?
+            md5&.update(flac_md5_bytes(frame_samples, metadata.fetch(:encoded_bit_depth)))
+            aligned_samples = align_decoded_samples(frame_samples, format)
+            yield aligned_samples unless aligned_samples.empty?
           end
 
           if bounded_total && remaining_frames.positive?
@@ -1360,7 +1399,7 @@ module Wavify
           _frame_number = read_utf8_uint(bit_reader)
           block_size = decode_block_size(block_size_code, bit_reader)
           sample_rate = decode_sample_rate(sample_rate_code, bit_reader, metadata.fetch(:format).sample_rate)
-          sample_size = decode_sample_size(sample_size_code, metadata.fetch(:format).bit_depth)
+          sample_size = decode_sample_size(sample_size_code, metadata.fetch(:encoded_bit_depth))
           crc_offset = io.pos
           expected_crc8 = bit_reader.read_bits(8)
           actual_crc8 = flac_crc8(io_bytes(io, frame_start, crc_offset))
@@ -1736,34 +1775,6 @@ module Wavify
           bytes.unpack("C3").then { |b0, b1, b2| (b0 << 16) | (b1 << 8) | b2 }
         end
 
-        def read_exact(io, size, message)
-          data = io.read(size)
-          raise InvalidFormatError, message if data.nil? || data.bytesize != size
-
-          data
-        end
-
-        def ensure_seekable!(io)
-          return if io.respond_to?(:seek) && io.respond_to?(:rewind)
-
-          raise StreamError, "FLAC codec requires seekable IO"
-        end
-
-        def open_input(io_or_path)
-          return [io_or_path, false] if io_or_path.respond_to?(:read)
-          raise InvalidParameterError, "input path must be String or IO: #{io_or_path.inspect}" unless io_or_path.is_a?(String)
-
-          [File.open(io_or_path, "rb"), true]
-        rescue Errno::ENOENT
-          raise InvalidFormatError, "input file not found: #{io_or_path}"
-        end
-
-        def open_output(io_or_path)
-          return [io_or_path, false] if io_or_path.respond_to?(:write)
-          raise InvalidParameterError, "output path must be String or IO: #{io_or_path.inspect}" unless io_or_path.is_a?(String)
-
-          [File.open(io_or_path, "wb"), true]
-        end
       end
     end
   end
