@@ -293,14 +293,49 @@ RSpec.describe Wavify::DSP::Effects do
       end
     end
 
+    it "keeps offline apply isolated from an active streaming pass" do
+      source = Wavify::Core::SampleBuffer.new([0.1, 0.8, -1.0, 0.2, 0.9, -0.4, 0.1], mono_float)
+      options = { ceiling: -6.0206, attack: 0.001, release: 0.02, lookahead: 2.0 / 44_100 }
+      interrupted = described_class.new(**options)
+      control = described_class.new(**options)
+
+      interrupted_chunks = [interrupted.process(source.slice(0, 3))]
+      control_chunks = [control.process(source.slice(0, 3))]
+      interrupted.apply(source)
+      interrupted_chunks << interrupted.process(source.slice(3, 4))
+      control_chunks << control.process(source.slice(3, 4))
+      interrupted_chunks << interrupted.flush(format: mono_float)
+      control_chunks << control.flush(format: mono_float)
+
+      expect(interrupted_chunks.flat_map(&:samples)).to eq(control_chunks.flat_map(&:samples))
+    end
+
+    it "uses the current frame peak only for the immediate oversampled safety clamp" do
+      effect = described_class.new(
+        ceiling: -6.0206,
+        attack: 1.0,
+        release: 0.0,
+        lookahead: 0.0,
+        oversampling: 4
+      )
+      source = Wavify::Core::SampleBuffer.new([1.0, 0.1, 0.1, 0.1], mono_float)
+
+      processed = effect.process(source)
+
+      expect(processed.samples.first).to be_within(0.0001).of(0.5)
+      expect(processed.samples.drop(1)).to all(be > 0.09)
+    end
+
     it "scales peak detection linearly with input length" do
       counting_limiter_class = Class.new(described_class) do
-        attr_reader :peak_calls
+        class << self
+          attr_accessor :peak_calls
+        end
 
         private
 
         def frame_peak(frame)
-          @peak_calls = (@peak_calls || 0) + 1
+          self.class.peak_calls = self.class.peak_calls.to_i + 1
           super
         end
       end
@@ -308,12 +343,16 @@ RSpec.describe Wavify::DSP::Effects do
       offline = counting_limiter_class.new(lookahead: 0.005)
       streaming = counting_limiter_class.new(lookahead: 0.005)
 
+      counting_limiter_class.peak_calls = 0
       offline.apply(source)
+      offline_peak_calls = counting_limiter_class.peak_calls
+      counting_limiter_class.peak_calls = 0
       streaming.process(source)
       streaming.flush(format: mono_float)
+      streaming_peak_calls = counting_limiter_class.peak_calls
 
-      expect(offline.peak_calls).to be < (source.sample_frame_count * 3)
-      expect(streaming.peak_calls).to be < (source.sample_frame_count * 3)
+      expect(offline_peak_calls).to be < (source.sample_frame_count * 3)
+      expect(streaming_peak_calls).to be < (source.sample_frame_count * 3)
     end
 
     it "rejects sample-wise processing that cannot preserve lookahead semantics" do
@@ -365,6 +404,17 @@ RSpec.describe Wavify::DSP::Effects do
       processed.samples.drop(settled_index).zip(source.samples.drop(settled_index)).each do |actual, expected|
         expect(actual).to be_within(0.0001).of(expected)
       end
+    end
+
+    it "ramps gain when the detector crosses the threshold" do
+      source = Wavify::Audio.tone(frequency: 1_000, duration: 0.05, amplitude: 0.25, format: mono_float).buffer
+      processed = described_class.new(threshold: -20.0, floor: -80.0, attack: 0.001, hold: 0.0, release: 0.05)
+                                 .process(source)
+      excess_steps = processed.samples.each_cons(2).zip(source.samples.each_cons(2)).map do |output, input|
+        (output.last - output.first).abs - (input.last - input.first).abs
+      end
+
+      expect(excess_steps.max).to be < 0.04
     end
 
     it "requires frame-aware processing for linked detection" do

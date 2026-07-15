@@ -14,9 +14,9 @@ module Wavify
             @outgoing = []
           end
 
-          def push(frame, peak)
-            maximum = [peak, @incoming.last&.fetch(2) || 0.0].max
-            @incoming << [frame, peak, maximum]
+          def push(frame, detector_peak, current_peak)
+            maximum = [detector_peak, @incoming.last&.fetch(3) || 0.0].max
+            @incoming << [frame, current_peak, detector_peak, maximum]
           end
 
           def shift
@@ -26,7 +26,7 @@ module Wavify
           end
 
           def maximum
-            [@incoming.last&.fetch(2) || 0.0, @outgoing.last&.fetch(2) || 0.0].max
+            [@incoming.last&.fetch(3) || 0.0, @outgoing.last&.fetch(3) || 0.0].max
           end
 
           def length
@@ -41,9 +41,9 @@ module Wavify
 
           def refill_outgoing
             until @incoming.empty?
-              frame, peak = @incoming.pop.first(2)
-              maximum = [peak, @outgoing.last&.fetch(2) || 0.0].max
-              @outgoing << [frame, peak, maximum]
+              frame, current_peak, detector_peak = @incoming.pop.first(3)
+              maximum = [detector_peak, @outgoing.last&.fetch(3) || 0.0].max
+              @outgoing << [frame, current_peak, detector_peak, maximum]
             end
           end
         end
@@ -63,20 +63,10 @@ module Wavify
           reset
         end
 
-        # Applies the limiter offline without adding latency to the result.
+        # Applies the limiter on an isolated runtime without adding latency or
+        # changing any streaming state already held by this instance.
         def apply(buffer)
-          raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
-
-          float_format = buffer.format.with(sample_format: :float, bit_depth: 32)
-          float_buffer = buffer.convert(float_format)
-          prepare_runtime_if_needed!(sample_rate: float_format.sample_rate, channels: float_format.channels)
-          reset_limiter_state
-
-          frames = float_buffer.samples.each_slice(float_format.channels).map do |frame|
-            frame.map { |sample| sample * @input_gain }
-          end
-          output = limit_offline_frames(frames).flatten(1)
-          Core::SampleBuffer.new(output, float_format).convert(buffer.format)
+          build_runtime.send(:apply_offline, buffer)
         end
 
         # Processes a streaming chunk while preserving a lookahead delay.
@@ -129,6 +119,21 @@ module Wavify
 
         private
 
+        def apply_offline(buffer)
+          raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
+
+          float_format = buffer.format.with(sample_format: :float, bit_depth: 32)
+          float_buffer = buffer.convert(float_format)
+          prepare_runtime_if_needed!(sample_rate: float_format.sample_rate, channels: float_format.channels)
+          reset_limiter_state
+
+          frames = float_buffer.samples.each_slice(float_format.channels).map do |frame|
+            frame.map { |sample| sample * @input_gain }
+          end
+          output = limit_offline_frames(frames).flatten(1)
+          Core::SampleBuffer.new(output, float_format).convert(buffer.format)
+        end
+
         def limit_offline_frames(frames)
           delayed = frames.map do |frame|
             enqueue_and_limit(frame) || Array.new(@runtime_channels, 0.0)
@@ -137,7 +142,8 @@ module Wavify
         end
 
         def enqueue_and_limit(frame)
-          @delay_frames.push(frame, detector_peak(frame))
+          current_peak = frame_peak(frame)
+          @delay_frames.push(frame, detector_peak(frame, current_peak: current_peak), current_peak)
           if @delay_frames.length <= @lookahead_frames
             update_gain(@delay_frames.maximum)
             return nil
@@ -193,8 +199,8 @@ module Wavify
           @true_peak_history = []
         end
 
-        def detector_peak(frame)
-          return frame_peak(frame) if @oversampling == 1
+        def detector_peak(frame, current_peak:)
+          return current_peak if @oversampling == 1
 
           @true_peak_history.concat(frame)
           history_samples = DSP::LoudnessMeter::TRUE_PEAK_RADIUS * 2 * @runtime_channels

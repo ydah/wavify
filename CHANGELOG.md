@@ -43,6 +43,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Fixed CLI option ordering, help/version exit behavior, reproducible `--seed` rendering, optional OGG test setup, and codec/effect registry synchronization.
 - Fixed Windows path-output coverage by closing destination handles before atomic replacement, and bounded exact codec reads so malformed AIFF sizes stay within the public error contract.
 - Fixed sequencer chord and simultaneous-track clipping with per-voice scaling, float mix buses, and final linked limiting, while removing per-sample Enumerator resumes from voice rendering.
+- Smoothed NoiseGate gain transitions, separated Limiter window detection from current-frame safety clamps, and isolated offline limiting from active streaming state.
 
 ## [0.1.0] - 2026-03-04
 
