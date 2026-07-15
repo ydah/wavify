@@ -9,6 +9,8 @@ module Wavify
     # compared, hashed, or converted to the same format without dither.
     # Random-access operations (`samples`, `frame_view`, `view`, `slice`,
     # `concat`, `reverse`, and format-changing `convert`) materialize them.
+    # Hashing samples a fixed number of positions, so it is O(1); collisions
+    # are resolved by full value equality, whose worst case is O(n).
     class SampleBuffer
       include Enumerable
 
@@ -210,10 +212,12 @@ module Wavify
         return true if equal?(other)
         return false unless other.is_a?(SampleBuffer) && @format == other.format && @sample_count == other.length
 
-        packed_bytes = packed_storage_snapshot
-        other_packed_bytes = other.send(:packed_storage_snapshot)
-        if @format.sample_format == :pcm && packed_bytes && other_packed_bytes
-          return packed_bytes == other_packed_bytes
+        array_samples, packed_bytes = storage_snapshot
+        other_array_samples, other_packed_bytes = other.send(:storage_snapshot)
+        return array_samples == other_array_samples if array_samples && other_array_samples
+
+        if packed_bytes && other_packed_bytes
+          return packed_bytes == other_packed_bytes if @format.sample_format == :pcm || packed_bytes == other_packed_bytes
         end
 
         sample_values_equal?(other)
@@ -393,8 +397,8 @@ module Wavify
       end
 
       def each_packed_sample
-        packed_samples = packed_storage_snapshot
-        return @samples.each { |sample| yield sample } unless packed_samples
+        array_samples, packed_samples = storage_snapshot
+        return array_samples.each { |sample| yield sample } unless packed_samples
 
         if @format.sample_format == :pcm && @format.bit_depth == 24
           chunk_bytes = PACKED_ENUMERATION_CHUNK_SAMPLES * 3
@@ -412,8 +416,8 @@ module Wavify
         self
       end
 
-      def packed_storage_snapshot
-        @storage_mutex.synchronize { @packed_samples }
+      def storage_snapshot
+        @storage_mutex.synchronize { [@samples, @packed_samples] }
       end
 
       def sample_values_equal?(other)

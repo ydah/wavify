@@ -82,6 +82,16 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect({ first => :buffer }[second]).to eq(:buffer)
     end
 
+    it "compares array-backed buffers without enumerator overhead" do
+      samples = Array.new(100_000) { |index| index.even? ? 1_000 : -1_000 }
+      first = described_class.new(samples, pcm16_stereo)
+      second = described_class.new(samples, pcm16_stereo)
+
+      expect(first).not_to receive(:each)
+      expect(second).not_to receive(:each)
+      expect(first).to eq(second)
+    end
+
     it "compares and hashes packed buffers without materializing them" do
       first = described_class.new([1, -2, 3, -4], pcm16_stereo, storage: :packed)
       second = described_class.new([1, -2, 3, -4], pcm16_stereo, storage: :packed)
@@ -93,6 +103,20 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(first.hash).to eq(array.hash)
       expect(first).to be_packed
       expect(second).to be_packed
+    end
+
+    it "compares equal packed floats by bytes and preserves negative-zero equality" do
+      equal_left = described_class.new([0.25, -0.5], float_stereo, storage: :packed)
+      equal_right = described_class.new([0.25, -0.5], float_stereo, storage: :packed)
+      positive_zero = described_class.new([0.0, 0.0], float_stereo, storage: :packed)
+      negative_zero = described_class.new([-0.0, 0.0], float_stereo, storage: :packed)
+
+      expect(equal_left).not_to receive(:each)
+      expect(equal_right).not_to receive(:each)
+      expect(equal_left).to eq(equal_right)
+      expect(negative_zero).to eq(positive_zero)
+      expect(negative_zero.hash).to eq(positive_zero.hash)
+      expect([equal_left, equal_right, positive_zero, negative_zero]).to all(be_packed)
     end
 
     it "optionally stores samples in packed form until random access is requested" do
