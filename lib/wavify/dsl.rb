@@ -148,10 +148,14 @@ module Wavify
                           end
         sample_audio = render_sample_tracks(default_bars: default_bars)
 
-        return sequencer_audio unless sample_audio
-        return sample_audio if sequencer_audio.sample_frame_count.zero?
-
-        Wavify::Audio.mix(sequencer_audio, sample_audio)
+        rendered = if sample_audio.nil?
+                     sequencer_audio
+                   elsif sequencer_audio.sample_frame_count.zero?
+                     sample_audio
+                   else
+                     Wavify::Audio.mix(sequencer_audio, sample_audio)
+                   end
+        pad_to_song_duration(rendered, default_bars: default_bars)
       end
 
       # Renders and writes the song to disk.
@@ -185,8 +189,16 @@ module Wavify
       def render_stems(default_bars:)
         @tracks.each_with_object({}) do |track, stems|
           audio = render_track_stem(track, default_bars: default_bars)
-          stems[track.name] = audio
+          stems[track.name] = pad_to_song_duration(audio, default_bars: default_bars)
         end
+      end
+
+      def pad_to_song_duration(audio, default_bars:)
+        target_frames = (duration(default_bars: default_bars).total_seconds * audio.sample_rate).round
+        missing_frames = target_frames - audio.sample_frame_count
+        return audio unless missing_frames.positive?
+
+        audio.pad_end(missing_frames.to_f / audio.sample_rate)
       end
 
       def render_track_stem(track, default_bars:)
@@ -739,7 +751,6 @@ module Wavify
         end
 
         names = Array(tracks).map(&:to_sym)
-        raise Wavify::SequencerError, "tracks must not be empty" if names.empty?
 
         @sections << SongDefinition::Section.new(
           name: name.to_sym,

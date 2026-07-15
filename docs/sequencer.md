@@ -44,6 +44,7 @@ Pattern velocity suffixes are normalized `0.0..1.0` values. `x` defaults to `0.8
 Use `x?50` for a 50% render probability and `x:3` for ratchets. Pass `random_seed:` to `Wavify::DSL.build_definition`, `Wavify::DSL.validate`, or `Wavify.build` for reproducible probability rolls. Note tokens can use duration suffixes such as `C4/8`, dotted values such as `C4/8.`, triplets such as `C4/8t`, and simple ties such as `D4~ D4`.
 Use `key :c, :minor` to quantize notes/chords to a scale. Chords support slash inversions and voicings with `@open`, `@drop2`, or the `voicing:` option.
 Arrangement sections can override `tempo:` and `beats_per_bar:` and expose marker events through `markers:`.
+Use `tracks: []` for an explicit full-section rest. DSL renders and stems are padded with silence through the complete planned song duration, including trailing rest sections.
 `preset :lofi_drums` creates a small sample-backed drum track definition using `kick.wav`, `snare.wav`, and `hat.wav`.
 Swing starts at `0.5` for straight timing and applies to off-beat steps on even pattern/note grids.
 `sample_folder` resolves `sample :kick` to `kick.wav` under that folder, and `pitch:` shifts samples by semitones using resample-based playback speed changes. Use `Wavify::DSL.validate(format: ...)` to catch notation, track, and arrangement errors before rendering.

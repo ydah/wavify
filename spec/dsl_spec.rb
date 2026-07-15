@@ -212,30 +212,32 @@ RSpec.describe Wavify::DSL do
       expect(timeline.any? { |event| event[:track] == :drums && event[:kind] == :trigger }).to be(true)
     end
 
-    it "preserves silent arrangement sections when rendering synth tracks and stems" do
+    it "preserves empty rest sections and pads mixes and stems through the planned duration" do
       song = described_class.build_definition(format: format, tempo: 120) do
-        track(:rest)
-
         track :lead do
           notes "C4", resolution: 4
         end
 
         arrange do
-          section :intro, bars: 1, tracks: [:rest]
+          section :intro, bars: 1, tracks: []
           section :main, bars: 1, tracks: [:lead]
+          section :outro, bars: 1, tracks: []
         end
       end
 
       lead_start_frame = (song.timeline.find { |event| event[:track] == :lead }.fetch(:start_time) * format.sample_rate).round
       mix = song.render
       stem = song.render(stems: true).fetch(:lead)
+      expected_frames = (song.duration.total_seconds * format.sample_rate).round
 
       [mix, stem].each do |audio|
         samples_before_lead = audio.buffer.samples.first(lead_start_frame * format.channels)
-        samples_after_lead = audio.buffer.samples.drop(lead_start_frame * format.channels)
+        trailing_bar = audio.buffer.samples.last((2.0 * format.sample_rate).round * format.channels)
 
+        expect(audio.sample_frame_count).to eq(expected_frames)
         expect(samples_before_lead).to all(eq(0.0))
-        expect(samples_after_lead.any? { |sample| sample.abs.positive? }).to eq(true)
+        expect(audio.buffer.samples.any? { |sample| sample.abs.positive? }).to eq(true)
+        expect(trailing_bar).to all(eq(0.0))
       end
     end
 
@@ -398,7 +400,7 @@ RSpec.describe Wavify::DSL do
 
         audio = song.render(default_bars: 1)
 
-        expect(audio.sample_frame_count).to eq(1)
+        expect(audio.sample_frame_count).to eq((song.duration.total_seconds * format.sample_rate).round)
         left, right = audio.buffer.samples.first(2)
         expect(left.abs).to be < 0.001
         expect(right).to be_within(0.01).of(0.8 * (10.0**(-6.0 / 20.0)))
@@ -419,7 +421,9 @@ RSpec.describe Wavify::DSL do
 
         audio = song.render(default_bars: 1)
 
-        expect(audio.sample_frame_count).to eq(2)
+        expect(audio.sample_frame_count).to eq((song.duration.total_seconds * format.sample_rate).round)
+        expect(audio.buffer.samples.first(4).any? { |sample| sample.abs.positive? }).to eq(true)
+        expect(audio.buffer.samples.drop(4)).to all(eq(0.0))
       end
     end
 
