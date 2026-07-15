@@ -36,7 +36,7 @@ module Wavify
     def sample_rate: () -> Integer
     def bit_depth: () -> Integer
     def with_bit_depth: (Integer value, ?dither: bool, ?dither_seed: Integer?) -> Audio
-    def write: (String | IO path, ?format: Core::Format?, ?codec_options: Hash[Symbol, untyped]?, ?overwrite: bool) -> Audio
+    def write: (String | IO path, ?format: Core::Format?, ?codec: Symbol | singleton(Codecs::Base)?, ?filename: String?, ?codec_options: Hash[Symbol, untyped]?, ?overwrite: bool) -> Audio
     def convert: (Core::Format new_format, ?dither: bool, ?dither_seed: Integer?, ?resampler: Symbol) -> Audio
     def resample: (sample_rate: Integer, ?resampler: Symbol) -> Audio
     def stats: () -> Hash[Symbol, untyped]

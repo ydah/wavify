@@ -87,10 +87,41 @@ module Wavify
         end
 
         def read_exact(io, size, message)
-          data = io.read(size)
-          raise InvalidFormatError, message if data.nil? || data.bytesize != size
+          data = +"".b
+          while data.bytesize < size
+            chunk = io.read(size - data.bytesize)
+            break if chunk.nil? || chunk.empty?
+
+            data << chunk
+          end
+          raise InvalidFormatError, message if data.bytesize != size
 
           data
+        end
+
+        def read_to_end(io, chunk_size: 16_384)
+          data = +"".b
+          loop do
+            chunk = io.read(chunk_size)
+            break if chunk.nil? || chunk.empty?
+
+            data << chunk
+          end
+          data
+        end
+
+        def write_all(io, data)
+          bytes = data.b
+          offset = 0
+          while offset < bytes.bytesize
+            written = io.write(bytes.byteslice(offset, bytes.bytesize - offset))
+            unless written.is_a?(Integer) && written.positive?
+              raise IOError, "write returned #{written.inspect} before all bytes were written"
+            end
+
+            offset += written
+          end
+          bytes.bytesize
         end
 
         def skip_bytes(io, count)
@@ -105,9 +136,15 @@ module Wavify
         end
 
         def ensure_seekable!(io)
-          return if io.respond_to?(:seek) && io.respond_to?(:pos)
+          if io.respond_to?(:seek) && io.respond_to?(:pos)
+            position = io.pos
+            io.seek(position, IO::SEEK_SET)
+            return
+          end
 
           raise StreamError, "codec requires seekable IO"
+        rescue IOError, SystemCallError => e
+          raise StreamError, "codec requires seekable IO: #{e.message}"
         end
 
         def validate_no_codec_options!(codec_options, operation:)

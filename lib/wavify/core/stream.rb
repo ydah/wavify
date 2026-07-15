@@ -27,6 +27,8 @@ module Wavify
         @take_duration_seconds = nil
         @drop_duration_seconds = nil
         @enumerated = false
+        @source_start_position = source_position(source)
+        @stage_input_formats = []
       end
 
       # Adds a processor to the stream pipeline.
@@ -38,6 +40,10 @@ module Wavify
       # @param name [String, Symbol, nil] optional display name for inspection
       # @return [Stream] self
       def pipe(processor = nil, name: nil, &block)
+        if processor && block
+          raise InvalidParameterError, "pipe accepts either a processor or a block, not both"
+        end
+
         candidate = processor || block
         unless candidate.respond_to?(:call) || candidate.respond_to?(:process) || candidate.respond_to?(:apply)
           raise InvalidParameterError, "processor must respond to :call, :process, or :apply"
@@ -108,8 +114,8 @@ module Wavify
       # @param format [Format, nil] optional output format
       # @param codec_options [Hash, nil] codec-specific options forwarded to `stream_write`
       # @return [Stream] self
-      def tee(path_or_io, format: nil, codec_options: nil)
-        output_codec = detect_output_codec(path_or_io)
+      def tee(path_or_io, format: nil, codec: nil, filename: nil, codec_options: nil)
+        output_codec = detect_output_codec(path_or_io, codec: codec, filename: filename)
         target_format = resolve_target_format(format, output_codec)
         raise InvalidFormatError, "format is required when teeing stream output" unless target_format.is_a?(Format)
 
@@ -168,6 +174,7 @@ module Wavify
       end
 
       # Reads and processes the stream without writing output.
+      # User processors and callbacks are still executed and may have side effects.
       #
       # @param format [Format, nil] optional output conversion to validate
       # @return [Hash]
@@ -211,43 +218,53 @@ module Wavify
         @last_output_format = nil
         drop_frames = nil
         take_frames = nil
-        taken_frames = 0
+        input_taken_frames = 0
+        output_drop_frames = nil
+        output_take_frames = nil
+        output_taken_frames = 0
+        @stage_input_formats = []
 
         with_tee_writers do |tee_writers|
           with_stream_context("stream read", codec: @codec, target: @source) do
-            @codec.stream_read(@source, chunk_size: @chunk_size, **@codec_read_options) do |chunk|
-              with_stream_context("stream processing", codec: @codec, target: @source) do
-                @format ||= chunk.format
-                drop_frames ||= duration_frames(@drop_duration_seconds, chunk.format) || 0
-                take_frames = duration_frames(@take_duration_seconds, chunk.format) if take_frames.nil? && @take_duration_seconds
-                input_chunk, drop_frames, taken_frames = apply_duration_window(
-                  chunk,
-                  drop_frames: drop_frames,
-                  take_frames: take_frames,
-                  taken_frames: taken_frames
-                )
-                next unless input_chunk
+            take_complete = Object.new
+            catch(take_complete) do
+              @codec.stream_read(@source, chunk_size: @chunk_size, **@codec_read_options) do |chunk|
+                with_stream_context("stream processing", codec: @codec, target: @source) do
+                  @format ||= chunk.format
+                  drop_frames ||= duration_frames(@drop_duration_seconds, chunk.format) || 0
+                  take_frames = duration_frames(@take_duration_seconds, chunk.format) if take_frames.nil? && @take_duration_seconds
+                  input_chunk, drop_frames, input_taken_frames = apply_duration_window(
+                    chunk,
+                    drop_frames: drop_frames,
+                    take_frames: take_frames,
+                    taken_frames: input_taken_frames
+                  )
+                  throw(take_complete) if take_frames && input_taken_frames >= take_frames && input_chunk.nil?
+                  next unless input_chunk
 
-                output_chunk = apply_pipeline(input_chunk)
-                @last_output_format = output_chunk.format
-                write_tee_chunks(output_chunk, tee_writers)
-                yield output_chunk
+                  output_chunk = apply_pipeline(input_chunk)
+                  output_drop_frames, output_take_frames, output_taken_frames = emit_output_chunk(
+                    output_chunk,
+                    tee_writers: tee_writers,
+                    drop_frames: output_drop_frames,
+                    take_frames: output_take_frames,
+                    taken_frames: output_taken_frames
+                  ) { |windowed| yield windowed }
+                  throw(take_complete) if take_frames && input_taken_frames >= take_frames
+                end
               end
             end
           end
 
           with_stream_context("stream flush", codec: @codec, target: @source) do
             flush_pipeline do |chunk|
-              if take_frames
-                remaining_frames = take_frames - taken_frames
-                next if remaining_frames <= 0
-
-                chunk = chunk.slice(0, [chunk.sample_frame_count, remaining_frames].min)
-                taken_frames += chunk.sample_frame_count
-              end
-              @last_output_format = chunk.format
-              write_tee_chunks(chunk, tee_writers)
-              yield chunk
+              output_drop_frames, output_take_frames, output_taken_frames = emit_output_chunk(
+                chunk,
+                tee_writers: tee_writers,
+                drop_frames: output_drop_frames,
+                take_frames: output_take_frames,
+                taken_frames: output_taken_frames
+              ) { |windowed| yield windowed }
             end
           end
         end
@@ -261,12 +278,14 @@ module Wavify
       #
       # @param path_or_io [String, IO]
       # @param format [Format, nil] output format (required for raw output if unknown)
+      # @param codec [Symbol, Class, nil] explicit output codec for generic IO targets
+      # @param filename [String, nil] filename hint used for codec selection
       # @param codec_options [Hash] codec-specific options forwarded to `stream_write`
       # @param overwrite [Boolean] whether existing path output may be replaced
       # @return [String, IO] the same target argument
-      def write_to(path_or_io, format: nil, codec_options: nil, overwrite: true)
+      def write_to(path_or_io, format: nil, codec: nil, filename: nil, codec_options: nil, overwrite: true)
         validate_overwrite!(path_or_io, overwrite)
-        output_codec = detect_output_codec(path_or_io)
+        output_codec = detect_output_codec(path_or_io, codec: codec, filename: filename)
         target_format = resolve_target_format(format, output_codec)
         options = validate_codec_options!(codec_options, "codec_options")
 
@@ -296,11 +315,16 @@ module Wavify
 
         def process(chunk)
           float_chunk = chunk.convert(chunk.format.with(sample_format: :float, bit_depth: 32))
-          peak = float_chunk.samples.map(&:abs).max || 0.0
+          peak = 0.0
+          square_sum = 0.0
+          float_chunk.samples.each do |sample|
+            peak = [peak, sample.abs].max
+            square_sum += sample * sample
+          end
           rms = if float_chunk.samples.empty?
                   0.0
                 else
-                  Math.sqrt(float_chunk.samples.sum { |sample| sample * sample } / float_chunk.samples.length)
+                  Math.sqrt(square_sum / float_chunk.samples.length)
                 end
           @callback.call(
             format: chunk.format,
@@ -345,7 +369,7 @@ module Wavify
             duration: Duration.from_samples(@processed_frames, chunk.format.sample_rate)
           }
           stats[:total_frames] = @total_frames if @total_frames
-          stats[:progress] = @processed_frames.to_f / @total_frames if @total_frames&.positive?
+          stats[:progress] = [@processed_frames.to_f / @total_frames, 1.0].min if @total_frames&.positive?
           @callback.call(stats)
           chunk
         rescue StandardError => e
@@ -364,7 +388,8 @@ module Wavify
       end
 
       def apply_pipeline(chunk, start_index: 0)
-        @pipeline.drop(start_index).reduce(chunk) do |current, processor|
+        @pipeline.each_with_index.drop(start_index).reduce(chunk) do |current, (processor, index)|
+          @stage_input_formats[index] ||= current.format
           coerce_processor_result(invoke_processor(processor, current), "stream processor")
         end
       end
@@ -389,17 +414,17 @@ module Wavify
 
       def flush_pipeline
         @pipeline.each_with_index do |processor, index|
-          flush_processor(processor).each do |chunk|
+          flush_processor(processor, index).each do |chunk|
             yield apply_pipeline(chunk, start_index: index + 1)
           end
         end
       end
 
-      def flush_processor(processor)
+      def flush_processor(processor, index)
         return [] unless processor.respond_to?(:flush)
 
-        result = if flush_accepts_format?(processor) && flush_format
-                   processor.flush(format: flush_format)
+        result = if flush_accepts_format?(processor) && flush_format(index)
+                   processor.flush(format: flush_format(index))
                  else
                    processor.flush
                  end
@@ -412,8 +437,8 @@ module Wavify
         end
       end
 
-      def flush_format
-        @last_output_format || @format
+      def flush_format(index)
+        @stage_input_formats[index] || @format
       end
 
       def processor_duration(processor, method_name)
@@ -429,7 +454,28 @@ module Wavify
       end
 
       def pipeline_tail_duration
-        @pipeline.map { |processor| processor_duration(processor, :tail_duration) }.max || 0.0
+        @pipeline.sum { |processor| processor_duration(processor, :tail_duration) }
+      end
+
+      def emit_output_chunk(chunk, tee_writers:, drop_frames:, take_frames:, taken_frames:)
+        if @take_duration_seconds
+          drop_frames ||= duration_frames(latency, chunk.format) || 0
+          take_frames ||= duration_frames(@take_duration_seconds, chunk.format)
+        else
+          drop_frames ||= 0
+        end
+        windowed, drop_frames, taken_frames = apply_duration_window(
+          chunk,
+          drop_frames: drop_frames,
+          take_frames: take_frames,
+          taken_frames: taken_frames
+        )
+        if windowed
+          @last_output_format = windowed.format
+          write_tee_chunks(windowed, tee_writers)
+          yield windowed
+        end
+        [drop_frames, take_frames, taken_frames]
       end
 
       def apply_duration_window(chunk, drop_frames:, take_frames:, taken_frames:)
@@ -476,16 +522,13 @@ module Wavify
       end
 
       def normalize_processor_results(result, context)
-        return [] if result.nil?
-
-        return result.map { |item| coerce_processor_result(item, context) } if result.is_a?(Array)
-        return [coerce_processor_result(result, context)] if result.is_a?(Audio) || result.is_a?(SampleBuffer)
-
-        if result.respond_to?(:each)
-          return result.map { |item| coerce_processor_result(item, context) }
+        return [].each if result.nil?
+        return [coerce_processor_result(result, context)].each if result.is_a?(Audio) || result.is_a?(SampleBuffer)
+        unless result.respond_to?(:each)
+          raise ProcessingError, "#{context} must return Core::SampleBuffer, Audio, an Enumerable of them, or nil"
         end
 
-        raise ProcessingError, "#{context} must return Core::SampleBuffer, Audio, an Enumerable of them, or nil"
+        result.lazy.map { |item| coerce_processor_result(item, context) }
       end
 
       def coerce_processor_result(result, context)
@@ -498,10 +541,11 @@ module Wavify
         end
       end
 
-      def detect_output_codec(path_or_io)
-        return @codec unless path_or_io.is_a?(String)
+      def detect_output_codec(path_or_io, codec:, filename:)
+        return Codecs::Registry.resolve(codec) if codec
+        return Codecs::Registry.detect_for_write(path_or_io, filename: filename) if path_or_io.is_a?(String) || filename
 
-        Codecs::Registry.detect_for_write(path_or_io)
+        @codec
       end
 
       def resolve_target_format(format, output_codec)
@@ -563,7 +607,9 @@ module Wavify
                   else
                     raise InvalidParameterError, "#{name} must be Numeric or Core::Duration"
                   end
-        raise InvalidParameterError, "#{name} must be non-negative" if seconds.negative?
+        unless seconds.finite? && !seconds.negative?
+          raise InvalidParameterError, "#{name} must be a non-negative finite duration"
+        end
 
         seconds
       end
@@ -598,13 +644,23 @@ module Wavify
 
       def prepare_source_for_enumeration!
         if @enumerated && !@source.is_a?(String)
-          unless @source.respond_to?(:rewind)
+          unless @source_start_position && @source.respond_to?(:seek)
             raise StreamError, "IO stream source cannot be enumerated more than once because it is not rewindable"
           end
 
-          @source.rewind
+          @source.seek(@source_start_position, IO::SEEK_SET)
         end
         @enumerated = true
+      rescue IOError, SystemCallError => e
+        raise StreamError, "IO stream source cannot be rewound to its original position: #{e.message}"
+      end
+
+      def source_position(source)
+        return nil if source.is_a?(String) || !source.respond_to?(:pos)
+
+        source.pos
+      rescue IOError, SystemCallError
+        nil
       end
     end
   end

@@ -122,6 +122,58 @@ RSpec.describe Wavify::Codecs::Registry do
         described_class.detect(io)
       end.to raise_error(Wavify::CodecNotFoundError)
     end
+
+    it "preserves the current IO position during magic detection" do
+      io = StringIO.new("prefixRIFF\x00\x00\x00\x00WAVE")
+      io.pos = 6
+
+      expect(described_class.detect(io)).to eq(Wavify::Codecs::Wav)
+      expect(io.pos).to eq(6)
+    end
+
+    it "handles an empty IO whose read returns nil" do
+      io = Class.new do
+        def read(*) = nil
+        def pos = 0
+        def seek(*) = 0
+      end.new
+
+      expect { described_class.detect(io) }.to raise_error(Wavify::CodecNotFoundError)
+    end
+
+    it "does not read an IO whose seek method is unusable" do
+      io = Class.new do
+        attr_reader :reads
+
+        def initialize
+          @reads = 0
+        end
+
+        def read(*)
+          @reads += 1
+          "RIFF\x00\x00\x00\x00WAVE"
+        end
+
+        def pos
+          0
+        end
+
+        def seek(*)
+          raise Errno::ESPIPE
+        end
+      end.new
+
+      expect(described_class.detect(io, filename: "input.wav")).to eq(Wavify::Codecs::Wav)
+      expect(io.reads).to eq(0)
+    end
+  end
+
+
+  describe ".resolve" do
+    it "resolves registered names and codec classes" do
+      expect(described_class.resolve(:wav)).to eq(Wavify::Codecs::Wav)
+      expect(described_class.resolve(Wavify::Codecs::Flac)).to eq(Wavify::Codecs::Flac)
+    end
   end
 
   describe "public registry helpers" do

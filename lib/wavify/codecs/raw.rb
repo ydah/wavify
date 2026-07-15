@@ -28,7 +28,7 @@ module Wavify
         def read(io_or_path, format: nil)
           target_format = validate_format!(format)
           io, close_io = open_input(io_or_path)
-          data = io.read || "".b
+          data = read_to_end(io)
           validate_frame_alignment!(data.bytesize, target_format)
           samples = decode_samples(data, target_format)
           Core::SampleBuffer.new(samples, target_format)
@@ -50,7 +50,7 @@ module Wavify
           buffer = sample_buffer.format == target_format ? sample_buffer : sample_buffer.convert(target_format)
 
           io, close_io = open_output(io_or_path)
-          io.write(encode_samples(buffer.samples, target_format))
+          write_all(io, encode_samples(buffer.samples, target_format))
           io.flush if io.respond_to?(:flush)
           io.rewind if io.respond_to?(:rewind)
           io_or_path
@@ -71,16 +71,22 @@ module Wavify
           io, close_io = open_input(io_or_path)
           bytes_per_frame = target_format.block_align
           raw_chunk_size = chunk_size * bytes_per_frame
+          pending = +"".b
 
           loop do
             chunk = io.read(raw_chunk_size)
             break if chunk.nil? || chunk.empty?
 
-            raise InvalidFormatError, "raw data chunk does not align with format frame size" unless (chunk.bytesize % bytes_per_frame).zero?
+            pending << chunk
+            usable_bytes = pending.bytesize - (pending.bytesize % bytes_per_frame)
+            next if usable_bytes.zero?
 
-            samples = decode_samples(chunk, target_format)
+            frame_data = pending.byteslice(0, usable_bytes)
+            pending = pending.byteslice(usable_bytes, pending.bytesize - usable_bytes) || +"".b
+            samples = decode_samples(frame_data, target_format)
             yield Core::SampleBuffer.new(samples, target_format)
           end
+          raise InvalidFormatError, "raw data ends with a partial sample frame" unless pending.empty?
         ensure
           io.close if close_io && io
         end
@@ -101,7 +107,7 @@ module Wavify
             raise InvalidParameterError, "stream chunk must be Core::SampleBuffer" unless sample_buffer.is_a?(Core::SampleBuffer)
 
             buffer = sample_buffer.format == target_format ? sample_buffer : sample_buffer.convert(target_format)
-            io.write(encode_samples(buffer.samples, target_format))
+            write_all(io, encode_samples(buffer.samples, target_format))
           end
 
           yield writer

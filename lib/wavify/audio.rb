@@ -240,14 +240,16 @@ module Wavify
     # @param path [String, IO]
     # @param format [Core::Format, nil] optional output format
     # @param codec_options [Hash] codec-specific options forwarded to `.write`
+    # @param codec [Symbol, Class, nil] explicit output codec for generic IO targets
+    # @param filename [String, nil] filename hint used for codec selection
     # @param overwrite [Boolean] whether existing path output may be replaced
     # @return [Audio] self
-    def write(path, format: nil, codec_options: nil, overwrite: true)
+    def write(path, format: nil, codec: nil, filename: nil, codec_options: nil, overwrite: true)
       validate_overwrite!(path, overwrite)
-      codec = Codecs::Registry.detect_for_write(path)
+      output_codec = codec ? Codecs::Registry.resolve(codec) : Codecs::Registry.detect_for_write(path, filename: filename)
       options = normalize_codec_options!(codec_options)
       with_output_target(path, overwrite: overwrite) do |target|
-        codec.write(target, @buffer, format: format || @buffer.format, **options)
+        output_codec.write(target, @buffer, format: format || @buffer.format, **options)
       end
       self
     end

@@ -35,6 +35,18 @@ RSpec.describe Wavify::Audio do
       end
     end
 
+    it "writes generic IO using an explicit codec or filename hint" do
+      audio = described_class.new(Wavify::Core::SampleBuffer.new([0.1, 0.1], format))
+      explicit = StringIO.new(+"".b)
+      hinted = StringIO.new(+"".b)
+
+      audio.write(explicit, codec: :wav)
+      audio.write(hinted, filename: "output.wav")
+
+      expect(explicit.string).to start_with("RIFF")
+      expect(hinted.string).to start_with("RIFF")
+    end
+
     it "reads OGG Vorbis through the registry", :ogg do
       audio = described_class.read("spec/fixtures/audio/stereo_vorbis_44100.ogg")
 

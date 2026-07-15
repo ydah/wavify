@@ -81,8 +81,20 @@ module Wavify
         #
         # @param io_or_path [String, IO]
         # @return [Class] codec class
-        def detect_for_write(io_or_path)
-          detect_by_extension(io_or_path) || detect_by_magic(io_or_path) || raise_not_found(io_or_path)
+        def detect_for_write(io_or_path, filename: nil)
+          detect_by_extension(io_or_path, filename: filename) || detect_by_magic(io_or_path) || raise_not_found(filename || io_or_path)
+        end
+
+        # Resolves an explicit codec class or registered extension name.
+        def resolve(codec)
+          if codec.respond_to?(:read) && codec.respond_to?(:write)
+            validate_codec!(codec)
+            return codec
+          end
+
+          key = codec.to_s
+          normalized = normalize_extension(key)
+          extensions_mutex.synchronize { extensions[normalized] } || raise_not_found(codec)
         end
 
         # Registers or replaces a codec for a filename extension.
@@ -165,19 +177,29 @@ module Wavify
           io, close_io = ensure_io(io_or_path)
           return unless io
 
-          probe = io.read(12)
-          io.rewind if io.respond_to?(:rewind)
+          original_position = io.pos if io.respond_to?(:pos)
+          probe = io.read(12).to_s
           MAGIC_CODEC_ORDER.each do |magic_key, codec|
             return codec if MAGIC_PROBES.fetch(magic_key).call(probe)
           end
 
           nil
         ensure
+          if !close_io && original_position && io.respond_to?(:seek)
+            io.seek(original_position, IO::SEEK_SET)
+          end
           io.close if close_io && io
         end
 
         def non_rewindable_io?(io_or_path)
-          io_or_path.respond_to?(:read) && !io_or_path.respond_to?(:rewind)
+          return false unless io_or_path.respond_to?(:read)
+          return true unless io_or_path.respond_to?(:pos) && io_or_path.respond_to?(:seek)
+
+          position = io_or_path.pos
+          io_or_path.seek(position, IO::SEEK_SET)
+          false
+        rescue IOError, SystemCallError
+          true
         end
 
         def ensure_io(io_or_path)

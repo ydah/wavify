@@ -137,6 +137,41 @@ RSpec.describe Wavify::Core::Stream do
     source&.unlink
   end
 
+  it "stops decoding once the requested input duration is reached" do
+    chunks_read = 0
+    chunk = Wavify::Core::SampleBuffer.new([0.1], format)
+    codec = Class.new do
+      define_singleton_method(:stream_read) do |_source, chunk_size:, &block|
+        raise "unexpected chunk size" unless chunk_size == 1
+
+        100.times do
+          chunks_read += 1
+          block.call(chunk)
+        end
+      end
+    end
+    stream = described_class.new(:source, codec: codec, format: format, chunk_size: 1)
+
+    audio = stream.take_duration(3.0 / format.sample_rate).to_audio
+
+    expect(audio.sample_frame_count).to eq(3)
+    expect(chunks_read).to eq(3)
+  end
+
+  it "compensates processor latency before applying take_duration" do
+    source = write_source_wav([0.1, 0.2, 0.3, 0.4])
+    limiter = Wavify::DSP::Effects::Limiter.new(ceiling: 0.0, attack: 0.0, lookahead: 2.0 / format.sample_rate)
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 1)
+
+    samples = stream.pipe(limiter).take_duration(3.0 / format.sample_rate).to_audio.buffer.samples
+
+    samples.zip([0.1, 0.2, 0.3]).each do |actual, expected|
+      expect(actual).to be_within(0.000001).of(expected)
+    end
+  ensure
+    source&.unlink
+  end
+
   it "rewinds reusable IO sources between enumerations" do
     io = StringIO.new([1, 2, 3, 4].pack("s<*"))
     raw_format = format.with(channels: 1, sample_format: :pcm, bit_depth: 16)
@@ -150,6 +185,22 @@ RSpec.describe Wavify::Core::Stream do
 
     expect(stream.to_audio.buffer.samples).to eq([1, 2, 3, 4])
     expect(stream.to_audio.buffer.samples).to eq([1, 2, 3, 4])
+  end
+
+  it "restores a reusable IO source to its original position" do
+    io = StringIO.new([99, 1, 2, 3].pack("s<*"))
+    io.pos = 2
+    raw_format = format.with(sample_format: :pcm, bit_depth: 16)
+    stream = described_class.new(
+      io,
+      codec: Wavify::Codecs::Raw,
+      format: raw_format,
+      chunk_size: 2,
+      codec_read_options: { format: raw_format }
+    )
+
+    expect(stream.to_audio.buffer.samples).to eq([1, 2, 3])
+    expect(stream.to_audio.buffer.samples).to eq([1, 2, 3])
   end
 
   it "raises before reusing a non-rewindable IO source" do
@@ -195,6 +246,20 @@ RSpec.describe Wavify::Core::Stream do
     expect(meters.map { |stats| stats[:peak_amplitude] }).to all(be_within(0.0001).of(0.5))
     expect(progresses.map { |stats| stats[:sample_frame_count] }).to eq([2, 4])
     expect(progresses.last[:progress]).to eq(1.0)
+  ensure
+    source&.unlink
+  end
+
+  it "clamps estimated progress at one" do
+    source = write_source_wav([0.1, 0.2, 0.3])
+    updates = []
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 3)
+    stream.progress(total_frames: 2) { |stats| updates << stats }
+
+    stream.to_audio
+
+    expect(updates.last[:sample_frame_count]).to eq(3)
+    expect(updates.last[:progress]).to eq(1.0)
   ensure
     source&.unlink
   end
@@ -350,6 +415,20 @@ RSpec.describe Wavify::Core::Stream do
     end.to raise_error(Wavify::InvalidParameterError, /processor must respond/)
   end
 
+  it "rejects ambiguous processor and block arguments" do
+    stream = described_class.new("unused", codec: Wavify::Codecs::Wav, format: format)
+
+    expect do
+      stream.pipe(->(chunk) { chunk }) { |chunk| chunk }
+    end.to raise_error(Wavify::InvalidParameterError, /either a processor or a block/)
+  end
+
+  it "rejects non-finite duration windows" do
+    stream = described_class.new("unused", codec: Wavify::Codecs::Wav, format: format)
+
+    expect { stream.take_duration(Float::INFINITY) }.to raise_error(Wavify::InvalidParameterError, /finite/)
+  end
+
   it "raises when a processor returns an unsupported object" do
     source = write_source_wav([0.1, 0.2])
     stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
@@ -493,6 +572,20 @@ RSpec.describe Wavify::Core::Stream do
 
     expect(fake_codec.captured_options).to eq(block_size: 2, block_size_strategy: :fixed)
     expect(sink.length).to eq(1)
+  end
+
+  it "writes and tees generic IO using explicit codec hints" do
+    source = write_source_wav([0.1, 0.2])
+    output = StringIO.new(+"".b)
+    tee_output = StringIO.new(+"".b)
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 1)
+
+    stream.tee(tee_output, codec: :wav).write_to(output, codec: :wav)
+
+    expect(output.string).to start_with("RIFF")
+    expect(tee_output.string).to start_with("RIFF")
+  ensure
+    source&.unlink
   end
 
   it "refuses to overwrite existing path output when requested" do

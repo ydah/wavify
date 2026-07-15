@@ -111,6 +111,23 @@ RSpec.describe Wavify::Codecs::Raw do
       enum = described_class.stream_read("demo.raw", format: format, chunk_size: 4)
       expect(enum).to be_an(Enumerator)
     end
+
+    it "carries partial frames across short reads" do
+      short_io = Class.new do
+        def initialize(bytes)
+          @io = StringIO.new(bytes)
+        end
+
+        def read(_size)
+          @io.read(1)
+        end
+      end.new([1, 2, 3].pack("s<*"))
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 8_000, bit_depth: 16, sample_format: :pcm)
+
+      chunks = described_class.stream_read(short_io, format: format, chunk_size: 2).to_a
+
+      expect(chunks.flat_map(&:samples)).to eq([1, 2, 3])
+    end
   end
 
   describe ".stream_write" do
