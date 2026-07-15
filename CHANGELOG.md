@@ -6,6 +6,8 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-15
+
 ### Added
 
 - Added reproducible sequencer probability rolls through `random_seed:`.
@@ -17,6 +19,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 - Enabled the RuboCop Lint department and tightened gem package/release checks.
 - Improved streaming reuse rules, DSP state handling, codec validation, and full-buffer analysis allocations.
+- Smoothed overlap-aware headroom gain and reduced limiter lookahead processing to linear time.
 - Moved general `InvalidParameterError` failures out of the DSP-specific error hierarchy.
 - Replaced triangle generation with a band-limited wavetable and FLAC fixed LPC coefficients with Levinson–Durbin analysis.
 - Added adaptive FLAC Rice partition selection and removed frame-array/flatten allocation passes from format conversion.
@@ -30,7 +33,8 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Fixed zero-duration fades, PCM endpoint conversion, clipping detection, duration parsing, oscillator continuity/unison/noise behavior, and uppercase major chord parsing.
 - Fixed WAV extensible/RF64/overflow metadata handling, FLAC checksum validation, raw stream alignment, and destructive caller-owned IO writes.
 - Fixed sequencer release tails, chord/track headroom, pattern probability, duplicate tracks, preset sample paths, and stream tail duration limits.
-- Fixed CLI option ordering, help/version exit behavior, optional OGG test setup, and codec/effect registry synchronization.
+- Fixed arrangement timing across silent track sections, packed-buffer concurrency, projected metadata coordinates, and apply-only effect-chain tails.
+- Fixed CLI option ordering, help/version exit behavior, reproducible `--seed` rendering, optional OGG test setup, and codec/effect registry synchronization.
 
 ## [0.1.0] - 2026-03-04
 
