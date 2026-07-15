@@ -221,9 +221,12 @@ module Wavify
           end
         end
 
-        mixed.each_index do |index|
-          mixed[index] = (mixed.fetch(index) / [active_notes.fetch(index), 1].max).clamp(-1.0, 1.0)
-        end
+        Wavify::DSP::Headroom.apply!(
+          mixed,
+          active_sources: active_notes,
+          channels: track_format.channels,
+          sample_rate: track_format.sample_rate
+        )
         rendered = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(mixed, track_format.with(sample_format: :float, bit_depth: 32)))
         rendered = rendered.gain(track.gain_db) if track.gain_db != 0.0
         rendered = rendered.pan(track.pan_position) if track.pan_position != 0.0

@@ -91,7 +91,7 @@ module Wavify
         end
       end
 
-      apply_mix_strategy!(mixed, mix_strategy, audios.length, active_sources: active_sources)
+      apply_mix_strategy!(mixed, mix_strategy, audios.length, active_sources: active_sources, format: work_format)
       new(Core::SampleBuffer.new(mixed, work_format).convert(target_format))
     end
 
@@ -368,7 +368,8 @@ module Wavify
         mixed,
         self.class.send(:normalize_mix_strategy!, strategy),
         2,
-        active_sources: active_sources
+        active_sources: active_sources,
+        format: work_format
       )
       self.class.new(Core::SampleBuffer.new(mixed, work_format).convert(format))
     end
@@ -1140,17 +1141,20 @@ module Wavify
     end
     private_class_method :normalize_fade_curve!
 
-    def self.apply_mix_strategy!(samples, strategy, source_count, active_sources: nil)
+    def self.apply_mix_strategy!(samples, strategy, source_count, active_sources: nil, format: nil)
       case strategy
       when :clip
         samples.map! { |sample| clip_value(sample, -1.0, 1.0) }
       when :normalize
         normalize_mix_samples!(samples)
       when :headroom
-        samples.each_index do |index|
-          divisor = active_sources ? active_sources.fetch(index) : source_count
-          samples[index] = clip_value(samples.fetch(index) / [divisor, 1].max.to_f, -1.0, 1.0)
-        end
+        DSP::Headroom.apply!(
+          samples,
+          active_sources: active_sources,
+          channels: format&.channels || 1,
+          sample_rate: format&.sample_rate || 1,
+          fallback_sources: source_count
+        )
       when :soft_limit
         samples.map! { |sample| soft_limit_value(sample) }
       end

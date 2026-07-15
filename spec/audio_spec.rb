@@ -233,14 +233,27 @@ RSpec.describe Wavify::Audio do
       expect(mixed.buffer.samples[0]).to be_within(0.0001).of(0.75)
     end
 
-    it "applies headroom only where sources overlap" do
-      mono_format = format.with(channels: 1, sample_format: :float, bit_depth: 32)
-      long = described_class.new(Wavify::Core::SampleBuffer.new([1.0, 1.0], mono_format))
-      short = described_class.new(Wavify::Core::SampleBuffer.new([1.0], mono_format))
+    it "applies headroom only near source overlaps" do
+      mono_format = format.with(channels: 1, sample_rate: 8_000, sample_format: :float, bit_depth: 32)
+      long = described_class.new(Wavify::Core::SampleBuffer.new(Array.new(100, 1.0), mono_format))
+      short = described_class.new(Wavify::Core::SampleBuffer.new(Array.new(2, 1.0), mono_format))
 
       mixed = described_class.mix(long, short, strategy: :headroom, align: :end)
 
-      expect(mixed.buffer.samples).to eq([1.0, 1.0])
+      expect(mixed.buffer.samples.first(50)).to all(eq(1.0))
+      expect(mixed.buffer.samples.last(2)).to all(eq(1.0))
+    end
+
+    it "smooths headroom gain around overlap boundaries" do
+      mono_format = format.with(channels: 1, sample_rate: 8_000, sample_format: :float, bit_depth: 32)
+      bed = described_class.new(Wavify::Core::SampleBuffer.new(Array.new(160, 0.8), mono_format))
+      clip = described_class.new(Wavify::Core::SampleBuffer.new(Array.new(32, 0.1), mono_format))
+
+      mixed = bed.overlay(clip, at: 0.008, strategy: :headroom)
+      adjacent_differences = mixed.buffer.samples.each_cons(2).map { |left, right| (left - right).abs }
+
+      expect(mixed.buffer.samples[64]).to be_within(0.0001).of(0.45)
+      expect(adjacent_differences.max).to be < 0.1
     end
 
     it "can soft-limit mix peaks" do
