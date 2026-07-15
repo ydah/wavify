@@ -38,6 +38,29 @@ module Wavify
         ["FORM", Aiff]
       ].freeze
 
+      # Maximum leading-byte window allowed for a custom magic probe.
+      MAX_MAGIC_PROBE_SIZE = 65_536
+
+      BUILTIN_MAGIC_ENTRIES = MAGIC_CODEC_ORDER.each_with_index.map do |(magic_key, codec), index|
+        {
+          extension: nil,
+          codec: codec,
+          probe: MAGIC_PROBES.fetch(magic_key),
+          probe_size: 12,
+          priority: 0,
+          sequence: index,
+          custom: false
+        }.freeze
+      end.freeze
+
+      CODEC_POSITIONAL_ARITY = {
+        read: 1,
+        write: 2,
+        stream_read: 1,
+        stream_write: 1,
+        metadata: 1
+      }.freeze
+
       class << self
         # Detects the codec for a path or IO object.
         # Read detection prefers magic bytes when available.
@@ -102,10 +125,30 @@ module Wavify
         # @param extension [String]
         # @param codec [Class]
         # @return [Class] codec
-        def register(extension, codec)
+        def register(extension, codec, magic: nil, priority: 0, probe_size: 12)
           normalized_extension = normalize_extension(extension)
           validate_codec!(codec)
-          extensions_mutex.synchronize { extensions[normalized_extension] = codec }
+          magic_probe, normalized_probe_size = normalize_magic_probe(magic, probe_size)
+          unless priority.is_a?(Integer)
+            raise InvalidParameterError, "priority must be an Integer"
+          end
+
+          extensions_mutex.synchronize do
+            extensions[normalized_extension] = codec
+            magic_entries.delete_if { |entry| entry[:custom] && entry[:extension] == normalized_extension }
+            if magic_probe
+              magic_entries << {
+                extension: normalized_extension,
+                codec: codec,
+                probe: magic_probe,
+                probe_size: normalized_probe_size,
+                priority: priority,
+                sequence: next_magic_sequence,
+                custom: true
+              }.freeze
+            end
+          end
+          codec
         end
 
         # Removes a custom codec mapping or restores the built-in mapping.
@@ -118,6 +161,7 @@ module Wavify
             else
               extensions.delete(normalized_extension)
             end
+            magic_entries.delete_if { |entry| entry[:custom] && entry[:extension] == normalized_extension }
             previous
           end
         end
@@ -149,6 +193,14 @@ module Wavify
           @extensions ||= EXTENSIONS.dup
         end
 
+        def magic_entries
+          @magic_entries ||= BUILTIN_MAGIC_ENTRIES.dup
+        end
+
+        def next_magic_sequence
+          @magic_sequence = [@magic_sequence || BUILTIN_MAGIC_ENTRIES.length, BUILTIN_MAGIC_ENTRIES.length].max + 1
+        end
+
         def extension_snapshot
           extensions_mutex.synchronize { extensions.dup }
         end
@@ -166,11 +218,55 @@ module Wavify
         end
 
         def validate_codec!(codec)
-          required_methods = %i[read write stream_read stream_write metadata]
-          missing = required_methods.reject { |method| codec.respond_to?(method) }
-          return if missing.empty?
+          missing = CODEC_POSITIONAL_ARITY.keys.reject { |method| codec.respond_to?(method) }
+          unless missing.empty?
+            raise InvalidParameterError, "codec must respond to: #{missing.join(', ')}"
+          end
 
-          raise InvalidParameterError, "codec must respond to: #{missing.join(', ')}"
+          invalid = CODEC_POSITIONAL_ARITY.filter_map do |method_name, positional_count|
+            method = codec.method(method_name)
+            method_name unless accepts_positional_arguments?(method, positional_count)
+          end
+          unless invalid.empty?
+            raise InvalidParameterError,
+                  "codec methods have incompatible positional signatures: #{invalid.join(', ')}"
+          end
+
+          %i[write stream_write].each do |method_name|
+            parameters = codec.method(method_name).parameters
+            accepts_format = parameters.any? do |kind, name|
+              kind == :rest || (%i[key keyreq keyrest].include?(kind) && (name == :format || kind == :keyrest))
+            end
+            raise InvalidParameterError, "codec #{method_name} must accept format:" unless accepts_format
+          end
+
+          codec
+        end
+
+        def accepts_positional_arguments?(method, expected)
+          parameters = method.parameters
+          return true if parameters.any? { |kind, _| kind == :rest }
+
+          parameters.count { |kind, _| %i[req opt].include?(kind) } >= expected
+        end
+
+        def normalize_magic_probe(magic, probe_size)
+          return [nil, nil] if magic.nil?
+          unless probe_size.is_a?(Integer) && probe_size.between?(1, MAX_MAGIC_PROBE_SIZE)
+            raise InvalidParameterError, "probe_size must be an Integer in 1..#{MAX_MAGIC_PROBE_SIZE}"
+          end
+
+          if magic.is_a?(String)
+            raise InvalidParameterError, "magic String must not be empty" if magic.empty?
+
+            bytes = magic.b.dup.freeze
+            return [->(input) { input.start_with?(bytes) }, [probe_size, bytes.bytesize].max]
+          end
+          unless magic.respond_to?(:call)
+            raise InvalidParameterError, "magic must be a non-empty String or callable"
+          end
+
+          [magic, probe_size]
         end
 
         def detect_by_magic(io_or_path)
@@ -178,9 +274,15 @@ module Wavify
           return unless io
 
           original_position = io.pos if io.respond_to?(:pos)
-          probe = io.read(12).to_s
-          MAGIC_CODEC_ORDER.each do |magic_key, codec|
-            return codec if MAGIC_PROBES.fetch(magic_key).call(probe)
+          entries = extensions_mutex.synchronize { magic_entries.dup }
+          probe_size = entries.map { |entry| entry.fetch(:probe_size) }.max || 12
+          probe = io.read(probe_size).to_s
+          entries.sort_by { |entry| [-entry.fetch(:priority), -entry.fetch(:sequence)] }.each do |entry|
+            matched = entry.fetch(:probe).call(probe)
+            unless matched == true || matched == false || matched.nil?
+              raise InvalidParameterError, "codec magic probe must return boolean or nil"
+            end
+            return entry.fetch(:codec) if matched
           end
 
           nil
@@ -224,8 +326,8 @@ module Wavify
       end
 
       # @see Registry.register
-      def register(extension, codec)
-        Registry.register(extension, codec)
+      def register(extension, codec, **options)
+        Registry.register(extension, codec, **options)
       end
 
       # @see Registry.unregister

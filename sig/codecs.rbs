@@ -50,11 +50,11 @@ module Wavify
 
     class Raw < Base
       def self.can_read?: (String | IO io_or_path) -> bool
-      def self.read: (String | IO io_or_path, ?format: Core::Format?) -> Core::SampleBuffer
-      def self.write: (String | IO io_or_path, Core::SampleBuffer sample_buffer, format: Core::Format, **untyped options) -> Core::SampleBuffer
-      def self.stream_read: (String | IO io_or_path, format: Core::Format, ?chunk_size: Integer) { (Core::SampleBuffer) -> void } -> Core::Format
-      def self.stream_write: (String | IO io_or_path, format: Core::Format, **untyped options) { (untyped) -> void } -> untyped
-      def self.metadata: (String | IO io_or_path, format: Core::Format) -> Hash[Symbol, untyped]
+      def self.read: (String | IO io_or_path, ?format: Core::Format?, ?endianness: Symbol, ?signed: bool?, ?float_domain: Symbol, **untyped options) -> Core::SampleBuffer
+      def self.write: (String | IO io_or_path, Core::SampleBuffer sample_buffer, format: Core::Format, ?endianness: Symbol, ?signed: bool?, ?float_domain: Symbol, **untyped options) -> String | IO
+      def self.stream_read: (String | IO io_or_path, format: Core::Format, ?chunk_size: Integer, ?endianness: Symbol, ?signed: bool?, ?float_domain: Symbol, **untyped options) { (Core::SampleBuffer) -> void } -> nil
+      def self.stream_write: (String | IO io_or_path, format: Core::Format, ?endianness: Symbol, ?signed: bool?, ?float_domain: Symbol, **untyped options) { (untyped) -> void } -> String | IO
+      def self.metadata: (String | IO io_or_path, format: Core::Format, ?endianness: Symbol, ?signed: bool?, ?float_domain: Symbol, **untyped options) -> Hash[Symbol, untyped]
     end
 
     class Registry
@@ -62,14 +62,14 @@ module Wavify
       def self.detect_for_read: (String | IO io_or_path, ?strict: bool, ?filename: String?) -> singleton(Base)
       def self.detect_for_write: (String | IO io_or_path, ?filename: String?) -> singleton(Base)
       def self.resolve: (String | Symbol | singleton(Base) codec) -> singleton(Base)
-      def self.register: (String extension, singleton(Base) codec) -> singleton(Base)
+      def self.register: (String extension, singleton(Base) codec, ?magic: String | untyped, ?priority: Integer, ?probe_size: Integer) -> singleton(Base)
       def self.unregister: (String extension) -> singleton(Base)?
       def self.supported_formats: () -> Array[String]
       def self.available_formats: () -> Array[String]
     end
 
     def self.detect: (String | IO io_or_path, ?strict: bool, ?filename: String?) -> singleton(Base)
-    def self.register: (String extension, singleton(Base) codec) -> singleton(Base)
+    def self.register: (String extension, singleton(Base) codec, **untyped options) -> singleton(Base)
     def self.unregister: (String extension) -> singleton(Base)?
     def self.supported_formats: () -> Array[String]
     def self.available_formats: () -> Array[String]

@@ -204,5 +204,67 @@ RSpec.describe Wavify::Codecs::Registry do
       expect(Wavify::Codecs.unregister(".demoaudio")).to eq(codec)
       expect(Wavify::Codecs.supported_formats).not_to include("demoaudio")
     end
+
+    it "registers custom magic probes with explicit priority" do
+      codec = Class.new do
+        class << self
+          def read(*); end
+          def write(*); end
+          def stream_read(*); end
+          def stream_write(*); end
+          def metadata(*); end
+        end
+      end
+
+      described_class.register(".custom", codec, magic: "CSTM", priority: 10)
+      io = StringIO.new("prefixCSTMpayload")
+      io.pos = 6
+
+      expect(described_class.detect(io)).to eq(codec)
+      expect(io.pos).to eq(6)
+      expect(Wavify::Codecs.register(".custom", codec, magic: ->(bytes) { bytes.start_with?("CSTM") }, priority: 5))
+        .to eq(codec)
+    ensure
+      described_class.unregister(".custom")
+    end
+
+    it "rejects codec methods whose signatures cannot satisfy the common contract" do
+      codec = Class.new do
+        class << self
+          def read; end
+          def write; end
+          def stream_read; end
+          def stream_write; end
+          def metadata; end
+        end
+      end
+
+      expect do
+        described_class.register(".broken", codec)
+      end.to raise_error(Wavify::InvalidParameterError, /signatures/)
+    end
+
+    it "requires custom probes to be bounded and boolean-valued" do
+      codec = Class.new do
+        class << self
+          def read(*); end
+          def write(*); end
+          def stream_read(*); end
+          def stream_write(*); end
+          def metadata(*); end
+        end
+      end
+
+      expect do
+        described_class.register(".badprobe", codec, magic: "X", probe_size: 100_000)
+      end.to raise_error(Wavify::InvalidParameterError, /probe_size/)
+
+      described_class.register(".badprobe", codec, magic: ->(_bytes) { :yes })
+      expect do
+        described_class.detect(StringIO.new("anything"))
+      end.to raise_error(Wavify::InvalidParameterError, /boolean/)
+    ensure
+      described_class.unregister(".badprobe")
+    end
   end
 end
