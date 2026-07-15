@@ -31,11 +31,12 @@ module Wavify
         # @param io_or_path [String, IO]
         # @param format [Wavify::Core::Format, nil]
         # @return [Wavify::Core::SampleBuffer]
-        def read(io_or_path, format: nil)
+        def read(io_or_path, format: nil, warning_io: $stderr)
           io, close_io = open_input(io_or_path)
           ensure_seekable!(io)
 
           info = parse_chunks(io)
+          emit_warnings(info.fetch(:warnings), warning_io)
           source_format = info.fetch(:format)
           samples = read_sound_data(io, info, source_format)
           buffer = Core::SampleBuffer.new(samples, source_format)
@@ -99,14 +100,15 @@ module Wavify
         # @param io_or_path [String, IO]
         # @param chunk_size [Integer]
         # @return [Enumerator]
-        def stream_read(io_or_path, chunk_size: 4096)
-          return enum_for(__method__, io_or_path, chunk_size: chunk_size) unless block_given?
+        def stream_read(io_or_path, chunk_size: 4096, warning_io: $stderr)
+          return enum_for(__method__, io_or_path, chunk_size: chunk_size, warning_io: warning_io) unless block_given?
           raise InvalidParameterError, "chunk_size must be a positive Integer" unless chunk_size.is_a?(Integer) && chunk_size.positive?
 
           io, close_io = open_input(io_or_path)
           ensure_seekable!(io)
 
           info = parse_chunks(io)
+          emit_warnings(info.fetch(:warnings), warning_io)
           format = info.fetch(:format)
           bytes_per_frame = format.block_align
           remaining = info.fetch(:sound_data_size)
@@ -183,6 +185,10 @@ module Wavify
             form_type: info[:form_type],
             compression_type: info[:compression_type],
             compression_name: info[:compression_name],
+            encoded_sample_rate: info[:encoded_sample_rate],
+            container_bit_depth: info[:container_bit_depth],
+            valid_bits_per_sample: info[:valid_bits_per_sample],
+            warnings: info[:warnings].freeze,
             markers: info[:markers],
             instrument: info[:instrument]
           }
@@ -191,6 +197,13 @@ module Wavify
         end
 
         private
+
+        def emit_warnings(warnings, warning_io)
+          return if warning_io.nil?
+          raise InvalidParameterError, "warning_io must respond to :puts or be nil" unless warning_io.respond_to?(:puts)
+
+          warnings.each { |warning| warning_io.puts("AIFF warning: #{warning}") }
+        end
 
         def parse_chunks(io)
           io.rewind
@@ -209,6 +222,10 @@ module Wavify
             byte_order: :big,
             compression_type: form_type == "AIFF" ? "NONE" : nil,
             compression_name: nil,
+            encoded_sample_rate: nil,
+            container_bit_depth: nil,
+            valid_bits_per_sample: nil,
+            warnings: [],
             markers: [],
             instrument: nil
           }
@@ -244,7 +261,7 @@ module Wavify
               skip_bytes(io, chunk_size)
             end
 
-            io.read(1) if chunk_size.odd?
+            read_exact(io, 1, "missing padding byte after odd-sized AIFF chunk") if chunk_size.odd?
           end
 
           raise InvalidFormatError, "COMM chunk missing" unless info[:format]
@@ -262,9 +279,16 @@ module Wavify
         def parse_comm_chunk(chunk, info)
           raise InvalidFormatError, "COMM chunk too small" if chunk.bytesize < 18
 
-          channels, sample_frames, bit_depth = chunk.unpack("n N n")
+          channels, sample_frames, valid_bits = chunk.unpack("n N n")
           sample_rate = decode_extended80(chunk[8, 10])
           rounded_rate = sample_rate.round
+          container_bit_depth = ((valid_bits + 7) / 8) * 8
+          unless Core::Format::PCM_BIT_DEPTHS.include?(container_bit_depth)
+            raise UnsupportedFormatError, "unsupported AIFF sample size: #{valid_bits} bits"
+          end
+          if sample_rate != rounded_rate
+            info[:warnings] << "COMM sample rate #{sample_rate} rounded to #{rounded_rate} Hz"
+          end
           if info.fetch(:form_type) == "AIFC"
             raise InvalidFormatError, "AIFC COMM chunk too small" if chunk.bytesize < 22
 
@@ -277,12 +301,15 @@ module Wavify
           format = Core::Format.new(
             channels: channels,
             sample_rate: rounded_rate,
-            bit_depth: bit_depth,
+            bit_depth: container_bit_depth,
             sample_format: :pcm
           )
 
           info[:format] = format
           info[:sample_frame_count] = sample_frames
+          info[:encoded_sample_rate] = sample_rate
+          info[:container_bit_depth] = container_bit_depth
+          info[:valid_bits_per_sample] = valid_bits
         end
 
         def read_sound_data(io, info, format)

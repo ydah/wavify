@@ -55,11 +55,12 @@ module Wavify
         # @param io_or_path [String, IO]
         # @param format [Wavify::Core::Format, nil] optional output conversion
         # @return [Wavify::Core::SampleBuffer]
-        def read(io_or_path, format: nil)
+        def read(io_or_path, format: nil, warning_io: $stderr)
           io, close_io = open_input(io_or_path)
           ensure_seekable!(io)
 
           info = parse_chunk_directory(io)
+          emit_warnings(info.fetch(:warnings), warning_io)
           source_format = info.fetch(:format)
           samples = read_data_chunk(io, info, source_format)
           buffer = Core::SampleBuffer.new(samples, source_format)
@@ -92,14 +93,15 @@ module Wavify
         # @param io_or_path [String, IO]
         # @param chunk_size [Integer]
         # @return [Enumerator]
-        def stream_read(io_or_path, chunk_size: 4096)
-          return enum_for(__method__, io_or_path, chunk_size: chunk_size) unless block_given?
+        def stream_read(io_or_path, chunk_size: 4096, warning_io: $stderr)
+          return enum_for(__method__, io_or_path, chunk_size: chunk_size, warning_io: warning_io) unless block_given?
           raise InvalidParameterError, "chunk_size must be a positive Integer" unless chunk_size.is_a?(Integer) && chunk_size.positive?
 
           io, close_io = open_input(io_or_path)
           ensure_seekable!(io)
 
           info = parse_chunk_directory(io)
+          emit_warnings(info.fetch(:warnings), warning_io)
           format = info.fetch(:format)
           bytes_per_frame = format.block_align
           remaining = info.fetch(:data_size)
@@ -189,6 +191,13 @@ module Wavify
         end
 
         private
+
+        def emit_warnings(warnings, warning_io)
+          return if warning_io.nil?
+          raise InvalidParameterError, "warning_io must respond to :puts or be nil" unless warning_io.respond_to?(:puts)
+
+          warnings.each { |warning| warning_io.puts("WAV warning: #{warning}") }
+        end
 
         def write_stream_header(io, format, info:)
           io.write("RIFF")

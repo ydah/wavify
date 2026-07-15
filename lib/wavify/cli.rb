@@ -54,6 +54,7 @@ module Wavify
       @stdout.puts "format: #{format.sample_rate}Hz #{format.channels}ch #{format.bit_depth}-bit #{format.sample_format}"
       @stdout.puts "duration: #{metadata[:duration]}"
       @stdout.puts "frames: #{metadata[:sample_frame_count]}"
+      Array(metadata[:warnings]).each { |warning| @stdout.puts "warning: #{warning}" }
     end
 
     def run_convert

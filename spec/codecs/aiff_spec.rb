@@ -129,6 +129,48 @@ RSpec.describe Wavify::Codecs::Aiff do
         expect(decoded.samples).to eq([100, -200, 300])
       end
     end
+
+    it "maps non-byte-aligned sample sizes to their PCM container width" do
+      cases = [
+        { valid_bits: 12, container_bits: 16, samples: [0x1230, -0x1230], bytes: [0x1230, -0x1230].pack("s>*") },
+        {
+          valid_bits: 20,
+          container_bits: 24,
+          samples: [0x123450, -0x123450],
+          bytes: described_class.send(:encode_pcm24_be, [0x123450, -0x123450])
+        }
+      ]
+
+      cases.each do |entry|
+        comm_chunk = [1, 2, entry.fetch(:valid_bits)].pack("n N n") + described_class.send(:encode_extended80, 44_100.0)
+        ssnd_chunk = [0, 0].pack("N2") + entry.fetch(:bytes)
+        io = StringIO.new(build_aiff_bytes(["COMM", comm_chunk], ["SSND", ssnd_chunk]))
+
+        metadata = described_class.metadata(io)
+        io.rewind
+        decoded = described_class.read(io)
+
+        expect(metadata[:format].bit_depth).to eq(entry.fetch(:container_bits))
+        expect(metadata[:container_bit_depth]).to eq(entry.fetch(:container_bits))
+        expect(metadata[:valid_bits_per_sample]).to eq(entry.fetch(:valid_bits))
+        expect(decoded.samples).to eq(entry.fetch(:samples))
+      end
+    end
+
+    it "reports rounding of non-integer 80-bit sample rates" do
+      comm_chunk = [1, 1, 16].pack("n N n") + described_class.send(:encode_extended80, 44_100.5)
+      ssnd_chunk = [0, 0].pack("N2") + [0].pack("s>")
+      bytes = build_aiff_bytes(["COMM", comm_chunk], ["SSND", ssnd_chunk])
+      warnings = StringIO.new
+
+      metadata = described_class.metadata(StringIO.new(bytes))
+      described_class.read(StringIO.new(bytes), warning_io: warnings)
+
+      expect(metadata[:encoded_sample_rate]).to eq(44_100.5)
+      expect(metadata[:format].sample_rate).to eq(44_101)
+      expect(metadata[:warnings]).to include(/rounded to 44101 Hz/)
+      expect(warnings.string).to include("AIFF warning:", "rounded to 44101 Hz")
+    end
   end
 
   describe ".stream_read" do
@@ -171,6 +213,18 @@ RSpec.describe Wavify::Codecs::Aiff do
           described_class.read(file.path)
         end.to raise_error(Wavify::UnsupportedFormatError)
       end
+    end
+
+    it "rejects a missing padding byte after an odd-sized chunk" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 8, sample_format: :pcm)
+      comm_chunk = described_class.send(:build_comm_chunk, format, 1)
+      ssnd_chunk = [0, 0].pack("N2") + [0].pack("c")
+      bytes = build_aiff_bytes(["COMM", comm_chunk], ["SSND", ssnd_chunk], ["JUNK", "abc"])
+      bytes = bytes.byteslice(0, bytes.bytesize - 1)
+
+      expect do
+        described_class.metadata(StringIO.new(bytes))
+      end.to raise_error(Wavify::InvalidFormatError, /missing padding byte/)
     end
   end
 

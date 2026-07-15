@@ -169,6 +169,7 @@ Wavify::Adapters.known
 ### OGG Vorbis notes
 
 - `read` / `stream_read` support sequential chained streams and interleaved multi-stream OGG.
+- Single-logical-stream `stream_read` is incremental; chained and interleaved inputs currently buffer complete logical streams while combining them.
 - Interleaved multi-stream decode is mixed into one output stream.
 - If interleaved streams have different sample rates, they are resampled to the first logical stream's sample rate before mix.
 - OGG support is optional; `wavify doctor` reports whether the native gems are installed.

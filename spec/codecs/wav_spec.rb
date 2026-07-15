@@ -310,7 +310,9 @@ RSpec.describe Wavify::Codecs::Wav do
         file.write(bytes)
         file.flush
 
-        expect(described_class.read(file.path).samples).to eq([0, 1])
+        warnings = StringIO.new
+        expect(described_class.read(file.path, warning_io: warnings).samples).to eq([0, 1])
+        expect(warnings.string).to include("WAV warning:", "byte_rate 123")
         expect(described_class.metadata(file.path)[:warnings]).to include(/byte_rate 123/)
       end
     end

@@ -45,6 +45,21 @@ RSpec.describe Wavify::CLI do
     end
   end
 
+  it "prints metadata warnings in file info" do
+    metadata = {
+      format: format,
+      duration: Wavify::Core::Duration.from_samples(1, format.sample_rate),
+      sample_frame_count: 1,
+      warnings: ["noncanonical header"]
+    }
+    allow(Wavify::Audio).to receive(:metadata).with("warning.wav").and_return(metadata)
+
+    status, stdout, = run_cli(["info", "warning.wav"])
+
+    expect(status).to eq(0)
+    expect(stdout).to include("warning: noncanonical header")
+  end
+
   it "generates a tone file" do
     Tempfile.create(["wavify-cli-tone", ".wav"]) do |file|
       status, stdout, = run_cli(["tone", "--freq", "220", "--duration", "0.01", file.path])
