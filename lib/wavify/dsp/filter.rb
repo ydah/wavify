@@ -5,6 +5,10 @@ module Wavify
   module DSP
     # Stateful biquad filter with common factory constructors.
     class Filter
+      DEFAULT_TAIL_SECONDS = 0.05
+      MAX_TAIL_SECONDS = 10.0
+      TAIL_AMPLITUDE = 1.0e-6
+
       attr_reader :type, :cutoff, :q, :gain_db
 
       # Builds a low-pass filter.
@@ -101,6 +105,36 @@ module Wavify
         y
       end
 
+      # Emits the decaying IIR state after the input ends.
+      #
+      # @param format [Core::Format, nil] optional target format
+      # @return [Core::SampleBuffer, nil]
+      def flush(format: nil)
+        return nil unless @coeff_sample_rate && filter_state_active?
+        if format && !format.is_a?(Core::Format)
+          raise InvalidParameterError, "format must be Core::Format"
+        end
+
+        channels = @channel_states.length
+        runtime_format = Core::Format.new(
+          channels: channels,
+          sample_rate: @coeff_sample_rate,
+          bit_depth: 32,
+          sample_format: :float
+        )
+        silence = Array.new(tail_frame_count(@coeff_sample_rate) * channels, 0.0)
+        processed = process_interleaved(silence, sample_rate: @coeff_sample_rate, channels: channels)
+        reset
+        Core::SampleBuffer.new(processed, runtime_format).convert(format || runtime_format)
+      end
+
+      # Estimated time for the biquad poles to decay below -120 dB.
+      def tail_duration
+        return DEFAULT_TAIL_SECONDS unless @coeff_sample_rate && @coefficients
+
+        tail_frame_count(@coeff_sample_rate).to_f / @coeff_sample_rate
+      end
+
       # Clears internal filter state for all channels.
       #
       # @return [void]
@@ -109,6 +143,31 @@ module Wavify
       end
 
       private
+
+      def filter_state_active?
+        @channel_states.any? { |state| state.values.any? { |value| !value.zero? } }
+      end
+
+      def tail_frame_count(sample_rate)
+        radius = maximum_pole_radius
+        frames = if radius <= 0.0
+                   2
+                 elsif radius >= 1.0
+                   (MAX_TAIL_SECONDS * sample_rate).ceil
+                 else
+                   (Math.log(TAIL_AMPLITUDE) / Math.log(radius)).ceil
+                 end
+        frames.clamp(2, (MAX_TAIL_SECONDS * sample_rate).ceil)
+      end
+
+      def maximum_pole_radius
+        _b0, _b1, _b2, a1, a2 = @coefficients
+        discriminant = (a1 * a1) - (4.0 * a2)
+        return Math.sqrt(a2.abs) if discriminant.negative?
+
+        root = Math.sqrt(discriminant)
+        [(-a1 + root) / 2.0, (-a1 - root) / 2.0].map(&:abs).max
+      end
 
       def process_interleaved(samples, sample_rate:, channels:)
         update_coefficients!(sample_rate)

@@ -14,6 +14,7 @@ module Wavify
           @filters.each do |filter|
             raise InvalidParameterError, "filters must respond to :apply or :process" unless filter.respond_to?(:apply) || filter.respond_to?(:process)
           end
+          @runtime_format = nil
         end
 
         # Convenience constructor for common tone-shaping bands.
@@ -35,9 +36,11 @@ module Wavify
         # @param buffer [Wavify::Core::SampleBuffer]
         # @return [Wavify::Core::SampleBuffer]
         def process(buffer)
-          @filters.reduce(buffer) do |current, filter|
+          processed = @filters.reduce(buffer) do |current, filter|
             filter.respond_to?(:apply) ? filter.apply(current) : filter.process(current)
           end
+          @runtime_format = buffer.format
+          processed
         end
 
         alias apply process
@@ -47,7 +50,22 @@ module Wavify
         # @return [EQ] self
         def reset
           @filters.each { |filter| filter.reset if filter.respond_to?(:reset) }
+          @runtime_format = nil
           self
+        end
+
+        # Drains the filters' IIR state through the complete EQ chain.
+        def flush(format: nil)
+          return nil unless @runtime_format
+
+          runtime_format = @runtime_format
+          frames = (tail_duration * runtime_format.sample_rate).ceil
+          return nil if frames.zero?
+
+          silence = Core::SampleBuffer.new(Array.new(frames * runtime_format.channels, 0.0), runtime_format)
+          tail = process(silence)
+          reset
+          tail.convert(format || runtime_format)
         end
 
         # @return [Float]
@@ -57,7 +75,7 @@ module Wavify
 
         # @return [Float]
         def lookahead
-          @filters.sum { |filter| filter.respond_to?(:lookahead) ? filter.lookahead.to_f : 0.0 }
+          @filters.map { |filter| filter.respond_to?(:lookahead) ? filter.lookahead.to_f : 0.0 }.max || 0.0
         end
 
         # @return [Float]

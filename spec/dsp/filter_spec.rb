@@ -62,6 +62,18 @@ RSpec.describe Wavify::DSP::Filter do
       expect(processed.samples.any?(&:nan?)).to be(false)
       expect(processed.samples.any?(&:infinite?)).to be(false)
     end
+
+    it "flushes its decaying IIR state" do
+      filter = described_class.lowpass(cutoff: 1_000)
+      impulse = Wavify::Core::SampleBuffer.new([1.0], mono_float)
+
+      filter.apply(impulse)
+      tail = filter.flush(format: mono_float)
+
+      expect(tail.sample_frame_count).to be > 0
+      expect(tail.samples.any? { |sample| sample.abs > 1.0e-8 }).to eq(true)
+      expect(filter.flush(format: mono_float)).to be_nil
+    end
   end
 
   describe "parameter validation" do

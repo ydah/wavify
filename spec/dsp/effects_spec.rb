@@ -470,6 +470,27 @@ RSpec.describe Wavify::DSP::Effects do
 
       expect(rms(processed.samples)).to be < (rms(low.samples) * 0.2)
     end
+
+    it "flushes filter tails through the full chain" do
+      eq = described_class.new(
+        Wavify::DSP::Filter.lowpass(cutoff: 2_000),
+        Wavify::DSP::Filter.highpass(cutoff: 200)
+      )
+
+      eq.process(Wavify::Core::SampleBuffer.new([1.0], mono_float))
+      tail = eq.flush(format: mono_float)
+
+      expect(tail.sample_frame_count).to be > 0
+      expect(tail.samples.any? { |sample| sample.abs > 1.0e-8 }).to eq(true)
+      expect(eq.flush(format: mono_float)).to be_nil
+    end
+
+    it "reports the maximum filter lookahead" do
+      first = Struct.new(:lookahead) { def apply(buffer) = buffer }.new(0.01)
+      second = Struct.new(:lookahead) { def apply(buffer) = buffer }.new(0.02)
+
+      expect(described_class.new(first, second).lookahead).to eq(0.02)
+    end
   end
 
   describe Wavify::DSP::Effects::EffectChain do

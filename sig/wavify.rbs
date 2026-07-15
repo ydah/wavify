@@ -131,6 +131,9 @@ module Wavify
 
     class Filter
       def self.bandpass: (?center: Numeric?, ?bandwidth: Numeric?, ?cutoff: Numeric?, ?q: Numeric?) -> Filter
+      def apply: (Core::SampleBuffer buffer) -> Core::SampleBuffer
+      def flush: (?format: Core::Format?) -> Core::SampleBuffer?
+      def tail_duration: () -> Float
     end
   end
 
