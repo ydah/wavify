@@ -56,7 +56,8 @@ module Wavify
 
         # Builds a chain whose processors do not share runtime state.
         def build_runtime
-          self.class.new(@effects.map { |effect| DSP::Processor.build_runtime(effect) })
+          runtime_effects = @effects.map { |effect| DSP::Processor.build_runtime(effect) }
+          EffectChain.new(runtime_effects)
         end
 
         # @return [Float]

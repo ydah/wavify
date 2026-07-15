@@ -650,7 +650,7 @@ RSpec.describe Wavify::DSP::Effects do
     it "applies a compact mastering preset" do
       source = Wavify::Core::SampleBuffer.new([0.1, 1.0, -1.0, 0.2], mono_float)
 
-      processed = described_class.new(ceiling: -3.0).process(source)
+      processed = described_class.new(ceiling: -3.0).apply(source)
 
       expect(processed.samples.map(&:abs).max).to be <= (10.0**(-3.0 / 20.0))
     end
@@ -660,11 +660,15 @@ RSpec.describe Wavify::DSP::Effects do
     it "applies speech cleanup without changing length" do
       source = Wavify::Core::SampleBuffer.new([0.001, 0.001, 0.3, 0.3], mono_float)
 
-      processed = described_class.new(ceiling: -3.0).process(source)
+      chain = described_class.new(ceiling: -3.0)
+      processed = chain.process(source)
+      runtime = chain.build_runtime
 
       expect(processed.samples.length).to eq(source.samples.length)
       expect(processed.samples).to all(be_finite)
       expect(processed.samples.map(&:abs).max).to be <= (10.0**(-3.0 / 20.0))
+      expect(runtime).to be_a(Wavify::DSP::Effects::EffectChain)
+      expect(runtime.effects.length).to eq(4)
     end
   end
 
