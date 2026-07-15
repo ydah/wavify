@@ -103,6 +103,42 @@ RSpec.describe Wavify::Audio do
       end
     end
 
+    it "projects sample-coordinate metadata with the decoded frame count" do
+      source_format = format.with(channels: 1, sample_rate: 44_100)
+      target_format = source_format.with(sample_rate: 48_000)
+      codec = Class.new do
+        class << self
+          attr_accessor :metadata_result
+
+          def metadata(_path)
+            metadata_result
+          end
+        end
+      end
+      codec.metadata_result = {
+        format: source_format,
+        sample_frame_count: 442,
+        duration: Wavify::Core::Duration.from_samples(442, source_format.sample_rate),
+        fact_sample_length: 442,
+        loops: [{ start_frame: 110, end_frame: 220, length_frames: 111 }],
+        smpl: { sample_period: 22_676, loops: [{ start_frame: 110, end_frame: 220 }] },
+        cue_points: [{ position: 110, sample_offset: 220 }],
+        cue: { cue_count: 1, points: [{ position: 110, sample_offset: 220 }] }
+      }
+      allow(Wavify::Codecs::Registry).to receive(:detect_for_read).and_return(codec)
+      decoded_frames = Wavify::Core::SampleBuffer.new(Array.new(442, 0), source_format)
+                                                 .convert(target_format).sample_frame_count
+
+      metadata = described_class.metadata("projected.wav", format: target_format)
+
+      expect(metadata[:sample_frame_count]).to eq(decoded_frames)
+      expect(metadata[:fact_sample_length]).to eq(decoded_frames)
+      expect(metadata[:loops].first).to include(start_frame: 120, end_frame: 239, length_frames: 120)
+      expect(metadata[:cue_points].first).to include(position: 120, sample_offset: 239)
+      expect(metadata.dig(:smpl, :loops, 0)).to include(start_frame: 120, end_frame: 239)
+      expect(metadata.dig(:cue, :points)).to eq(metadata[:cue_points])
+    end
+
     it "passes explicit format for raw metadata" do
       raw_format = format.with(channels: 1)
       source_buffer = Wavify::Core::SampleBuffer.new([100, -100], raw_format)

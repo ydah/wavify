@@ -46,15 +46,76 @@ module Wavify
       return metadata unless format
       raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
 
-      projected_frames = (metadata.fetch(:duration).total_seconds * format.sample_rate).round
-      metadata.merge(
-        format: format,
-        sample_frame_count: projected_frames,
-        duration: Core::Duration.from_samples(projected_frames, format.sample_rate)
-      )
+      project_metadata(metadata, format)
     end
 
     singleton_class.alias_method :info, :metadata
+
+    def self.project_metadata(metadata, target_format)
+      source_format = metadata.fetch(:format)
+      projected_frames = project_frame_count(
+        metadata.fetch(:sample_frame_count),
+        source_format.sample_rate,
+        target_format.sample_rate
+      )
+      projected = metadata.merge(
+        format: target_format,
+        sample_frame_count: projected_frames,
+        duration: Core::Duration.from_samples(projected_frames, target_format.sample_rate)
+      )
+      project_sample_coordinates!(projected, source_format.sample_rate, target_format.sample_rate)
+    end
+    private_class_method :project_metadata
+
+    def self.project_sample_coordinates!(metadata, source_rate, target_rate)
+      projector = ->(frame) { project_frame_count(frame, source_rate, target_rate) }
+      metadata[:fact_sample_length] = projector.call(metadata[:fact_sample_length]) if metadata[:fact_sample_length]
+      metadata[:loops] = project_loops(metadata[:loops], projector) if metadata[:loops]
+      metadata[:cue_points] = project_cue_points(metadata[:cue_points], projector) if metadata[:cue_points]
+      metadata[:smpl] = project_smpl(metadata[:smpl], projector, target_rate) if metadata[:smpl]
+      metadata[:cue] = metadata[:cue].merge(points: metadata[:cue_points]) if metadata[:cue]
+      if metadata[:bext]
+        metadata[:bext] = metadata[:bext].merge(time_reference: projector.call(metadata[:bext].fetch(:time_reference)))
+        metadata[:broadcast_extension] = metadata[:bext]
+      end
+      metadata
+    end
+    private_class_method :project_sample_coordinates!
+
+    def self.project_frame_count(frame_count, source_rate, target_rate)
+      ((frame_count * target_rate.to_f) / source_rate).round
+    end
+    private_class_method :project_frame_count
+
+    def self.project_loops(loops, projector)
+      loops.map do |loop|
+        start_frame = projector.call(loop.fetch(:start_frame))
+        end_frame = projector.call(loop.fetch(:end_frame))
+        loop.merge(start_frame: start_frame, end_frame: end_frame, length_frames: end_frame - start_frame + 1)
+      end
+    end
+    private_class_method :project_loops
+
+    def self.project_cue_points(cue_points, projector)
+      cue_points.map do |point|
+        point.merge(
+          position: projector.call(point.fetch(:position)),
+          sample_offset: projector.call(point.fetch(:sample_offset))
+        )
+      end
+    end
+    private_class_method :project_cue_points
+
+    def self.project_smpl(smpl, projector, target_rate)
+      loops = smpl.fetch(:loops).map do |loop|
+        loop.merge(
+          start_frame: projector.call(loop.fetch(:start_frame)),
+          end_frame: projector.call(loop.fetch(:end_frame))
+        )
+      end
+      smpl.merge(sample_period: (1_000_000_000.0 / target_rate).round, loops: loops)
+    end
+    private_class_method :project_smpl
 
     # Mixes multiple audio objects using a selectable clipping policy.
     #
