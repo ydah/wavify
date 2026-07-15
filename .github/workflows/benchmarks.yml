@@ -16,7 +16,7 @@ jobs:
       STREAM_BENCH_DURATION: "0.05"
       BENCH_DIR: "tmp/benchmarks/ci"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Ruby
