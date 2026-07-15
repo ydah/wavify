@@ -24,9 +24,8 @@ module Wavify
           wet = Math.tanh(dry * pre_gain)
 
           # One-pole low-pass on the distorted signal for tone shaping.
-          coeff = tone_coefficient(sample_rate)
           previous = @tone_state.fetch(channel)
-          filtered = previous + (coeff * (wet - previous))
+          filtered = previous + (@tone_coefficient * (wet - previous))
           @tone_state[channel] = filtered
 
           (dry * (1.0 - @mix)) + (filtered * @mix)
@@ -36,10 +35,12 @@ module Wavify
 
         def prepare_runtime_state(sample_rate:, channels:)
           @tone_state = Array.new(channels, 0.0)
+          @tone_coefficient = tone_coefficient(sample_rate)
         end
 
         def reset_runtime_state
           @tone_state = []
+          @tone_coefficient = nil
         end
 
         def pre_gain

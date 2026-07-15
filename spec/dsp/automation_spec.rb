@@ -30,6 +30,22 @@ RSpec.describe Wavify::DSP::Automation do
     expect(processed.samples).to eq([0.0, 1.0])
   end
 
+  it "scans automation points once per frame and reuses values across channels" do
+    stereo_format = format.with(channels: 2)
+    points = Array.new(1_000) { |index| [index.to_f / 8_000, index.to_f] }
+    automation = described_class.new(points)
+    buffer = Wavify::Core::SampleBuffer.new(Array.new(2_000, 1.0), stereo_format)
+    frame_values = Hash.new { |hash, key| hash[key] = [] }
+
+    expect(automation).not_to receive(:value_at)
+    automation.apply(buffer) do |sample, value, time, _channel|
+      frame_values[time] << value
+      sample
+    end
+
+    expect(frame_values.values).to all(satisfy { |values| values.length == 2 && values.uniq.length == 1 })
+  end
+
   it "rejects invalid point sets" do
     expect { described_class.new([]) }.to raise_error(Wavify::InvalidParameterError)
     expect { described_class.new([{ time: -1.0, value: 0.0 }]) }.to raise_error(Wavify::InvalidParameterError)

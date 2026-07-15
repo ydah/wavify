@@ -31,7 +31,7 @@ module Wavify
 
           line[write_index] = dry
           @write_indices[channel] = (write_index + 1) % line.length
-          advance_lfo!
+          advance_lfo! if channel == (@runtime_channels - 1)
 
           (dry * (1.0 - @mix)) + (wet * @mix)
         end
@@ -54,7 +54,7 @@ module Wavify
           @delay_lines = Array.new(channels) { Array.new(line_length, 0.0) }
           @write_indices = Array.new(channels, 0)
           @lfo_phase = 0.0
-          @lfo_step = (2.0 * Math::PI * @rate) / (sample_rate * channels)
+          @lfo_step = (2.0 * Math::PI * @rate) / sample_rate
         end
 
         def reset_runtime_state

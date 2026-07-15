@@ -35,11 +35,15 @@ module Wavify
         raise InvalidParameterError, "automation apply requires a block" unless block_given?
 
         format = buffer.format
-        samples = buffer.samples.each_with_index.map do |sample, sample_index|
-          frame_index = sample_index / format.channels
-          channel = sample_index % format.channels
+        point_index = 1
+        samples = []
+        buffer.samples.each_slice(format.channels).with_index do |frame, frame_index|
           time = frame_index.to_f / format.sample_rate
-          yield(sample, value_at(time), time, channel)
+          point_index += 1 while point_index < @points.length && @points.fetch(point_index).time < time
+          value = value_between_points(time, point_index)
+          frame.each_with_index do |sample, channel|
+            samples << yield(sample, value, time, channel)
+          end
         end
         Core::SampleBuffer.new(samples, format)
       end
@@ -57,6 +61,19 @@ module Wavify
       end
 
       private
+
+      def value_between_points(time, right_index)
+        return @points.first.value if time <= @points.first.time
+        return @points.last.value if right_index >= @points.length
+
+        left = @points.fetch(right_index - 1)
+        right = @points.fetch(right_index)
+        span = right.time - left.time
+        return right.value if span.zero?
+
+        ratio = (time - left.time) / span
+        left.value + ((right.value - left.value) * ratio)
+      end
 
       def coerce_point(point)
         time, value = case point

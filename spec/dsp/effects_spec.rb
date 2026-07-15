@@ -116,6 +116,22 @@ RSpec.describe Wavify::DSP::Effects do
       expect(described_class.new(mix: 0.5).tail_duration).to eq(0.03)
       expect(described_class.new(mix: 0.0).tail_duration).to eq(0.0)
     end
+
+    it "uses one LFO phase for every channel in a frame" do
+      recording_class = Class.new(described_class) do
+        attr_reader :observed_phases
+
+        def process_sample(...)
+          (@observed_phases ||= []) << instance_variable_get(:@lfo_phase)
+          super
+        end
+      end
+      effect = recording_class.new(rate: 1.0)
+
+      effect.process(Wavify::Core::SampleBuffer.new([0.5, 0.5], stereo_float))
+
+      expect(effect.observed_phases).to eq([0.0, 0.0])
+    end
   end
 
   describe Wavify::DSP::Effects::Distortion do
@@ -127,6 +143,24 @@ RSpec.describe Wavify::DSP::Effects do
       expect(processed.samples.max).to be <= 1.0
       expect(processed.samples.min).to be >= -1.0
       expect(processed.samples[3].abs).to be < source.samples[3].abs
+    end
+
+    it "calculates its tone coefficient once per runtime format" do
+      counting_class = Class.new(described_class) do
+        attr_reader :coefficient_calls
+
+        private
+
+        def tone_coefficient(sample_rate)
+          @coefficient_calls = (@coefficient_calls || 0) + 1
+          super
+        end
+      end
+      effect = counting_class.new
+
+      effect.process(Wavify::Core::SampleBuffer.new(Array.new(1_000, 0.2), mono_float))
+
+      expect(effect.coefficient_calls).to eq(1)
     end
   end
 
