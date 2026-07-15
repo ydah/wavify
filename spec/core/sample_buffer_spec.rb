@@ -82,6 +82,18 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect({ first => :buffer }[second]).to eq(:buffer)
     end
 
+    it "compares and hashes packed buffers without materializing them" do
+      first = described_class.new([1, -2, 3, -4], pcm16_stereo, storage: :packed)
+      second = described_class.new([1, -2, 3, -4], pcm16_stereo, storage: :packed)
+      array = described_class.new([1, -2, 3, -4], pcm16_stereo)
+
+      expect(first).to eq(second)
+      expect(first).to eq(array)
+      expect(first.hash).to eq(array.hash)
+      expect(first).to be_packed
+      expect(second).to be_packed
+    end
+
     it "optionally stores samples in packed form until random access is requested" do
       packed = described_class.new([1, -2, 3, -4], pcm16_stereo, storage: :packed)
 
@@ -93,9 +105,26 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(packed.samples).to eq([1, -2, 3, -4])
       expect(packed).not_to be_packed
     end
+
+    it "finishes packed enumeration if another thread materializes the buffer" do
+      packed = described_class.new([1, -2, 3, -4], pcm16_stereo, storage: :packed)
+      allow(packed).to receive(:packed?).and_wrap_original do |original|
+        result = original.call
+        packed.samples
+        result
+      end
+
+      expect(packed.each.to_a).to eq([1, -2, 3, -4])
+    end
   end
 
   describe "#convert" do
+    it "returns packed buffers unchanged for no-op conversions" do
+      source = described_class.new([1, -2, 3, -4], pcm16_stereo, storage: :packed)
+
+      expect(source.convert(pcm16_stereo)).to equal(source)
+      expect(source).to be_packed
+    end
     it "converts between pcm bit depths with limited quantization error" do
       source = described_class.new([12_345, -12_345, 20_000, -20_000], pcm16_stereo)
       pcm24 = pcm16_stereo.with(bit_depth: 24)

@@ -5,9 +5,14 @@ module Wavify
     # Immutable interleaved sample container with format metadata.
     #
     # Samples are stored in interleaved order (`L, R, L, R, ...`) for
-    # multi-channel audio.
+    # multi-channel audio. Packed buffers remain packed when enumerated,
+    # compared, hashed, or converted to the same format without dither.
+    # Random-access operations (`samples`, `frame_view`, `view`, `slice`,
+    # `concat`, `reverse`, and format-changing `convert`) materialize them.
     class SampleBuffer
       include Enumerable
+
+      PACKED_ENUMERATION_CHUNK_SAMPLES = 4_096
 
       # Lazy no-copy view over interleaved samples as sample frames.
       class FrameView
@@ -94,7 +99,8 @@ module Wavify
         #
         # @return [Array<Numeric>]
         def samples
-          each.to_a.freeze
+          start_index = @start_frame * @format.channels
+          @samples.slice(start_index, length).freeze
         end
 
         # @return [Integer] number of interleaved samples in the view
@@ -199,13 +205,20 @@ module Wavify
 
       # Value equality for immutable samples and format metadata.
       def ==(other)
-        other.is_a?(SampleBuffer) && @format == other.format && samples == other.samples
+        return true if equal?(other)
+        return false unless other.is_a?(SampleBuffer) && @format == other.format && @sample_count == other.length
+
+        packed_bytes = packed_storage_snapshot
+        other_packed_bytes = other.send(:packed_storage_snapshot)
+        return packed_bytes == other_packed_bytes if packed_bytes && other_packed_bytes
+
+        sample_values_equal?(other)
       end
 
       alias eql? ==
 
       def hash
-        [@format, samples].hash
+        @value_hash ||= sample_value_hash
       end
 
       # Enumerates sample values in interleaved order.
@@ -255,6 +268,7 @@ module Wavify
       # @return [SampleBuffer]
       def convert(new_format, dither: false, dither_seed: nil, resampler: :linear)
         raise InvalidParameterError, "new_format must be Core::Format" unless new_format.is_a?(Format)
+        return self if new_format == @format && !dither
 
         resampler = normalize_resampler!(resampler)
         dither_rng = dither_applicable?(new_format, dither) ? Random.new(dither_seed) : nil
@@ -375,19 +389,39 @@ module Wavify
       end
 
       def each_packed_sample
+        packed_samples = packed_storage_snapshot
+        return @samples.each { |sample| yield sample } unless packed_samples
+
         if @format.sample_format == :pcm && @format.bit_depth == 24
-          @packed_samples.bytes.each_slice(3) do |low, middle, high|
-            value = low | (middle << 8) | (high << 16)
-            yield(value.anybits?(0x800000) ? value - 0x1000000 : value)
+          chunk_bytes = PACKED_ENUMERATION_CHUNK_SAMPLES * 3
+          0.step(packed_samples.bytesize - 1, chunk_bytes) do |offset|
+            unpack_pcm24(packed_samples.byteslice(offset, chunk_bytes)).each { |sample| yield sample }
           end
           return self
         end
 
         directive, byte_width = packed_directive_and_width(@format)
-        @sample_count.times do |index|
-          yield @packed_samples.unpack1(directive, offset: index * byte_width)
+        chunk_bytes = PACKED_ENUMERATION_CHUNK_SAMPLES * byte_width
+        0.step(packed_samples.bytesize - 1, chunk_bytes) do |offset|
+          packed_samples.byteslice(offset, chunk_bytes).unpack("#{directive}*").each { |sample| yield sample }
         end
         self
+      end
+
+      def packed_storage_snapshot
+        @storage_mutex.synchronize { @packed_samples }
+      end
+
+      def sample_values_equal?(other)
+        left = each
+        right = other.each
+        @sample_count.times.all? { left.next == right.next }
+      end
+
+      def sample_value_hash
+        each.reduce(@format.hash) do |value, sample|
+          ((value * 31) ^ sample.hash) & 0xFFFFFFFFFFFFFFFF
+        end
       end
 
       def packed_directive_and_width(format)
