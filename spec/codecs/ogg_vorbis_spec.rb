@@ -689,6 +689,26 @@ RSpec.describe Wavify::Codecs::OggVorbis, :ogg do
       described_class.send(:close_logical_streams, streams)
     end
 
+    it "removes tempfile spools when logical stream parsing fails" do
+      identification = build_identification_packet(channels: 2, sample_rate: 44_100)
+      bytes = +""
+      bytes << build_ogg_page(serial: 1, sequence: 0, header_type: 0x02, granule_position: 0, segments: [identification])
+      bytes << build_ogg_page(serial: 2, sequence: 0, header_type: 0x00, granule_position: 0, segments: ["invalid".b])
+      spools = []
+      allow(described_class).to receive(:build_logical_stream_storage).and_wrap_original do |method, storage|
+        method.call(storage).tap { |io| spools << [io, io.path] if storage == :tempfile }
+      end
+
+      expect do
+        described_class.send(:read_ogg_logical_stream_chains, StringIO.new(bytes), storage: :tempfile)
+      end.to raise_error(Wavify::InvalidFormatError, /BOS flag/)
+
+      expect(spools).not_to be_empty
+      expect(spools).to all(satisfy { |io, path| io.closed? && !File.exist?(path) })
+    ensure
+      spools&.each { |io, _path| io.close! unless io.closed? }
+    end
+
     it "scans metadata packets incrementally" do
       expect(described_class).not_to receive(:read_ogg_packets)
 

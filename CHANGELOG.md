@@ -46,6 +46,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Smoothed NoiseGate gain transitions, separated Limiter window detection from current-frame safety clamps, and isolated offline limiting from active streaming state.
 - Restored eager arrangement validation while keeping repeat expansion lazy, and reused sequencer engines across repeated tempo/meter sections.
 - Normalized explicit nil channel layouts, made dynamic processor flush dispatch format-aware, and preserved above-full-scale Automation gain in float workspaces.
+- Documented unclipped float mixing and silent-by-default WAV/AIFF warnings, and covered OGG tempfile cleanup on parser failures.
 
 ## [0.1.0] - 2026-03-04
 

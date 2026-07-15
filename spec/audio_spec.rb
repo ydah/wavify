@@ -392,6 +392,18 @@ RSpec.describe Wavify::Audio do
       expect(mixed.buffer.samples[0]).to be <= 1.0
     end
 
+    it "preserves unclipped sums only when the output format is float" do
+      float_format = format.with(channels: 1, sample_format: :float, bit_depth: 32)
+      pcm_format = float_format.with(sample_format: :pcm, bit_depth: 16)
+      source = described_class.new(Wavify::Core::SampleBuffer.new([0.75], float_format))
+
+      float_mix = described_class.mix(source, source, strategy: :none)
+      pcm_mix = described_class.mix(source, source, strategy: :none, format: pcm_format)
+
+      expect(float_mix.buffer.samples).to eq([1.5])
+      expect(pcm_mix.buffer.samples).to eq([32_767])
+    end
+
     it "applies per-source gains and alignment" do
       mono_format = format.with(channels: 1, sample_format: :float, bit_depth: 32)
       a = described_class.new(Wavify::Core::SampleBuffer.new([0.5, 0.5], mono_format))

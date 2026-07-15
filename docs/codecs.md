@@ -55,8 +55,8 @@ Wavify::Adapters.load(:ffmpeg)
 ## Format Notes
 
 - WAV supports PCM and float WAV, including extensible WAV.
-- WAV metadata exposes `info:` from LIST/INFO chunks, normalized `loops:` from `smpl`, `cue_points`, Broadcast WAV `bext`, and RF64 `ds64` sizes. Noncanonical `byte_rate` values are tolerated because some encoders write them incorrectly and are reported through `warnings:`; reads also write them to `warning_io:` (stderr by default, or `nil` to suppress). Invalid `block_align` remains an error because it makes frame boundaries ambiguous.
-- AIFF supports PCM AIFF plus uncompressed AIFF-C `NONE` and `sowt` reads and writes. Metadata distinguishes `container_bit_depth:` from `valid_bits_per_sample:` for non-byte-aligned sample sizes and warns when an 80-bit sample rate must be rounded to the integer rate used by `Format`.
+- WAV metadata exposes `info:` from LIST/INFO chunks, normalized `loops:` from `smpl`, `cue_points`, Broadcast WAV `bext`, and RF64 `ds64` sizes. Noncanonical `byte_rate` values are tolerated because some encoders write them incorrectly and are reported through `warnings:`. `read` and `stream_read` can also send each warning to an IO-like `warning_io:`; the default `nil` is silent. Invalid `block_align` remains an error because it makes frame boundaries ambiguous.
+- AIFF supports PCM AIFF plus uncompressed AIFF-C `NONE` and `sowt` reads and writes. Metadata distinguishes `container_bit_depth:` from `valid_bits_per_sample:` for non-byte-aligned sample sizes and warns when an 80-bit sample rate must be rounded to the integer rate used by `Format`. AIFF `read` and `stream_read` use the same silent-by-default `warning_io:` contract as WAV.
 - FLAC is implemented in pure Ruby. Write options include `compression_level:`, `comments:`, `stereo_coding:`, and `predictor:`. LPC mode derives coefficients with autocorrelation and Levinson–Durbin analysis, then searches Rice partition orders per block.
 - FLAC metadata and decoding are forward-only and accept readable IO without `seek`; FLAC streaming writes still require seekable output so STREAMINFO can be finalized.
 - OGG Vorbis uses optional `ogg-ruby` and `vorbis` gems. Use `Wavify::Codecs.available_formats` or `wavify doctor` to check whether they are installed.
@@ -64,3 +64,4 @@ Wavify::Adapters.load(:ffmpeg)
 - Raw PCM/float requires `format:` for read, stream read, and metadata. Use `endianness: :little | :big`, `signed: true | false` for PCM, and `float_domain: :normalized | :ieee` to distinguish clamped audio floats from unrestricted IEEE values.
 
 Magic-byte inspection preserves the position of seekable IO. For a non-rewindable IO, pass `filename:` so the codec can be selected without consuming its prefix; otherwise detection raises before reading the stream.
+The `wavify info` command prints warnings collected in codec metadata even though library reads are silent by default.

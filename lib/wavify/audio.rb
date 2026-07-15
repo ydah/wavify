@@ -134,9 +134,12 @@ module Wavify
     # Mixes multiple audio objects using a selectable clipping policy.
     #
     # @param audios [Array<Audio>]
-    # @param strategy [Symbol] `:clip`, `:normalize`, `:headroom`, or `:soft_limit`
+    # @param strategy [Symbol] `:none`, `:clip`, `:normalize`, `:headroom`, or `:soft_limit`;
+    #   `:none` preserves above-full-scale sums only when the output format is float
     # @param gains [Array<Numeric>, nil] optional per-source gain in dB
     # @param align [Symbol] `:start`, `:center`, or `:end`
+    # @param format [Core::Format, nil] output format, defaulting to the first source format
+    # @param work_format [Core::Format, nil] intermediate channel/sample-rate format; samples are processed as float
     # @param headroom_smoothing [Numeric] seconds of gain smoothing around peaks
     # @return [Audio]
     def self.mix(*audios, strategy: :clip, gains: nil, align: :start, format: nil, work_format: nil,

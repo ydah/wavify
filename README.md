@@ -74,7 +74,7 @@ Main constructors:
 - `Audio.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: {}, strict: false, filename: nil)`
 - `Audio.tone(frequency:, duration:, waveform:, format:)`
 - `Audio.silence(duration_seconds, format:)`
-- `Audio.mix(*audios, strategy: :clip, gains: nil, align: :start)`
+- `Audio.mix(*audios, strategy: :clip, gains: nil, align: :start, format: nil, work_format: nil, headroom_smoothing: 0.005)`
 
 Immutable transforms (each also has `!` in-place variants):
 
@@ -87,7 +87,7 @@ Utility methods:
 - `convert`, `split(at:)`, `duration`, `sample_frame_count`, `channels`, `sample_rate`, `bit_depth`, `frames`, `each_frame`
 - `peak_amplitude`, `rms_amplitude`, `peak_dbfs`, `rms_dbfs`, `lufs`, `stats`, `silent?`, `clipped?`, `dc_offset`, `zero_crossing_rate`
 
-Mix strategies are `:clip` (default), `:normalize`, `:headroom`, and `:soft_limit`. `gains:` accepts one dB value per source, and `align:` can be `:start`, `:center`, or `:end`.
+Mix strategies are `:clip` (default), `:normalize`, `:headroom`, `:soft_limit`, and `:none`. The `:none` strategy leaves the float workspace unclipped, but a PCM output `format:` still clamps during final conversion; select a float output format to retain values outside -1.0..1.0 for downstream limiting. Headroom is intended for brief overlaps, while sustained over-full-scale mixes should use `Wavify::DSP::Limiter`. `gains:` accepts one dB value per source, and `align:` can be `:start`, `:center`, or `:end`.
 Normalize modes are `:peak`, `:rms`, and `:lufs`.
 Use `with_bit_depth(16, dither: true)` when reducing PCM bit depth and you want simple TPDF dither.
 For large immutable buffers that are not immediately transformed, pass `storage: :packed` to `SampleBuffer.new`; sequential enumeration stays packed until random sample access is requested.
