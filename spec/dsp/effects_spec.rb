@@ -261,7 +261,7 @@ RSpec.describe Wavify::DSP::Effects do
 
   describe Wavify::DSP::Effects::NoiseGate do
     it "attenuates samples below the threshold" do
-      effect = described_class.new(threshold: -20.0, floor: -80.0)
+      effect = described_class.new(threshold: -20.0, floor: -80.0, attack: 0.0, hold: 0.0, release: 0.0)
       source = Wavify::Core::SampleBuffer.new([0.005, 0.2, -0.005, -0.2], mono_float)
 
       processed = effect.process(source)
@@ -270,6 +270,22 @@ RSpec.describe Wavify::DSP::Effects do
       expect(processed.samples[1]).to be_within(0.0001).of(0.2)
       expect(processed.samples[2].abs).to be < 0.00001
       expect(processed.samples[3]).to be_within(0.0001).of(-0.2)
+    end
+
+    it "does not close at zero crossings of a steady signal above threshold" do
+      source = Wavify::Audio.tone(frequency: 440, duration: 0.05, amplitude: 0.1, format: mono_float).buffer
+      processed = described_class.new(threshold: -40.0).process(source)
+      settled_index = (0.01 * mono_float.sample_rate).round
+
+      processed.samples.drop(settled_index).zip(source.samples.drop(settled_index)).each do |actual, expected|
+        expect(actual).to be_within(0.0001).of(expected)
+      end
+    end
+
+    it "requires frame-aware processing for linked detection" do
+      expect do
+        described_class.new.process_sample(0.1, channel: 0, sample_rate: 44_100)
+      end.to raise_error(NotImplementedError, /frame-aware/)
     end
   end
 
@@ -342,7 +358,7 @@ RSpec.describe Wavify::DSP::Effects do
 
   describe Wavify::DSP::Effects::Expander do
     it "reduces low-level samples below threshold" do
-      effect = described_class.new(threshold: -20.0, ratio: 2.0, floor: -80.0)
+      effect = described_class.new(threshold: -20.0, ratio: 2.0, floor: -80.0, attack: 0.0, hold: 0.0, release: 0.0)
       source = Wavify::Core::SampleBuffer.new([0.005, 0.2, -0.005, -0.2], mono_float)
 
       processed = effect.process(source)
@@ -351,6 +367,22 @@ RSpec.describe Wavify::DSP::Effects do
       expect(processed.samples[1]).to be_within(0.0001).of(0.2)
       expect(processed.samples[2].abs).to be < source.samples[2].abs
       expect(processed.samples[3]).to be_within(0.0001).of(-0.2)
+    end
+
+    it "does not expand zero crossings of a steady signal above threshold" do
+      source = Wavify::Audio.tone(frequency: 440, duration: 0.05, amplitude: 0.1, format: mono_float).buffer
+      processed = described_class.new(threshold: -40.0).process(source)
+      settled_index = (0.01 * mono_float.sample_rate).round
+
+      processed.samples.drop(settled_index).zip(source.samples.drop(settled_index)).each do |actual, expected|
+        expect(actual).to be_within(0.0001).of(expected)
+      end
+    end
+
+    it "requires frame-aware processing for linked detection" do
+      expect do
+        described_class.new.process_sample(0.1, channel: 0, sample_rate: 44_100)
+      end.to raise_error(NotImplementedError, /frame-aware/)
     end
   end
 
@@ -395,7 +427,7 @@ RSpec.describe Wavify::DSP::Effects do
     it "applies processors in order and exposes timing metadata" do
       chain = described_class.new([
         Wavify::DSP::Effects::Limiter.new(ceiling: -6.0206),
-        Wavify::DSP::Effects::NoiseGate.new(threshold: -20.0)
+        Wavify::DSP::Effects::NoiseGate.new(threshold: -20.0, attack: 0.0, hold: 0.0, release: 0.0)
       ])
 
       processed = chain.apply(Wavify::Core::SampleBuffer.new([0.005, 1.0], mono_float))

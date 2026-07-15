@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "effects/effect_base"
+require_relative "effects/envelope_controlled_effect"
 require_relative "effects/delay"
 require_relative "effects/reverb"
 require_relative "effects/chorus"
