@@ -241,7 +241,9 @@ module Wavify
         )
         rendered = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(mixed, track_format.with(sample_format: :float, bit_depth: 32)))
         rendered = rendered.gain(track.gain_db) if track.gain_db != 0.0
-        rendered = rendered.pan(track.pan_position) if track.pan_position != 0.0
+        if track.pan_position != 0.0
+          rendered = rendered.channels == 1 ? rendered.pan(track.pan_position) : rendered.balance(track.pan_position)
+        end
         rendered = apply_track_effects(rendered, track.effects) if track.effects?
         rendered.convert(@format)
       end

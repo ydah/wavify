@@ -10,7 +10,7 @@ module Wavify
     class Stream
       include Enumerable
 
-      attr_reader :format, :chunk_size
+      attr_reader :chunk_size
 
       # @param source [String, IO] input path or IO
       # @param codec [Class] codec class implementing `stream_read/stream_write`
@@ -31,6 +31,15 @@ module Wavify
         @enumerated = false
         @source_start_position = source_position(source)
         @stage_input_formats = []
+      end
+
+      # Returns a known source format. Access before enumeration may perform a
+      # metadata probe; normal decoding learns the format from the first chunk.
+      def format
+        return @format if @format
+
+        metadata = @codec.metadata(@source, **metadata_probe_options)
+        @format = metadata.fetch(:format)
       end
 
       # Adds a processor to the stream pipeline.
@@ -517,7 +526,16 @@ module Wavify
 
         raise InvalidFormatError, "format is required when writing raw stream output" if output_codec == Codecs::Raw
 
+        return self.format if @codec.respond_to?(:metadata)
+
         nil
+      end
+
+
+      def metadata_probe_options
+        return { format: @codec_read_options.fetch(:format) } if @codec == Codecs::Raw
+
+        {}
       end
 
       def validate_chunk_size!(chunk_size)

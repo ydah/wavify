@@ -15,6 +15,8 @@ module Wavify
     NORMALIZE_MODES = %i[peak rms lufs].freeze
     FADE_CURVES = %i[linear exp log].freeze
     SOFT_LIMIT_THRESHOLD = 0.8
+    MAX_REPEAT_FRAMES = 50_000_000
+    MAX_REPEAT_BYTES = 512 * 1024 * 1024
 
     # Reads audio from a file path using codec auto-detection.
     #
@@ -85,14 +87,15 @@ module Wavify
     private_class_method :project_sample_coordinates!
 
     def self.project_frame_count(frame_count, source_rate, target_rate)
-      ((frame_count * target_rate.to_f) / source_rate).round
+      (Rational(frame_count) * Rational(target_rate, source_rate)).round
     end
     private_class_method :project_frame_count
 
     def self.project_loops(loops, projector)
       loops.map do |loop|
         start_frame = projector.call(loop.fetch(:start_frame))
-        end_frame = projector.call(loop.fetch(:end_frame))
+        end_frame = projector.call(loop.fetch(:end_frame) + 1) - 1
+        end_frame = start_frame if end_frame < start_frame
         loop.merge(start_frame: start_frame, end_frame: end_frame, length_frames: end_frame - start_frame + 1)
       end
     end
@@ -110,9 +113,11 @@ module Wavify
 
     def self.project_smpl(smpl, projector, target_rate)
       loops = smpl.fetch(:loops).map do |loop|
+        start_frame = projector.call(loop.fetch(:start_frame))
+        end_frame = projector.call(loop.fetch(:end_frame) + 1) - 1
         loop.merge(
-          start_frame: projector.call(loop.fetch(:start_frame)),
-          end_frame: projector.call(loop.fetch(:end_frame))
+          start_frame: start_frame,
+          end_frame: [end_frame, start_frame].max
         )
       end
       smpl.merge(sample_period: (1_000_000_000.0 / target_rate).round, loops: loops)
@@ -127,21 +132,28 @@ module Wavify
     # @param align [Symbol] `:start`, `:center`, or `:end`
     # @param headroom_smoothing [Numeric] seconds of gain smoothing around peaks
     # @return [Audio]
-    def self.mix(*audios, strategy: :clip, gains: nil, align: :start, headroom_smoothing: DSP::Headroom::DEFAULT_SMOOTHING_SECONDS)
+    def self.mix(*audios, strategy: :clip, gains: nil, align: :start, format: nil, work_format: nil,
+                 headroom_smoothing: DSP::Headroom::DEFAULT_SMOOTHING_SECONDS)
       raise InvalidParameterError, "at least one Audio is required" if audios.empty?
       raise InvalidParameterError, "all arguments must be Audio instances" unless audios.all? { |audio| audio.is_a?(self) }
 
       mix_strategy = normalize_mix_strategy!(strategy)
       mix_gains = normalize_mix_gains!(gains, audios.length)
       mix_alignment = normalize_mix_alignment!(align)
-      sample_rates = audios.map { |audio| audio.format.sample_rate }.uniq
-      raise InvalidParameterError, "all audios must have the same sample_rate to mix" if sample_rates.length > 1
+      target_format = format || audios.first.format
+      raise InvalidParameterError, "format must be Core::Format" unless target_format.is_a?(Core::Format)
+      if work_format && !work_format.is_a?(Core::Format)
+        raise InvalidParameterError, "work_format must be Core::Format"
+      end
+      if !format && !work_format && audios.map { |audio| audio.format.sample_rate }.uniq.length > 1
+        raise InvalidParameterError, "different sample rates require an explicit format or work_format"
+      end
 
-      target_format = audios.first.format
-      work_format = target_format.with(sample_format: :float, bit_depth: 32)
-      converted = audios.map { |audio| audio.buffer.convert(work_format) }
+      workspace_format = work_format || target_format.with(sample_format: :float, bit_depth: 32)
+      workspace_format = workspace_format.with(sample_format: :float, bit_depth: 32)
+      converted = audios.map { |audio| audio.buffer.convert(workspace_format) }
       max_frames = converted.map(&:sample_frame_count).max || 0
-      channels = work_format.channels
+      channels = workspace_format.channels
       mixed = Array.new(max_frames * channels, 0.0)
 
       converted.each_with_index do |buffer, audio_index|
@@ -153,8 +165,8 @@ module Wavify
         end
       end
 
-      apply_mix_strategy!(mixed, mix_strategy, format: work_format, headroom_smoothing: headroom_smoothing)
-      new(Core::SampleBuffer.new(mixed, work_format).convert(target_format))
+      apply_mix_strategy!(mixed, mix_strategy, format: workspace_format, headroom_smoothing: headroom_smoothing)
+      new(Core::SampleBuffer.new(mixed, workspace_format).convert(target_format))
     end
 
     # Creates a streaming processing pipeline for an input path/IO.
@@ -169,7 +181,10 @@ module Wavify
     def self.stream(path_or_io, chunk_size: 4096, format: nil, codec_options: nil, strict: false, filename: nil)
       codec = Codecs::Registry.detect_for_read(path_or_io, strict: strict, filename: filename)
       options = normalize_codec_options!(codec_options)
-      source_format = resolve_stream_format!(path_or_io, codec: codec, format: format)
+      source_format = format
+      if codec == Codecs::Raw && !source_format.is_a?(Core::Format)
+        raise InvalidFormatError, "format is required for raw stream input"
+      end
       options = options.merge(format: source_format) if codec == Codecs::Raw
 
       stream = Core::Stream.new(
@@ -208,8 +223,8 @@ module Wavify
     # @return [Audio]
     def self.silence(duration_seconds, format:)
       seconds = duration_seconds.is_a?(Core::Duration) ? duration_seconds.total_seconds : duration_seconds
-      unless seconds.is_a?(Numeric) && seconds >= 0
-        raise InvalidParameterError, "duration_seconds must be a non-negative Numeric or Core::Duration: #{duration_seconds.inspect}"
+      unless seconds.is_a?(Numeric) && seconds.respond_to?(:finite?) && seconds.finite? && seconds >= 0
+        raise InvalidParameterError, "duration_seconds must be a non-negative finite Numeric or Core::Duration: #{duration_seconds.inspect}"
       end
       raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)
 
@@ -293,7 +308,7 @@ module Wavify
 
     # @return [Array<Array<Numeric>>] sample frames
     def frames
-      @buffer.frame_view.map(&:dup)
+      @buffer.frame_view.to_a
     end
 
     # Enumerates sample frames.
@@ -492,7 +507,33 @@ module Wavify
 
       return self.class.new(Core::SampleBuffer.new([], @buffer.format)) if times.zero?
 
+      repeated_frames = sample_frame_count * times
+      repeated_bytes = repeated_frames * format.block_align
+      if repeated_frames > MAX_REPEAT_FRAMES || repeated_bytes > MAX_REPEAT_BYTES
+        raise InvalidParameterError,
+              "repeat output exceeds limits (#{repeated_frames} frames, #{repeated_bytes} bytes); use #repeat_chunks"
+      end
+
       self.class.new(Core::SampleBuffer.new(@buffer.samples * times, @buffer.format))
+    end
+
+    # Lazily yields repeated audio in bounded chunks.
+    def repeat_chunks(times:, chunk_frames: 4_096)
+      raise InvalidParameterError, "times must be a non-negative Integer" unless times.is_a?(Integer) && times >= 0
+      unless chunk_frames.is_a?(Integer) && chunk_frames.positive?
+        raise InvalidParameterError, "chunk_frames must be a positive Integer"
+      end
+
+      Enumerator.new do |yielder|
+        times.times do
+          offset = 0
+          while offset < sample_frame_count
+            length = [chunk_frames, sample_frame_count - offset].min
+            yielder << @buffer.slice(offset, length)
+            offset += length
+          end
+        end
+      end
     end
 
     # In-place variant of {#repeat}.
@@ -524,9 +565,10 @@ module Wavify
     # @param db [Numeric]
     # @return [Audio]
     def gain(db)
-      factor = 10.0**(db.to_f / 20.0)
+      db = validate_finite_numeric!(db, :db)
+      factor = 10.0**(db / 20.0)
       transform_samples do |samples, _format|
-        samples.map { |sample| (sample * factor).clamp(-1.0, 1.0) }
+        samples.map { |sample| sample * factor }
       end
     end
 
@@ -548,6 +590,9 @@ module Wavify
       unless target_db.is_a?(Numeric) && target_db.respond_to?(:finite?) && target_db.finite?
         raise InvalidParameterError, "target_db must be a finite Numeric"
       end
+      if normalize_mode == :peak && target_db.positive?
+        raise InvalidParameterError, "peak target_db must be <= 0 dBFS"
+      end
 
       transform_samples do |samples, work_format|
         if normalize_mode == :lufs
@@ -555,7 +600,7 @@ module Wavify
           next samples unless current_lufs.finite?
 
           factor = 10.0**((target_db.to_f - current_lufs) / 20.0)
-          next samples.map { |sample| (sample * factor).clamp(-1.0, 1.0) }
+          next samples.map { |sample| sample * factor }
         end
 
         current = normalize_reference_amplitude(samples, normalize_mode)
@@ -563,7 +608,7 @@ module Wavify
 
         target = 10.0**(target_db.to_f / 20.0)
         factor = target / current
-        samples.map { |sample| (sample * factor).clamp(-1.0, 1.0) }
+        samples.map { |sample| sample * factor }
       end
     end
 
@@ -656,31 +701,23 @@ module Wavify
       apply_fade(seconds: seconds, mode: type, curve: curve)
     end
 
-    # Constant-power pan for mono/stereo sources.
-    #
-    # Mono inputs are first upmixed to stereo.
+    # Constant-power pan for a mono source.
     #
     # @param position [Numeric] `-1.0` (left) to `1.0` (right)
     # @return [Audio]
     def pan(position)
       validate_pan_position!(position)
+      raise InvalidParameterError, "pan requires mono input; use #balance for stereo" unless @buffer.format.channels == 1
 
-      case @buffer.format.channels
-      when 1
-        source_format = @buffer.format.with(channels: 2)
-      when 2
-        source_format = @buffer.format
-      else
-        raise InvalidParameterError, "pan is only supported for mono/stereo input"
-      end
+      source_format = @buffer.format.with(channels: 2)
 
       transform_samples(target_format: source_format) do |samples, _format|
         left_gain, right_gain = constant_power_pan_gains(position.to_f)
         result = samples.dup
         result.each_slice(2).with_index do |(left, right), frame_index|
           base = frame_index * 2
-          result[base] = (left * left_gain).clamp(-1.0, 1.0)
-          result[base + 1] = (right * right_gain).clamp(-1.0, 1.0)
+          result[base] = left * left_gain
+          result[base + 1] = right * right_gain
         end
         result
       end
@@ -693,6 +730,33 @@ module Wavify
     def pan!(position)
       replace_buffer!(pan(position).buffer)
       self
+    end
+
+    # Adjusts the relative level of existing stereo channels without moving content between them.
+    def balance(position)
+      validate_pan_position!(position)
+      raise InvalidParameterError, "balance requires stereo input" unless channels == 2
+
+      transform_samples do |samples, _format|
+        left_gain = position.positive? ? Math.cos(position * Math::PI / 2.0) : 1.0
+        right_gain = position.negative? ? Math.cos(position.abs * Math::PI / 2.0) : 1.0
+        samples.each_slice(2).flat_map { |left, right| [left * left_gain, right * right_gain] }
+      end
+    end
+
+    # Rotates a stereo image, transferring energy between left and right.
+    def stereo_rotate(position)
+      validate_pan_position!(position)
+      raise InvalidParameterError, "stereo_rotate requires stereo input" unless channels == 2
+
+      angle = position * Math::PI / 4.0
+      cosine = Math.cos(angle)
+      sine = Math.sin(angle)
+      transform_samples do |samples, _format|
+        samples.each_slice(2).flat_map do |left, right|
+          [(left * cosine) - (right * sine), (left * sine) + (right * cosine)]
+        end
+      end
     end
 
     # Applies an effect/processor object to the audio buffer.
@@ -727,7 +791,7 @@ module Wavify
 
       transform_samples do |samples, _format|
         samples.map.with_index do |sample, sample_index|
-          yield(sample, sample_index).to_f.clamp(-1.0, 1.0)
+          validate_mapped_sample!(yield(sample, sample_index), "sample #{sample_index}")
         end
       end
     end
@@ -749,7 +813,9 @@ module Wavify
             raise InvalidParameterError, "map_frames block must return an Array with #{work_format.channels} samples"
           end
 
-          mapped.concat(output.map { |sample| sample.to_f.clamp(-1.0, 1.0) })
+          mapped.concat(output.map.with_index do |sample, channel_index|
+            validate_mapped_sample!(sample, "frame #{frame_index}, channel #{channel_index}")
+          end)
         end
         mapped
       end
@@ -758,9 +824,18 @@ module Wavify
     # Returns the absolute peak amplitude in float working space.
     #
     # @return [Float] 0.0..1.0
-    def peak_amplitude
+    def sample_peak_amplitude
       float_buffer = @buffer.convert(float_work_format(@buffer.format))
       float_buffer.samples.map(&:abs).max || 0.0
+    end
+
+
+    alias peak_amplitude sample_peak_amplitude
+
+    # Returns oversampled inter-sample peak amplitude.
+    def true_peak_amplitude(oversampling: DSP::LoudnessMeter::TRUE_PEAK_OVERSAMPLING)
+      float_buffer = @buffer.convert(float_work_format(@buffer.format))
+      DSP::LoudnessMeter.true_peak(float_buffer, format: float_buffer.format, oversampling: oversampling)
     end
 
     # Returns RMS amplitude in float working space.
@@ -776,7 +851,15 @@ module Wavify
 
     # @return [Float] peak amplitude in dBFS
     def peak_dbfs
-      amplitude_to_dbfs(peak_amplitude)
+      sample_peak_dbfs
+    end
+
+    def sample_peak_dbfs
+      amplitude_to_dbfs(sample_peak_amplitude)
+    end
+
+    def true_peak_dbfs(oversampling: DSP::LoudnessMeter::TRUE_PEAK_OVERSAMPLING)
+      amplitude_to_dbfs(true_peak_amplitude(oversampling: oversampling))
     end
 
     # @return [Float] RMS amplitude in dBFS
@@ -794,23 +877,27 @@ module Wavify
     def stats
       float_buffer = @buffer.convert(float_work_format(@buffer.format))
       samples = float_buffer.samples
-      peak = samples.map(&:abs).max || 0.0
-      rms = if samples.empty?
-              0.0
-            else
-              Math.sqrt(samples.sum { |sample| sample * sample } / samples.length)
-            end
+      accumulated = accumulate_statistics(samples, float_buffer.format.channels, consecutive_frames: 2)
+      peak = accumulated.fetch(:peak)
+      rms = accumulated.fetch(:rms)
+      true_peak = DSP::LoudnessMeter.true_peak(float_buffer, format: float_buffer.format)
       {
         format: format,
         duration: duration,
         sample_frame_count: sample_frame_count,
         peak_amplitude: peak,
+        sample_peak_amplitude: peak,
+        true_peak_amplitude: true_peak,
         rms_amplitude: rms,
         peak_dbfs: amplitude_to_dbfs(peak),
+        sample_peak_dbfs: amplitude_to_dbfs(peak),
+        true_peak_dbfs: amplitude_to_dbfs(true_peak),
         rms_dbfs: amplitude_to_dbfs(rms),
         lufs: integrated_loudness(samples, float_buffer.format),
-        clipped: clipped_samples?(samples, float_buffer.format.channels, consecutive_frames: 2),
-        silent: peak.zero?
+        clipped: accumulated.fetch(:clipped),
+        silent: peak.zero?,
+        dc_offsets: accumulated.fetch(:dc_offsets),
+        zero_crossing_rate: accumulated.fetch(:zero_crossing_rate)
       }
     end
 
@@ -845,10 +932,21 @@ module Wavify
       float_buffer.samples.sum / float_buffer.samples.length.to_f
     end
 
+    # Returns the mean offset for each channel.
+    def dc_offsets
+      float_buffer = @buffer.convert(float_work_format(@buffer.format))
+      channels = float_buffer.format.channels
+      return Array.new(channels, 0.0) if float_buffer.sample_frame_count.zero?
+
+      sums = Array.new(channels, 0.0)
+      float_buffer.each_frame_sample { |sample, _frame, channel| sums[channel] += sample }
+      sums.map { |sum| sum / float_buffer.sample_frame_count.to_f }
+    end
+
     # @return [Audio]
     def remove_dc_offset
-      offset = dc_offset
-      map_samples { |sample, _index| sample - offset }
+      offsets = dc_offsets
+      map_samples { |sample, index| sample - offsets.fetch(index % channels) }
     end
 
     # @return [Float] zero-crossing rate per channel stream
@@ -881,6 +979,50 @@ module Wavify
     end
 
     private
+
+    def accumulate_statistics(samples, channels, consecutive_frames:)
+      peak = 0.0
+      square_sum = 0.0
+      channel_sums = Array.new(channels, 0.0)
+      previous = Array.new(channels)
+      crossings = 0
+      comparisons = 0
+      clipped_states = Array.new(channels) { { polarity: nil, count: 0 } }
+      clipped = false
+
+      samples.each_with_index do |sample, index|
+        channel = index % channels
+        absolute = sample.abs
+        peak = absolute if absolute > peak
+        square_sum += sample * sample
+        channel_sums[channel] += sample
+        prior = previous[channel]
+        if prior
+          crossings += 1 if (prior.negative? && sample >= 0.0) || (prior >= 0.0 && sample.negative?)
+          comparisons += 1
+        end
+        previous[channel] = sample
+
+        state = clipped_states.fetch(channel)
+        polarity = sample <= -1.0 ? -1 : (1 if sample >= 1.0)
+        if polarity
+          state[:count] = state[:polarity] == polarity ? state[:count] + 1 : 1
+          state[:polarity] = polarity
+          clipped ||= state[:count] >= consecutive_frames
+        else
+          state[:polarity] = nil
+          state[:count] = 0
+        end
+      end
+      frames = samples.length / channels
+      {
+        peak: peak,
+        rms: samples.empty? ? 0.0 : Math.sqrt(square_sum / samples.length),
+        dc_offsets: frames.zero? ? Array.new(channels, 0.0) : channel_sums.map { |sum| sum / frames.to_f },
+        zero_crossing_rate: comparisons.zero? ? 0.0 : crossings.to_f / comparisons,
+        clipped: clipped
+      }
+    end
 
     def clipped_samples?(samples, channels, consecutive_frames:)
       clipped_channels = Array.new(channels) { { polarity: nil, count: 0 } }
@@ -916,14 +1058,6 @@ module Wavify
       codec_options.dup
     end
     private_class_method :normalize_codec_options!
-
-    def self.resolve_stream_format!(path_or_io, codec:, format:)
-      return format if format
-      return codec.metadata(path_or_io)[:format] unless codec == Codecs::Raw
-
-      raise InvalidFormatError, "format is required for raw stream input"
-    end
-    private_class_method :resolve_stream_format!
 
     def normalize_codec_options!(codec_options)
       self.class.send(:normalize_codec_options!, codec_options)
@@ -967,7 +1101,9 @@ module Wavify
                 else
                   raise InvalidParameterError, "time value must be Numeric or Core::Duration"
                 end
-      raise InvalidParameterError, "time value must be non-negative" if seconds.negative?
+      unless seconds.respond_to?(:finite?) && seconds.finite? && seconds >= 0.0
+        raise InvalidParameterError, "time value must be a non-negative finite Numeric"
+      end
 
       seconds
     end
@@ -1005,8 +1141,7 @@ module Wavify
     def integrated_loudness(samples, format)
       DSP::LoudnessMeter.integrated(
         samples,
-        sample_rate: format.sample_rate,
-        channels: format.channels
+        format: format
       )
     end
 
@@ -1051,7 +1186,7 @@ module Wavify
           )
           base = frame_index * channels
           frame.each_index do |channel_index|
-            result[base + channel_index] = (frame[channel_index] * factor).clamp(-1.0, 1.0)
+            result[base + channel_index] = frame[channel_index] * factor
           end
         end
 
@@ -1062,9 +1197,13 @@ module Wavify
     def fade_factor_for(frame_index, fade_frames:, sample_frames:, start_frame:, mode:, curve:)
       linear_factor = case mode
                       when :in
-                        frame_index < fade_frames ? frame_index.to_f / fade_frames : 1.0
+                        frame_index < fade_frames ? fade_endpoint_ratio(frame_index, fade_frames, single_frame: 1.0) : 1.0
                       when :out
-                        frame_index >= start_frame ? (sample_frames - frame_index - 1).to_f / fade_frames : 1.0
+                        if frame_index >= start_frame
+                          fade_endpoint_ratio(sample_frames - frame_index - 1, fade_frames, single_frame: 0.0)
+                        else
+                          1.0
+                        end
                       end
 
       fade_curve_factor(linear_factor.clamp(0.0, 1.0), curve)
@@ -1079,6 +1218,12 @@ module Wavify
       when :log
         Math.log10(1.0 + (9.0 * value))
       end
+    end
+
+    def fade_endpoint_ratio(numerator, fade_frames, single_frame:)
+      return single_frame if fade_frames == 1
+
+      numerator.to_f / (fade_frames - 1)
     end
 
     def transform_samples(target_format: @buffer.format)
@@ -1101,7 +1246,25 @@ module Wavify
     end
 
     def validate_pan_position!(position)
-      raise InvalidParameterError, "position must be Numeric in -1.0..1.0" unless position.is_a?(Numeric) && position.between?(-1.0, 1.0)
+      unless position.is_a?(Numeric) && position.respond_to?(:finite?) && position.finite? && position.between?(-1.0, 1.0)
+        raise InvalidParameterError, "position must be a finite Numeric in -1.0..1.0"
+      end
+    end
+
+    def validate_finite_numeric!(value, name)
+      unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite?
+        raise InvalidParameterError, "#{name} must be a finite Numeric"
+      end
+
+      value.to_f
+    end
+
+    def validate_mapped_sample!(value, location)
+      unless value.is_a?(Numeric) && value.real? && value.respond_to?(:finite?) && value.finite?
+        raise InvalidParameterError, "mapped #{location} must be a finite real Numeric"
+      end
+
+      value.to_f
     end
 
     def replace_buffer!(new_buffer)

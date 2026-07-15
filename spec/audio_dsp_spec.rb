@@ -28,6 +28,13 @@ RSpec.describe Wavify::Audio do
       expect(normalized.peak_amplitude).to be_within(0.01).of(10.0**(-6.0 / 20.0))
     end
 
+    it "rejects positive peak targets and non-finite gain" do
+      audio = audio_with([0.1, -0.1])
+
+      expect { audio.normalize(target_db: 1.0) }.to raise_error(Wavify::InvalidParameterError, /<= 0/)
+      expect { audio.gain(Float::INFINITY) }.to raise_error(Wavify::InvalidParameterError, /finite/)
+    end
+
     it "trims leading and trailing silence" do
       audio = audio_with([0.0, 0.0, 0.25, -0.25, 0.0, 0.0])
       trimmed = audio.trim(threshold: 0.1)
@@ -52,11 +59,11 @@ RSpec.describe Wavify::Audio do
     end
 
     it "supports exponential and logarithmic fade curves" do
-      audio = audio_with([1.0, 1.0, 1.0, 1.0])
+      audio = audio_with([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
 
-      linear = audio.fade(2.0 / 44_100, type: :in, curve: :linear)
-      exponential = audio.fade_in(2.0 / 44_100, curve: :exp)
-      logarithmic = audio.fade_in(Wavify.ms(1000.0 / 44_100 * 2), curve: :log)
+      linear = audio.fade(3.0 / 44_100, type: :in, curve: :linear)
+      exponential = audio.fade_in(3.0 / 44_100, curve: :exp)
+      logarithmic = audio.fade_in(Wavify.ms(1000.0 / 44_100 * 3), curve: :log)
 
       expect(exponential.buffer.samples[2]).to be < linear.buffer.samples[2]
       expect(logarithmic.buffer.samples[2]).to be > linear.buffer.samples[2]
@@ -74,6 +81,14 @@ RSpec.describe Wavify::Audio do
       first_left, first_right = panned.buffer.samples[0, 2]
       expect(first_left.abs).to be < 0.05
       expect(first_right).to be > 0.4
+    end
+
+    it "separates mono pan from stereo balance and rotation" do
+      stereo = audio_with([0.5, 0.0])
+
+      expect { stereo.pan(1.0) }.to raise_error(Wavify::InvalidParameterError, /balance/)
+      expect(stereo.balance(1.0).buffer.samples.first).to be_within(1.0e-12).of(0.0)
+      expect(stereo.stereo_rotate(1.0).buffer.samples.last).to be > 0.3
     end
 
     it "reverses audio by sample frame" do
@@ -132,12 +147,24 @@ RSpec.describe Wavify::Audio do
       expect(frame_mapped.buffer.samples).to eq([-0.1, 0.1, -0.2, 0.2])
     end
 
+    it "rejects invalid mapped values with their location" do
+      audio = audio_with([0.1, -0.1])
+
+      expect do
+        audio.map_samples { "not a sample" }
+      end.to raise_error(Wavify::InvalidParameterError, /sample 0/)
+      expect do
+        audio.map_frames { [0.0, Float::NAN] }
+      end.to raise_error(Wavify::InvalidParameterError, /frame 0, channel 1/)
+    end
+
     it "reports stats, silence, clipping, dc offset, and zero crossings" do
       audio = audio_with([0.5, 0.5, -0.5, -0.5])
       silent = audio_with([0.0, 0.0])
       clipped = audio_with([1.0, 0.0, 1.0, 0.0])
 
       expect(audio.stats[:sample_frame_count]).to eq(2)
+      expect(audio.stats).to include(:sample_peak_amplitude, :true_peak_amplitude, :dc_offsets, :zero_crossing_rate)
       expect(silent.silent?).to eq(true)
       expect(clipped.clipped?).to eq(true)
       expect(audio.dc_offset).to eq(0.0)
@@ -165,6 +192,22 @@ RSpec.describe Wavify::Audio do
       corrected = audio.remove_dc_offset
 
       expect(corrected.dc_offset).to be_within(0.0001).of(0.0)
+    end
+
+    it "measures and removes DC independently per channel" do
+      audio = audio_with([0.2, -0.2, 0.2, -0.2])
+
+      expect(audio.dc_offset).to eq(0.0)
+      expect(audio.dc_offsets).to eq([0.2, -0.2])
+      expect(audio.remove_dc_offset.dc_offsets).to all(be_within(0.0001).of(0.0))
+    end
+
+    it "distinguishes sample peak and true peak" do
+      audio = audio_with([0.0, 0.0, 1.0, 1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0])
+
+      expect(audio.sample_peak_amplitude).to eq(1.0)
+      expect(audio.true_peak_amplitude).to be >= audio.sample_peak_amplitude
+      expect(audio.true_peak_dbfs).to be >= audio.sample_peak_dbfs
     end
 
     it "inspects with human-readable audio details" do

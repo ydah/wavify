@@ -145,9 +145,9 @@ RSpec.describe Wavify::Audio do
 
       expect(metadata[:sample_frame_count]).to eq(decoded_frames)
       expect(metadata[:fact_sample_length]).to eq(decoded_frames)
-      expect(metadata[:loops].first).to include(start_frame: 120, end_frame: 239, length_frames: 120)
+      expect(metadata[:loops].first).to include(start_frame: 120, end_frame: 240, length_frames: 121)
       expect(metadata[:cue_points].first).to include(position: 120, sample_offset: 239)
-      expect(metadata.dig(:smpl, :loops, 0)).to include(start_frame: 120, end_frame: 239)
+      expect(metadata.dig(:smpl, :loops, 0)).to include(start_frame: 120, end_frame: 240)
       expect(metadata.dig(:cue, :points)).to eq(metadata[:cue_points])
     end
 
@@ -270,6 +270,37 @@ RSpec.describe Wavify::Audio do
       stream = described_class.stream(io, filename: "clip.raw", format: raw_format, chunk_size: 2)
 
       expect(stream.each_chunk.flat_map(&:samples)).to eq(source_buffer.samples)
+    end
+
+    it "learns stream format from decoding without a duplicate metadata probe" do
+      stream_format = format.with(channels: 1, sample_format: :float, bit_depth: 32)
+      codec = Class.new do
+        class << self
+          attr_accessor :metadata_calls, :stream_calls, :stream_format
+
+          def metadata(_source)
+            self.metadata_calls += 1
+            { format: stream_format }
+          end
+
+          def stream_read(_source, chunk_size:)
+            self.stream_calls += 1
+            yield Wavify::Core::SampleBuffer.new(Array.new(chunk_size, 0.0), stream_format)
+          end
+        end
+      end
+      codec.metadata_calls = 0
+      codec.stream_calls = 0
+      codec.stream_format = stream_format
+      allow(Wavify::Codecs::Registry).to receive(:detect_for_read).and_return(codec)
+
+      stream = described_class.stream("virtual.audio", chunk_size: 2)
+      chunks = stream.each_chunk.to_a
+
+      expect(chunks.first.format).to eq(stream_format)
+      expect(stream.format).to eq(stream_format)
+      expect(codec.metadata_calls).to eq(0)
+      expect(codec.stream_calls).to eq(1)
     end
   end
 
@@ -398,6 +429,17 @@ RSpec.describe Wavify::Audio do
       expect do
         described_class.mix(a, b)
       end.to raise_error(Wavify::InvalidParameterError)
+    end
+
+    it "accepts an explicit target format for heterogeneous inputs" do
+      f1 = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
+      f2 = Wavify::Core::Format.new(channels: 2, sample_rate: 48_000, bit_depth: 32, sample_format: :float)
+      a = described_class.new(Wavify::Core::SampleBuffer.new([0.1, 0.2], f1))
+      b = described_class.new(Wavify::Core::SampleBuffer.new([0.1, 0.1, 0.2, 0.2], f2))
+
+      mixed = described_class.mix(a, b, format: f2, strategy: :headroom)
+
+      expect(mixed.format).to eq(f2)
     end
   end
 
@@ -545,6 +587,15 @@ RSpec.describe Wavify::Audio do
       expect(repeated.sample_frame_count).to eq(6)
       expect(repeated.buffer.samples).to eq([10, -10, 20, -20] * 3)
       expect(source.buffer.samples).to eq([10, -10, 20, -20])
+    end
+
+    it "bounds eager allocation and offers lazy chunks" do
+      source = described_class.new(Wavify::Core::SampleBuffer.new([10, -10], format))
+
+      expect do
+        source.repeat(times: described_class::MAX_REPEAT_FRAMES + 1)
+      end.to raise_error(Wavify::InvalidParameterError, /repeat_chunks/)
+      expect(source.repeat_chunks(times: 2, chunk_frames: 1).flat_map(&:samples)).to eq([10, -10, 10, -10])
     end
   end
 

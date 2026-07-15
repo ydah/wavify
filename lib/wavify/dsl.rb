@@ -287,7 +287,9 @@ module Wavify
         mixed.map! { |sample| sample.clamp(-1.0, 1.0) }
         rendered = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(mixed, work_format))
         rendered = rendered.gain(track.gain_db) if track.gain_db != 0.0
-        rendered = rendered.pan(track.pan_position) if track.pan_position != 0.0
+        if track.pan_position != 0.0
+          rendered = rendered.channels == 1 ? rendered.pan(track.pan_position) : rendered.balance(track.pan_position)
+        end
         rendered = track.effect_processors.reduce(rendered) { |audio, effect| audio.apply(effect) }
         rendered.convert(@format)
       end
@@ -350,7 +352,9 @@ module Wavify
         processed = pitch_sample_option(processed, options)
         processed = processed.convert(work_format)
         processed = processed.gain(options[:gain]) if options.key?(:gain)
-        processed = processed.pan(options[:pan]) if options.key?(:pan)
+        if options.key?(:pan)
+          processed = processed.channels == 1 ? processed.pan(options[:pan]) : processed.balance(options[:pan])
+        end
         processed
       end
 

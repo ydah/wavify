@@ -16,6 +16,29 @@ module Wavify
 
       PACKED_ENUMERATION_CHUNK_SAMPLES = 4_096
 
+      # Builds integer PCM samples without normalized-float ambiguity.
+      def self.from_pcm_samples(samples, format, storage: :array)
+        unless format.is_a?(Format) && format.sample_format == :pcm
+          raise InvalidParameterError, "format must be a PCM Core::Format"
+        end
+        unless samples.is_a?(Array) && samples.all? { |sample| sample.is_a?(Integer) }
+          raise InvalidParameterError, "PCM samples must be Integers"
+        end
+
+        new(samples, format, storage: storage)
+      end
+
+      # Builds a buffer from normalized floating-point samples.
+      def self.from_normalized_samples(samples, format, storage: :array)
+        unless samples.is_a?(Array) && samples.all? do |sample|
+          sample.is_a?(Numeric) && sample.real? && sample.respond_to?(:finite?) && sample.finite?
+        end
+          raise InvalidParameterError, "normalized samples must be finite real Numeric values"
+        end
+
+        new(samples.map(&:to_f), format, storage: storage)
+      end
+
       # Lazy no-copy view over interleaved samples as sample frames.
       class FrameView
         include Enumerable
@@ -203,6 +226,16 @@ module Wavify
           @storage_state = storage_state(samples: materialized, packed_samples: nil, type: :array)
         end
         @storage_state.samples
+      end
+
+      # Iterates interleaved values without allocating a frame Array.
+      def each_frame_sample
+        return enum_for(:each_frame_sample) unless block_given?
+
+        each.with_index do |sample, sample_index|
+          yield sample, sample_index / @format.channels, sample_index % @format.channels
+        end
+        self
       end
 
       def storage

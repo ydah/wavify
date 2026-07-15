@@ -89,7 +89,8 @@ module Wavify
         def measurement_input(samples, sample_rate:, channels:, format:, channel_layout:)
           if samples.is_a?(Core::SampleBuffer)
             format ||= samples.format
-            samples = samples.convert(samples.format.with(sample_format: :float, bit_depth: 32)).samples
+            float_format = samples.format.with(sample_format: :float, bit_depth: 32)
+            samples = (samples.format == float_format ? samples : samples.convert(float_format)).samples
           end
           if format
             raise InvalidParameterError, "format must be Core::Format" unless format.is_a?(Core::Format)

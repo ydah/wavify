@@ -18,6 +18,23 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(buffer.map { |sample| sample * 2 }).to eq([2, 4, 6, 8])
     end
 
+    it "provides explicit PCM and normalized constructors" do
+      pcm = described_class.from_pcm_samples([1, -1], pcm16_stereo)
+      normalized = described_class.from_normalized_samples([1, -1], pcm16_stereo)
+
+      expect(pcm.samples).to eq([1, -1])
+      expect(normalized.samples).to eq([32_767, -32_768])
+      expect do
+        described_class.from_pcm_samples([1.0, -1.0], pcm16_stereo)
+      end.to raise_error(Wavify::InvalidParameterError, /Integers/)
+    end
+
+    it "iterates frame coordinates without allocating frame arrays" do
+      buffer = described_class.new([1, 2, 3, 4], pcm16_stereo)
+
+      expect(buffer.each_frame_sample.to_a).to eq([[1, 0, 0], [2, 0, 1], [3, 1, 0], [4, 1, 1]])
+    end
+
     it "exposes a lazy frame view without allowing sample mutation" do
       buffer = described_class.new([1, 2, 3, 4, 5, 6], pcm16_stereo)
       view = buffer.frame_view
