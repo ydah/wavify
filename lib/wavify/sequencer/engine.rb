@@ -137,8 +137,6 @@ module Wavify
           markers = normalize_section_markers(section.fetch(:markers, []))
 
           track_names = Array(section.fetch(:tracks)).map(&:to_sym)
-          raise SequencerError, "section tracks must not be empty" if track_names.empty?
-
           unknown = track_names - track_map.keys
           raise SequencerError, "unknown tracks in section #{name}: #{unknown.join(', ')}" unless unknown.empty?
 

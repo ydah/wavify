@@ -212,6 +212,33 @@ RSpec.describe Wavify::DSL do
       expect(timeline.any? { |event| event[:track] == :drums && event[:kind] == :trigger }).to be(true)
     end
 
+    it "preserves silent arrangement sections when rendering synth tracks and stems" do
+      song = described_class.build_definition(format: format, tempo: 120) do
+        track(:rest)
+
+        track :lead do
+          notes "C4", resolution: 4
+        end
+
+        arrange do
+          section :intro, bars: 1, tracks: [:rest]
+          section :main, bars: 1, tracks: [:lead]
+        end
+      end
+
+      lead_start_frame = (song.timeline.find { |event| event[:track] == :lead }.fetch(:start_time) * format.sample_rate).round
+      mix = song.render
+      stem = song.render(stems: true).fetch(:lead)
+
+      [mix, stem].each do |audio|
+        samples_before_lead = audio.buffer.samples.first(lead_start_frame * format.channels)
+        samples_after_lead = audio.buffer.samples.drop(lead_start_frame * format.channels)
+
+        expect(samples_before_lead).to all(eq(0.0))
+        expect(samples_after_lead.any? { |sample| sample.abs.positive? }).to eq(true)
+      end
+    end
+
     it "applies swing timing to DSL timelines" do
       song = described_class.build_definition(format: format, tempo: 120, swing: 0.6) do
         track :drums do

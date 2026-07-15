@@ -136,9 +136,8 @@ module Wavify
                           else
                             playable_names = playable_tracks.map(&:name)
                             playable_arrangement = if arrangement?
-                                                     arrangement.filter_map do |section|
-                                                       active_tracks = section.fetch(:tracks) & playable_names
-                                                       section.merge(tracks: active_tracks) unless active_tracks.empty?
+                                                     arrangement.map do |section|
+                                                       section.merge(tracks: section.fetch(:tracks) & playable_names)
                                                      end
                                                    end
                             engine.render(
@@ -407,10 +406,9 @@ module Wavify
       end
 
       def arrangement_for_track(track_name)
-        arrangement.filter_map do |section|
-          next unless section.fetch(:tracks).include?(track_name)
-
-          section.merge(tracks: [track_name])
+        arrangement.map do |section|
+          tracks = section.fetch(:tracks).include?(track_name) ? [track_name] : []
+          section.merge(tracks: tracks)
         end
       end
 
