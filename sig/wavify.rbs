@@ -127,6 +127,14 @@ module Wavify
         def lookahead: () -> Float
         def tail_duration: () -> Float
       end
+
+      class NoiseGate
+        def initialize: (?threshold: Numeric, ?floor: Numeric, ?attack: Numeric, ?hold: Numeric, ?release: Numeric) -> void
+      end
+
+      class Expander
+        def initialize: (?threshold: Numeric, ?ratio: Numeric, ?floor: Numeric, ?attack: Numeric, ?hold: Numeric, ?release: Numeric) -> void
+      end
     end
 
     class Filter
