@@ -208,6 +208,30 @@ RSpec.describe Wavify::DSP::Effects do
       expect(processed.sample_frame_count + tail.sample_frame_count).to eq(source.sample_frame_count + 2)
       expect((processed.samples + tail.samples).map(&:abs).max).to be <= 0.5
     end
+
+    it "scales peak detection linearly with input length" do
+      counting_limiter = Class.new(described_class) do
+        attr_reader :peak_calls
+
+        private
+
+        def frame_peak(frame)
+          @peak_calls = (@peak_calls || 0) + 1
+          super
+        end
+      end.new(lookahead: 0.005)
+      source = Wavify::Core::SampleBuffer.new(Array.new(4_000, 0.5), mono_float)
+
+      counting_limiter.apply(source)
+
+      expect(counting_limiter.peak_calls).to be < (source.sample_frame_count * 3)
+    end
+
+    it "rejects sample-wise processing that cannot preserve lookahead semantics" do
+      expect do
+        described_class.new.process_sample(1.0, channel: 0, sample_rate: 44_100)
+      end.to raise_error(NotImplementedError, /frame-aware/)
+    end
   end
 
   describe Wavify::DSP::Effects::SoftLimiter do

@@ -42,4 +42,6 @@ preview = Wavify::Audio.stream("input.wav", chunk_size: 2048)
 Use `dry_run(format:)` to validate reading, processors, and optional output conversion without writing files. `latency`, `lookahead`, and `pipeline_steps` expose processor timing metadata when processors provide it.
 Streaming failures are raised as `StreamError` with codec, target, and `chunk_size` context.
 
+Lookahead processors retain their delay in streamed output. For example, `Limiter#process` emits leading silence equal to `latency`, and `flush` emits the retained final frames. `Stream#write_to` reports this latency but does not remove or shift those samples automatically. Offline `Limiter#apply` returns a latency-compensated result with the original length.
+
 Path-backed streams reopen their source for every pass. Caller-owned IO is rewound before reuse when it supports `rewind`; non-rewindable IO is single-use and raises before a second enumeration. Exceptions from user processors and `meter`/`progress` callbacks retain their original exception class.
