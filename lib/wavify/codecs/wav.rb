@@ -161,11 +161,16 @@ module Wavify
             raise InvalidParameterError, "stream chunk must be Core::SampleBuffer" unless chunk.is_a?(Core::SampleBuffer)
 
             buffer = chunk.format == format ? chunk : chunk.convert(format)
-            encoded = encode_samples(buffer.samples, format)
-            next_data_bytes = total_data_bytes + encoded.bytesize
+            encoded_bytes = buffer.sample_frame_count * format.block_align
+            next_data_bytes = total_data_bytes + encoded_bytes
             next_sample_frames = total_sample_frames + buffer.sample_frame_count
-            projected_container_bytes = (io.pos - header.fetch(:container_start)) + encoded.bytesize + (next_data_bytes.odd? ? 1 : 0)
+            projected_container_bytes = (io.pos - header.fetch(:container_start)) + encoded_bytes + (next_data_bytes.odd? ? 1 : 0)
             validate_riff_sizes!(next_data_bytes, next_sample_frames, projected_container_bytes)
+            encoded = encode_samples(buffer.samples, format)
+            unless encoded.bytesize == encoded_bytes
+              raise StreamError, "WAV encoder produced an unexpected byte count"
+            end
+
             write_all(io, encoded)
             total_data_bytes = next_data_bytes
             total_sample_frames = next_sample_frames
@@ -664,12 +669,14 @@ module Wavify
         end
 
         def decode_pcm24(data)
-          bytes = data.unpack("C*")
-          bytes.each_slice(3).map do |b0, b1, b2|
-            value = b0 | (b1 << 8) | (b2 << 16)
+          samples = Array.new(data.bytesize / 3)
+          samples.length.times do |index|
+            offset = index * 3
+            value = data.getbyte(offset) | (data.getbyte(offset + 1) << 8) | (data.getbyte(offset + 2) << 16)
             value -= 0x1000000 if value.anybits?(0x800000)
-            value
+            samples[index] = value
           end
+          samples
         end
 
         def encode_samples(samples, format)
@@ -691,12 +698,13 @@ module Wavify
         end
 
         def encode_pcm24(samples)
-          bytes = samples.flat_map do |sample|
+          bytes = String.new(capacity: samples.length * 3, encoding: Encoding::BINARY)
+          samples.each do |sample|
             value = sample
             value += 0x1000000 if value.negative?
-            [value & 0xFF, (value >> 8) & 0xFF, (value >> 16) & 0xFF]
+            bytes << (value & 0xFF) << ((value >> 8) & 0xFF) << ((value >> 16) & 0xFF)
           end
-          bytes.pack("C*")
+          bytes
         end
 
         def build_fmt_chunk(format)

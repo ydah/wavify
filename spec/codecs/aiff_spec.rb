@@ -117,10 +117,31 @@ RSpec.describe Wavify::Codecs::Aiff do
         file.flush
 
         metadata = described_class.metadata(file.path)
-        expect(metadata[:markers]).to eq([{ identifier: 1, position: 10, name: "loop" }])
+        expect(metadata[:markers]).to eq(
+          [{ identifier: 1, position: 10, name: "loop", raw_name_bytes: "loop".b }]
+        )
         expect(metadata[:instrument][:base_note]).to eq(60)
         expect(metadata[:instrument][:sustain_loop]).to eq(mode: 1, begin_marker: 1, end_marker: 1)
       end
+    end
+
+    it "scrubs invalid UTF-8 marker names while retaining their raw bytes" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 8, sample_format: :pcm)
+      comm_chunk = described_class.send(:build_comm_chunk, format, 1)
+      raw_name = "\xFFbad".b
+      marker_record = [1, 0, raw_name.bytesize].pack("n N C") + raw_name + "\x00"
+      bytes = build_aiff_bytes(
+        ["COMM", comm_chunk],
+        ["MARK", [1].pack("n") + marker_record],
+        ["SSND", [0, 0].pack("N2") + "\x00"]
+      )
+
+      metadata = described_class.metadata(StringIO.new(bytes))
+      marker = metadata.fetch(:markers).first
+
+      expect(marker.fetch(:name)).to eq("�bad")
+      expect(marker.fetch(:raw_name_bytes)).to eq(raw_name)
+      expect(marker.fetch(:raw_name_bytes).encoding).to eq(Encoding::ASCII_8BIT)
     end
 
     it "reads uncompressed AIFF-C metadata and little-endian PCM samples" do

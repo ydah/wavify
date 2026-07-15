@@ -140,13 +140,18 @@ module Wavify
             raise InvalidParameterError, "stream chunk must be Core::SampleBuffer" unless buffer.is_a?(Core::SampleBuffer)
 
             converted = buffer.format == format ? buffer : buffer.convert(format)
-            encoded = encode_samples(converted.samples, format, byte_order: write_options.fetch(:byte_order))
+            encoded_bytes = converted.sample_frame_count * format.block_align
             validate_aiff_sizes!(
-              data_bytes: total_data_bytes + encoded.bytesize,
+              data_bytes: total_data_bytes + encoded_bytes,
               sample_frames: total_sample_frames + converted.sample_frame_count
             )
+            encoded = encode_samples(converted.samples, format, byte_order: write_options.fetch(:byte_order))
+            unless encoded.bytesize == encoded_bytes
+              raise StreamError, "AIFF encoder produced an unexpected byte count"
+            end
+
             write_all(io, encoded)
-            total_data_bytes += encoded.bytesize
+            total_data_bytes += encoded_bytes
             total_sample_frames += converted.sample_frame_count
           end
           yield writer
@@ -400,8 +405,9 @@ module Wavify
             name_start = offset + 7
             raise InvalidFormatError, "truncated MARK marker name" if name_start + name_length > chunk.bytesize
 
-            name = chunk.byteslice(name_start, name_length).force_encoding(Encoding::UTF_8)
-            markers << { identifier: identifier, position: position, name: name }
+            raw_name = chunk.byteslice(name_start, name_length).b.freeze
+            name = raw_name.dup.force_encoding(Encoding::UTF_8).scrub.freeze
+            markers << { identifier: identifier, position: position, name: name, raw_name_bytes: raw_name }.freeze
             offset = name_start + name_length
             offset += 1 if (name_length + 1).odd?
           end
