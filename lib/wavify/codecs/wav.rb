@@ -181,7 +181,8 @@ module Wavify
             broadcast_extension: info[:bext],
             rf64: info[:rf64],
             container_bit_depth: info[:container_bit_depth],
-            valid_bits_per_sample: info[:valid_bits_per_sample]
+            valid_bits_per_sample: info[:valid_bits_per_sample],
+            warnings: info[:warnings].freeze
           }
         ensure
           io.close if close_io && io
@@ -248,6 +249,7 @@ module Wavify
             format: nil,
             container_bit_depth: nil,
             valid_bits_per_sample: nil,
+            warnings: [],
             data_offset: nil,
             data_size: nil,
             sample_frame_count: nil,
@@ -275,6 +277,7 @@ module Wavify
               info[:format] = fmt_info.fetch(:format)
               info[:container_bit_depth] = fmt_info.fetch(:container_bit_depth)
               info[:valid_bits_per_sample] = fmt_info.fetch(:valid_bits_per_sample)
+              info[:warnings].concat(fmt_info.fetch(:warnings))
             when "data"
               info[:data_offset] = io.pos
               data_size = rf64_chunk_size(info, :data_size, chunk_size)
@@ -386,14 +389,18 @@ module Wavify
 
           expected_block_align = format.block_align
           expected_byte_rate = format.byte_rate
-          unless block_align == expected_block_align && byte_rate == expected_byte_rate
-            raise InvalidFormatError, "fmt chunk has inconsistent byte_rate/block_align"
+          raise InvalidFormatError, "fmt chunk has inconsistent block_align" unless block_align == expected_block_align
+
+          warnings = []
+          if byte_rate != expected_byte_rate
+            warnings << "fmt chunk byte_rate #{byte_rate} does not match expected #{expected_byte_rate}"
           end
 
           {
             format: format,
             container_bit_depth: container_bit_depth,
-            valid_bits_per_sample: valid_bits
+            valid_bits_per_sample: valid_bits,
+            warnings: warnings
           }
         end
 

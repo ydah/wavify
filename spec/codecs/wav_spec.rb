@@ -301,6 +301,35 @@ RSpec.describe Wavify::Codecs::Wav do
   end
 
   describe "chunk parsing behavior" do
+    it "tolerates incorrect byte rate while reporting a metadata warning" do
+      fmt_chunk = [1, 1, 8_000, 123, 1, 8].pack("v v V V v v")
+      bytes = build_wave_bytes(["fmt ", fmt_chunk], ["data", [128, 129].pack("C*")])
+
+      Tempfile.create(["wavify-bad-byte-rate", ".wav"]) do |file|
+        file.binmode
+        file.write(bytes)
+        file.flush
+
+        expect(described_class.read(file.path).samples).to eq([0, 1])
+        expect(described_class.metadata(file.path)[:warnings]).to include(/byte_rate 123/)
+      end
+    end
+
+    it "rejects incorrect block alignment" do
+      fmt_chunk = [1, 1, 8_000, 8_000, 2, 8].pack("v v V V v v")
+      bytes = build_wave_bytes(["fmt ", fmt_chunk], ["data", [128, 129].pack("C*")])
+
+      Tempfile.create(["wavify-bad-block-align", ".wav"]) do |file|
+        file.binmode
+        file.write(bytes)
+        file.flush
+
+        expect do
+          described_class.read(file.path)
+        end.to raise_error(Wavify::InvalidFormatError, /block_align/)
+      end
+    end
+
     it "ignores extra bytes in non-extensible fmt chunk" do
       fmt_chunk = [1, 1, 8_000, 8_000, 1, 8, 0].pack("v v V V v v v")
       data_chunk = [128, 255].pack("C*")
