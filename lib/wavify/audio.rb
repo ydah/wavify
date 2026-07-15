@@ -575,7 +575,7 @@ module Wavify
       db = validate_finite_numeric!(db, :db)
       factor = 10.0**(db / 20.0)
       transform_samples do |samples, _format|
-        samples.map { |sample| sample * factor }
+        samples.map! { |sample| sample * factor }
       end
     end
 
@@ -607,7 +607,7 @@ module Wavify
           next samples unless current_lufs.finite?
 
           factor = 10.0**((target_db.to_f - current_lufs) / 20.0)
-          next samples.map { |sample| sample * factor }
+          next samples.map! { |sample| sample * factor }
         end
 
         current = normalize_reference_amplitude(samples, normalize_mode)
@@ -615,7 +615,7 @@ module Wavify
 
         target = 10.0**(target_db.to_f / 20.0)
         factor = target / current
-        samples.map { |sample| sample * factor }
+        samples.map! { |sample| sample * factor }
       end
     end
 
@@ -720,13 +720,12 @@ module Wavify
 
       transform_samples(target_format: source_format) do |samples, _format|
         left_gain, right_gain = constant_power_pan_gains(position.to_f)
-        result = samples.dup
-        result.each_slice(2).with_index do |(left, right), frame_index|
+        samples.each_slice(2).with_index do |(left, right), frame_index|
           base = frame_index * 2
-          result[base] = left * left_gain
-          result[base + 1] = right * right_gain
+          samples[base] = left * left_gain
+          samples[base + 1] = right * right_gain
         end
-        result
+        samples
       end
     end
 
@@ -747,7 +746,12 @@ module Wavify
       transform_samples do |samples, _format|
         left_gain = position.positive? ? Math.cos(position * Math::PI / 2.0) : 1.0
         right_gain = position.negative? ? Math.cos(position.abs * Math::PI / 2.0) : 1.0
-        samples.each_slice(2).flat_map { |left, right| [left * left_gain, right * right_gain] }
+        samples.each_slice(2).with_index do |(left, right), frame_index|
+          base = frame_index * 2
+          samples[base] = left * left_gain
+          samples[base + 1] = right * right_gain
+        end
+        samples
       end
     end
 
@@ -760,9 +764,12 @@ module Wavify
       cosine = Math.cos(angle)
       sine = Math.sin(angle)
       transform_samples do |samples, _format|
-        samples.each_slice(2).flat_map do |left, right|
-          [(left * cosine) - (right * sine), (left * sine) + (right * cosine)]
+        samples.each_slice(2).with_index do |(left, right), frame_index|
+          base = frame_index * 2
+          samples[base] = (left * cosine) - (right * sine)
+          samples[base + 1] = (left * sine) + (right * cosine)
         end
+        samples
       end
     end
 
@@ -797,7 +804,7 @@ module Wavify
       return enum_for(:map_samples) unless block_given?
 
       transform_samples do |samples, _format|
-        samples.map.with_index do |sample, sample_index|
+        samples.map!.with_index do |sample, sample_index|
           validate_mapped_sample!(yield(sample, sample_index), "sample #{sample_index}")
         end
       end
@@ -1179,10 +1186,9 @@ module Wavify
         fade_frames = [(fade_seconds * format.sample_rate).round, sample_frames].min
         next samples if fade_frames.zero?
 
-        result = samples.dup
         start_frame = sample_frames - fade_frames
 
-        result.each_slice(channels).with_index do |frame, frame_index|
+        samples.each_slice(channels).with_index do |frame, frame_index|
           factor = fade_factor_for(
             frame_index,
             fade_frames: fade_frames,
@@ -1193,11 +1199,11 @@ module Wavify
           )
           base = frame_index * channels
           frame.each_index do |channel_index|
-            result[base + channel_index] = frame[channel_index] * factor
+            samples[base + channel_index] = frame[channel_index] * factor
           end
         end
 
-        result
+        samples
       end
     end
 
@@ -1237,9 +1243,10 @@ module Wavify
       raise InvalidParameterError, "target_format must be Core::Format" unless target_format.is_a?(Core::Format)
 
       work_format = float_work_format(target_format)
-      working_buffer = @buffer.convert(work_format)
-      transformed_samples = yield(working_buffer.samples.dup, work_format)
-      processed = Core::SampleBuffer.new(transformed_samples, work_format).convert(target_format)
+      workspace = Core::SampleBuffer::MutableFloatWorkspace.from_buffer(@buffer, format: work_format)
+      transformed_samples = yield(workspace.samples, work_format)
+      workspace.replace!(transformed_samples) unless transformed_samples.equal?(workspace.samples)
+      processed = workspace.to_sample_buffer.convert(target_format)
       self.class.new(processed)
     end
 

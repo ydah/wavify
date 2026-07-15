@@ -479,6 +479,21 @@ RSpec.describe Wavify::Audio do
     end
   end
 
+  describe "mutable float transforms" do
+    it "transfers the workspace into the result without rebuilding the SampleBuffer array" do
+      float_format = format.with(channels: 1, sample_format: :float, bit_depth: 32)
+      source = described_class.new(Wavify::Core::SampleBuffer.new([0.25, -0.5], float_format))
+      expect(Wavify::Core::SampleBuffer).not_to receive(:new)
+
+      gained = source.gain(-6.0206)
+
+      expect(gained.buffer.samples).to all(be_a(Float))
+      expect(gained.buffer.samples).to be_frozen
+      expect(gained.buffer.samples).to all(be_between(-0.25, 0.125))
+      expect(source.buffer.samples).to eq([0.25, -0.5])
+    end
+  end
+
   describe "#convert" do
     it "returns a new audio with converted format" do
       source = described_class.new(Wavify::Core::SampleBuffer.new([100, -100], format.with(channels: 1)))
