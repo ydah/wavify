@@ -55,12 +55,18 @@ module Wavify
         6 => 24
       }.freeze
 
+      # Bounds malicious unary/Rice runs before they can consume unbounded CPU.
+      MAX_UNARY_ZERO_RUN = 1_048_576
+
       # Internal bit reader used by the FLAC decoder.
       class BitReader # :nodoc:
+        attr_reader :captured_bytes
+
         def initialize(io)
           @io = io
           @buffer = 0
           @bits_available = 0
+          @captured_bytes = +"".b
         end
 
         def read_bits(count)
@@ -103,6 +109,7 @@ module Wavify
           byte = @io.read(1)
           raise InvalidFormatError, "truncated FLAC frame" if byte.nil?
 
+          @captured_bytes << byte
           @buffer = byte.getbyte(0)
           @bits_available = 8
         end
@@ -111,7 +118,7 @@ module Wavify
       # Internal bit writer used by the FLAC encoder.
       class BitWriter # :nodoc:
         def initialize
-          @bytes = []
+          @bytes = +"".b
           @buffer = 0
           @bits_used = 0
         end
@@ -120,11 +127,13 @@ module Wavify
           raise InvalidParameterError, "bit count must be a non-negative Integer" unless count.is_a?(Integer) && count >= 0
           return if count.zero?
 
-          count.times do |shift_index|
-            shift = (count - 1) - shift_index
-            bit = (value >> shift) & 0x1
-            @buffer = (@buffer << 1) | bit
-            @bits_used += 1
+          remaining = count
+          while remaining.positive?
+            take = [8 - @bits_used, remaining].min
+            shift = remaining - take
+            @buffer = (@buffer << take) | ((value >> shift) & ((1 << take) - 1))
+            @bits_used += take
+            remaining -= take
             flush_byte_if_needed
           end
         end
@@ -135,7 +144,27 @@ module Wavify
         end
 
         def write_unary_zeros_then_one(zero_count) # :nodoc:
-          zero_count.times { write_bits(0, 1) }
+          unless zero_count.is_a?(Integer) && zero_count.between?(0, MAX_UNARY_ZERO_RUN)
+            raise InvalidParameterError, "FLAC unary zero run exceeds resource limit"
+          end
+
+          if @bits_used.positive?
+            fill = [8 - @bits_used, zero_count].min
+            @buffer <<= fill
+            @bits_used += fill
+            zero_count -= fill
+            flush_byte_if_needed
+          end
+
+          if @bits_used.zero? && zero_count >= 8
+            whole_bytes, zero_count = zero_count.divmod(8)
+            @bytes << ("\x00".b * whole_bytes)
+          end
+
+          if zero_count.positive?
+            @buffer <<= zero_count
+            @bits_used += zero_count
+          end
           write_bits(1, 1)
         end
 
@@ -159,7 +188,7 @@ module Wavify
 
         def to_s # :nodoc:
           align_to_byte
-          @bytes.pack("C*")
+          @bytes.dup
         end
 
         private
@@ -193,7 +222,6 @@ module Wavify
         # @return [Wavify::Core::SampleBuffer]
         def read(io_or_path, format: nil)
           io, close_io = open_input(io_or_path)
-          ensure_seekable!(io)
 
           metadata = parse_metadata(io)
           source_format = metadata.fetch(:format)
@@ -243,7 +271,6 @@ module Wavify
           raise InvalidParameterError, "chunk_size must be a positive Integer" unless chunk_size.is_a?(Integer) && chunk_size.positive?
 
           io, close_io = open_input(io_or_path)
-          ensure_seekable!(io)
 
           metadata = parse_metadata(io)
           format = metadata.fetch(:format)
@@ -401,7 +428,6 @@ module Wavify
         # @return [Hash]
         def metadata(io_or_path)
           io, close_io = open_input(io_or_path)
-          ensure_seekable!(io)
 
           parse_metadata(io)
         ensure
@@ -642,19 +668,33 @@ module Wavify
           normalized = case comments
                        when Hash
                          comments.flat_map do |key, value|
-                           Array(value).map { |entry| "#{key}=#{entry}" }
+                           Array(value).map { |entry| normalize_vorbis_comment_entry(key, entry) }
                          end
                        when Array
                          comments.map do |entry|
                            key, value = entry.to_s.split("=", 2)
                            raise InvalidParameterError, "FLAC comments must be KEY=VALUE strings" unless key && value
 
-                           "#{key}=#{value}"
+                           normalize_vorbis_comment_entry(key, value)
                          end
                        else
                          raise InvalidParameterError, "comments must be a Hash or Array"
                        end
           normalized.empty? ? nil : normalized
+        end
+
+        def normalize_vorbis_comment_entry(key, value)
+          field_name = key.to_s
+          unless field_name.match?(/\A[\x20-\x3C\x3E-\x7D]+\z/)
+            raise InvalidParameterError, "FLAC comment field names must be printable ASCII without '='"
+          end
+
+          text = value.to_s.encode(Encoding::UTF_8)
+          raise InvalidParameterError, "FLAC comment values must be valid UTF-8" unless text.valid_encoding?
+
+          "#{field_name}=#{text}"
+        rescue EncodingError
+          raise InvalidParameterError, "FLAC comment values must be valid UTF-8"
         end
 
         def normalize_stereo_coding!(stereo_coding)
@@ -1338,10 +1378,6 @@ module Wavify
           until io.eof?
             break if bounded_total && remaining_frames <= 0
 
-            next_byte = io.read(1)
-            break if next_byte.nil?
-
-            io.seek(-1, IO::SEEK_CUR)
             frame_samples = decode_frame(io, metadata)
 
             if bounded_total
@@ -1365,21 +1401,19 @@ module Wavify
         end
 
         def decode_frame(io, metadata)
-          frame_start = io.pos
           bit_reader = BitReader.new(io)
-          frame_header = parse_frame_header(bit_reader, metadata, io: io, frame_start: frame_start)
+          frame_header = parse_frame_header(bit_reader, metadata)
           channel_samples = decode_subframes(bit_reader, frame_header)
           channel_samples = restore_channel_assignment(channel_samples, frame_header)
           bit_reader.align_to_byte
-          crc_offset = io.pos
+          actual_crc16 = flac_crc16(bit_reader.captured_bytes)
           expected_crc16 = bit_reader.read_bits(16)
-          actual_crc16 = flac_crc16(io_bytes(io, frame_start, crc_offset))
           raise InvalidFormatError, "FLAC frame CRC-16 mismatch" unless expected_crc16 == actual_crc16
 
           interleave_channels(channel_samples, frame_header.fetch(:block_size), frame_header.fetch(:channels))
         end
 
-        def parse_frame_header(bit_reader, metadata, io:, frame_start:)
+        def parse_frame_header(bit_reader, metadata)
           sync = bit_reader.read_bits(14)
           raise InvalidFormatError, "invalid FLAC frame sync code" unless sync == FLAC_SYNC_CODE
 
@@ -1400,9 +1434,8 @@ module Wavify
           block_size = decode_block_size(block_size_code, bit_reader)
           sample_rate = decode_sample_rate(sample_rate_code, bit_reader, metadata.fetch(:format).sample_rate)
           sample_size = decode_sample_size(sample_size_code, metadata.fetch(:encoded_bit_depth))
-          crc_offset = io.pos
+          actual_crc8 = flac_crc8(bit_reader.captured_bytes)
           expected_crc8 = bit_reader.read_bits(8)
-          actual_crc8 = flac_crc8(io_bytes(io, frame_start, crc_offset))
           raise InvalidFormatError, "FLAC frame header CRC-8 mismatch" unless expected_crc8 == actual_crc8
 
           channels = decode_channel_count(channel_assignment, metadata.fetch(:format).channels)
@@ -1414,14 +1447,6 @@ module Wavify
             channels: channels,
             channel_assignment: channel_assignment
           }
-        end
-
-        def io_bytes(io, start_offset, end_offset)
-          current_offset = io.pos
-          io.seek(start_offset, IO::SEEK_SET)
-          bytes = read_exact(io, end_offset - start_offset, "truncated FLAC checksum input")
-          io.seek(current_offset, IO::SEEK_SET)
-          bytes
         end
 
         def decoded_pcm_md5(metadata)
@@ -1676,8 +1701,14 @@ module Wavify
 
         def read_unary_zero_run(bit_reader)
           count = 0
-          count += 1 while bit_reader.read_bits(1).zero?
-          count
+          loop do
+            return count unless bit_reader.read_bits(1).zero?
+
+            count += 1
+            if count > MAX_UNARY_ZERO_RUN
+              raise InvalidFormatError, "FLAC unary zero run exceeds resource limit"
+            end
+          end
         end
 
         def reconstruct_fixed_subframe(warmup, residuals, predictor_order)

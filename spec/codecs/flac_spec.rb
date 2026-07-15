@@ -782,6 +782,24 @@ RSpec.describe Wavify::Codecs::Flac do
       expect(metadata[:raw_comments]).to eq(["ARTIST=First", "ARTIST=Second"])
     end
 
+    it "rejects invalid Vorbis Comment field names and UTF-8 values" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
+      buffer = Wavify::Core::SampleBuffer.new([0], format)
+
+      expect do
+        described_class.write(StringIO.new(+""), buffer, format: format, comments: { "BAD=KEY" => "value" })
+      end.to raise_error(Wavify::InvalidParameterError, /field names/)
+
+      expect do
+        described_class.write(
+          StringIO.new(+""),
+          buffer,
+          format: format,
+          comments: { artist: "\xFF".b }
+        )
+      end.to raise_error(Wavify::InvalidParameterError, /UTF-8/)
+    end
+
 
     it "roundtrips PCM whose valid bits are narrower than its container" do
       format = Wavify::Core::Format.new(
@@ -964,6 +982,50 @@ RSpec.describe Wavify::Codecs::Flac do
 
       expect(chunks.map(&:sample_frame_count)).to eq([2, 2, 2, 1])
       expect(chunks.flat_map(&:samples)).to eq([10, 20, 30, 40, 50, 60, 70])
+    end
+
+    it "decodes from forward-only IO without seek or position support" do
+      source = [100, 110, 120, 130]
+      frame = build_flac_fixed_frame_16bit([source], predictor_order: 2, rice_parameter: 0)
+      bytes = build_flac_bytes_with_streaminfo(
+        sample_rate: 44_100,
+        channels: 1,
+        bit_depth: 16,
+        total_samples: source.length,
+        frame_bytes: frame
+      )
+      sequential_io = Class.new do
+        def initialize(data)
+          @io = StringIO.new(data)
+        end
+
+        def read(...) = @io.read(...)
+        def eof? = @io.eof?
+      end.new(bytes)
+
+      chunks = described_class.stream_read(sequential_io, chunk_size: 2).to_a
+
+      expect(chunks.flat_map(&:samples)).to eq(source)
+    end
+
+    it "bounds unary runs and writes them in bulk" do
+      writer = described_class::BitWriter.new
+      writer.write_unary_zeros_then_one(10_000)
+      bytes = writer.to_s
+      expect(bytes.bytesize).to eq(1_251)
+      expect(bytes.byteslice(0, 1_250)).to eq("\x00".b * 1_250)
+      expect(bytes.getbyte(-1)).to eq(0x80)
+
+      expect do
+        described_class::BitWriter.new.write_unary_zeros_then_one(described_class::MAX_UNARY_ZERO_RUN + 1)
+      end.to raise_error(Wavify::InvalidParameterError, /resource limit/)
+
+      all_zero_reader = Object.new
+      def all_zero_reader.read_bits(_count) = 0
+
+      expect do
+        described_class.send(:read_unary_zero_run, all_zero_reader)
+      end.to raise_error(Wavify::InvalidFormatError, /resource limit/)
     end
   end
 end
