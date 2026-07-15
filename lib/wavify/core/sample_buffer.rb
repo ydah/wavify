@@ -40,6 +40,13 @@ module Wavify
         new(samples.map(&:to_f), format, storage: storage)
       end
 
+      def self.adopt_mutable_float_samples!(samples, format) # :nodoc:
+        buffer = allocate
+        buffer.send(:initialize_owned_float_samples!, samples, format)
+        buffer
+      end
+      private_class_method :adopt_mutable_float_samples!
+
       # Lazy no-copy view over interleaved samples as sample frames.
       class FrameView
         include Enumerable
@@ -190,6 +197,45 @@ module Wavify
       # Number of representative samples included in the constant-time hash.
       HASH_PROBE_COUNT = 8
       StorageState = Struct.new(:samples, :packed_samples, :type, keyword_init: true) # :nodoc:
+
+      # Internal mutable processing workspace whose final Array ownership is
+      # transferred to an immutable SampleBuffer without another Array copy.
+      class MutableFloatWorkspace # :nodoc:
+        attr_reader :samples, :format
+
+        def self.from_buffer(buffer, format:)
+          raise InvalidParameterError, "buffer must be Core::SampleBuffer" unless buffer.is_a?(SampleBuffer)
+
+          converted = buffer.format == format ? buffer : buffer.convert(format)
+          new(converted.samples.dup, format: format)
+        end
+
+        def initialize(samples, format:)
+          unless format.is_a?(Format) && format.sample_format == :float
+            raise InvalidParameterError, "workspace format must be a floating-point Core::Format"
+          end
+          raise InvalidParameterError, "workspace samples must be an Array" unless samples.is_a?(Array)
+
+          @samples = samples
+          @format = format
+          @consumed = false
+        end
+
+        def replace!(samples)
+          raise InvalidParameterError, "workspace samples must be an Array" unless samples.is_a?(Array)
+          raise InvalidParameterError, "workspace has already been consumed" if @consumed
+
+          @samples = samples
+          self
+        end
+
+        def to_sample_buffer
+          raise InvalidParameterError, "workspace has already been consumed" if @consumed
+
+          @consumed = true
+          SampleBuffer.send(:adopt_mutable_float_samples!, @samples, @format)
+        end
+      end
 
       attr_reader :format, :duration
 
@@ -518,6 +564,24 @@ module Wavify
         return unless invalid_index
 
         raise InvalidParameterError, "sample at index #{invalid_index} must be a finite real Numeric"
+      end
+
+      def initialize_owned_float_samples!(samples, format)
+        unless format.is_a?(Format) && format.sample_format == :float
+          raise InvalidParameterError, "format must be a floating-point Core::Format"
+        end
+        raise InvalidParameterError, "samples must be an Array" unless samples.is_a?(Array)
+
+        validate_samples!(samples)
+        validate_interleaving!(samples.length, format.channels)
+        samples.map!(&:to_f)
+
+        @format = format
+        @sample_count = samples.length
+        @value_hash = sample_value_hash(samples)
+        @storage_mutex = Mutex.new
+        @storage_state = storage_state(samples: samples.freeze, packed_samples: nil, type: :array)
+        @duration = Duration.from_samples(sample_frame_count, format.sample_rate)
       end
 
       def validate_interleaving!(sample_count, channels)
