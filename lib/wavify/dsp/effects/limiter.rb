@@ -86,15 +86,8 @@ module Wavify
           output = []
           float_buffer.samples.each_slice(@runtime_channels) do |frame|
             delayed_frame = frame.map { |sample| sample * @input_gain }
-            @delay_frames.push(delayed_frame, frame_peak(delayed_frame))
-            if @delay_frames.length <= @lookahead_frames
-              output.concat(Array.new(@runtime_channels, 0.0))
-              update_gain(@delay_frames.maximum)
-              next
-            end
-
-            delayed_frame, delayed_peak = @delay_frames.shift
-            output.concat(limit_frame(delayed_frame, @delay_frames.maximum, current_peak: delayed_peak))
+            limited_frame = enqueue_and_limit(delayed_frame)
+            output.concat(limited_frame || Array.new(@runtime_channels, 0.0))
           end
           Core::SampleBuffer.new(output, float_format).convert(buffer.format)
         end
@@ -109,11 +102,7 @@ module Wavify
             bit_depth: 32,
             sample_format: :float
           )
-          output = []
-          until @delay_frames.empty?
-            delayed_frame, delayed_peak = @delay_frames.shift
-            output.concat(limit_frame(delayed_frame, @delay_frames.maximum, current_peak: delayed_peak))
-          end
+          output = flush_limiter_frames.flatten(1)
           target_format = format || runtime_format
           Core::SampleBuffer.new(output, runtime_format).convert(target_format)
         end
@@ -137,41 +126,28 @@ module Wavify
         private
 
         def limit_offline_frames(frames)
-          return [] if frames.empty?
-
-          peaks = frames.map { |frame| frame_peak(frame) }
-          pre_roll_gain(peaks)
-          future_peaks = sliding_window_maxima(peaks, @lookahead_frames + 1)
-          frames.each_index.map do |index|
-            limit_frame(frames.fetch(index), future_peaks.fetch(index), current_peak: peaks.fetch(index))
-          end
+          output = frames.filter_map { |frame| enqueue_and_limit(frame) }
+          output.concat(flush_limiter_frames)
         end
 
-        def pre_roll_gain(peaks)
-          peak = 0.0
-          @lookahead_frames.times do |index|
-            peak = [peak, peaks.fetch([index, peaks.length - 1].min)].max
-            update_gain(peak)
+        def enqueue_and_limit(frame)
+          @delay_frames.push(frame, frame_peak(frame))
+          if @delay_frames.length <= @lookahead_frames
+            update_gain(@delay_frames.maximum)
+            return nil
           end
+
+          delayed_frame, delayed_peak = @delay_frames.shift
+          limit_frame(delayed_frame, @delay_frames.maximum, current_peak: delayed_peak)
         end
 
-        def sliding_window_maxima(peaks, window_size)
-          maxima = Array.new(peaks.length)
-          deque = []
-          head = 0
-          right = -1
-
-          peaks.each_index do |left|
-            desired_right = [left + window_size - 1, peaks.length - 1].min
-            while right < desired_right
-              right += 1
-              deque.pop while deque.length > head && peaks.fetch(deque.last) <= peaks.fetch(right)
-              deque << right
-            end
-            head += 1 while deque.fetch(head) < left
-            maxima[left] = peaks.fetch(deque.fetch(head))
+        def flush_limiter_frames
+          output = []
+          until @delay_frames.empty?
+            delayed_frame, delayed_peak = @delay_frames.shift
+            output << limit_frame(delayed_frame, @delay_frames.maximum, current_peak: delayed_peak)
           end
-          maxima
+          output
         end
 
         def limit_frame(frame, peak, current_peak: frame_peak(frame))

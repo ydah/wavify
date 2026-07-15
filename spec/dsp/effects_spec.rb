@@ -215,6 +215,21 @@ RSpec.describe Wavify::DSP::Effects do
       expect((processed.samples + tail.samples).map(&:abs).max).to be <= 0.5
     end
 
+    it "matches offline processing after compensating for streaming latency" do
+      source = Wavify::Core::SampleBuffer.new([0.1, 0.8, -1.0, 0.2, 0.9, -0.4, 0.1], mono_float)
+      options = { ceiling: -6.0206, attack: 0.001, release: 0.02, lookahead: 2.0 / 44_100 }
+      offline = described_class.new(**options).apply(source)
+      streaming = described_class.new(**options)
+      first_chunk = streaming.process(source.slice(0, 3))
+      second_chunk = streaming.process(source.slice(3, 4))
+      tail = streaming.flush(format: mono_float)
+      compensated = (first_chunk.samples + second_chunk.samples + tail.samples).drop(2).first(source.length)
+
+      compensated.zip(offline.samples).each do |actual, expected|
+        expect(actual).to be_within(0.000001).of(expected)
+      end
+    end
+
     it "scales peak detection linearly with input length" do
       counting_limiter_class = Class.new(described_class) do
         attr_reader :peak_calls
