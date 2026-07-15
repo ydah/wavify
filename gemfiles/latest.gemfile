@@ -1,0 +1,13 @@
+# frozen_string_literal: true
+
+source "https://rubygems.org"
+
+gemspec path: ".."
+
+gem "benchmark"
+gem "rake"
+gem "rbs" if Gem::Version.new(RUBY_VERSION) >= Gem::Version.new("3.2")
+gem "rubocop", require: false
+gem "rspec"
+gem "simplecov", require: false
+gem "yard", require: false

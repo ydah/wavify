@@ -4,6 +4,7 @@ module Wavify
   module DSP
     # Applies only the gain needed to keep each mixed frame within full scale.
     module Headroom
+      # Default look-behind/look-ahead smoothing window for gain transitions.
       DEFAULT_SMOOTHING_SECONDS = 0.005
 
       def self.apply!(samples, channels:, sample_rate:, smoothing_seconds: DEFAULT_SMOOTHING_SECONDS)

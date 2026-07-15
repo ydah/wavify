@@ -10,12 +10,19 @@ module Wavify
   class Audio
     attr_reader :buffer
 
+    # Supported policies for summing multiple sources.
     MIX_STRATEGIES = %i[none clip normalize headroom soft_limit].freeze
+    # Supported timeline alignment modes for sources of different lengths.
     MIX_ALIGNMENTS = %i[start center end].freeze
+    # Supported normalization reference measurements.
     NORMALIZE_MODES = %i[peak rms lufs].freeze
+    # Supported fade interpolation curves.
     FADE_CURVES = %i[linear exp log].freeze
+    # Knee threshold used by the built-in soft-limit mix policy.
     SOFT_LIMIT_THRESHOLD = 0.8
+    # Maximum number of frames allowed by eager repeat.
     MAX_REPEAT_FRAMES = 50_000_000
+    # Maximum estimated allocation allowed by eager repeat.
     MAX_REPEAT_BYTES = 512 * 1024 * 1024
 
     # Reads audio from a file path using codec auto-detection.

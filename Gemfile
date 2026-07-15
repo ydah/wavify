@@ -7,11 +7,11 @@ gemspec
 
 gem "irb"
 gem "benchmark", "~> 0.4"
-gem "rake", "~> 13.0"
+gem "rake", "~> 13.2"
 gem "rubocop", "~> 1.76", require: false
-gem "rspec", "~> 3.0"
+gem "rspec", "~> 3.13"
 gem "simplecov", "~> 0.22", require: false
-gem "yard", "~> 0.9", require: false
+gem "yard", "~> 0.9.36", require: false
 
 group :ogg do
   gem "ogg-ruby", ">= 0.1"

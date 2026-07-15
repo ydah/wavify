@@ -6,10 +6,15 @@ module Wavify
     class Engine
       # Default beats-per-bar value used when omitted.
       DEFAULT_BEATS_PER_BAR = 4
+      # Maximum bars accepted by a single render request.
       MAX_BARS = 100_000
+      # Maximum structural sections accepted before repeat expansion.
       MAX_ARRANGEMENT_SECTIONS = 10_000
+      # Maximum sections produced by lazy arrangement repeat expansion.
       MAX_EXPANDED_SECTIONS = 100_000
+      # Maximum repeat count on one arrangement section.
       MAX_SECTION_REPEAT = 10_000
+      # Maximum scheduled timeline events in one build.
       MAX_EVENTS = 1_000_000
 
       attr_reader :tempo, :format, :beats_per_bar, :swing

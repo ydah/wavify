@@ -1,14 +1,27 @@
 name: Ruby
+
 on:
   push:
     branches:
       - main
   pull_request:
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-native:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     name: Native OGG Ruby ${{ matrix.ruby }}
     strategy:
+      fail-fast: false
       matrix:
         ruby:
           - "3.1"
@@ -16,9 +29,8 @@ jobs:
           - "3.3"
           - "3.4"
           - "4.0"
-          - "head"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
       - name: Install native audio dependencies
@@ -26,51 +38,99 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libogg-dev libvorbis-dev
       - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@8e41b362d2589a22a44c1cfa214b3c83052c195b # v1
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
       - name: Run specs
         run: bundle exec rspec
-      - name: Run coverage gate
+      - name: Run coverage gates
         if: matrix.ruby == '3.4'
-        run: bundle exec rake spec:coverage COVERAGE_MINIMUM=90
-      - name: Run example smoke tests
+        env:
+          SIMPLECOV_BRANCH: "1"
+          COVERAGE_MINIMUM: "90"
+          COVERAGE_BRANCH_MINIMUM: "70"
+          COVERAGE_MINIMUM_PER_FILE: "60"
+          COVERAGE_BRANCH_MINIMUM_PER_FILE: "40"
+        run: bundle exec rake spec:coverage
+      - name: Run project checks
         if: matrix.ruby == '3.4'
-        run: bundle exec rake docs:examples
-      - name: Run docs check
-        if: matrix.ruby == '3.4'
-        run: YARD_MINIMUM=85 bundle exec rake docs:check
-      - name: Validate RBS signatures
-        if: matrix.ruby == '3.4'
-        run: bundle exec rake types:validate
+        run: bundle exec rake check
       - name: Run release check
         if: matrix.ruby == '3.4'
         run: bundle exec rake release:check
-      - name: Run lint
-        if: matrix.ruby == '3.4'
-        run: bundle exec rake lint
 
   test-core:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     name: Core without OGG (${{ matrix.os }})
     env:
       BUNDLE_WITHOUT: ogg
       WAVIFY_SKIP_OGG: "1"
     strategy:
+      fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+          - ubuntu-24.04
+          - macos-14
+          - windows-2022
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
       - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@8e41b362d2589a22a44c1cfa214b3c83052c195b # v1
         with:
           ruby-version: "3.4"
           bundler-cache: true
       - name: Run core specs
+        run: bundle exec rspec
+
+  dependency-bounds:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    name: Dependencies (${{ matrix.bounds }})
+    env:
+      BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/${{ matrix.bounds }}.gemfile
+      BUNDLE_WITHOUT: ogg
+      WAVIFY_SKIP_OGG: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - bounds: minimum
+            ruby: "3.1"
+          - bounds: latest
+            ruby: "3.4"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@8e41b362d2589a22a44c1cfa214b3c83052c195b # v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - name: Run specs
+        run: bundle exec rspec
+
+  canary:
+    if: github.event_name == 'schedule'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    name: Ruby head / latest runner canary
+    env:
+      BUNDLE_WITHOUT: ogg
+      WAVIFY_SKIP_OGG: "1"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Ruby head
+        uses: ruby/setup-ruby@8e41b362d2589a22a44c1cfa214b3c83052c195b # v1
+        with:
+          ruby-version: head
+          bundler-cache: true
+      - name: Run specs
         run: bundle exec rspec

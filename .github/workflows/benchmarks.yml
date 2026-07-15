@@ -1,11 +1,21 @@
 name: Benchmarks
+
 on:
   workflow_dispatch:
   schedule:
     - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   benchmark-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     env:
       WAV_IO_ITERATIONS: "2"
       WAV_IO_DURATION: "0.05"
@@ -14,13 +24,14 @@ jobs:
       FLAC_BENCH_ITERATIONS: "2"
       FLAC_BENCH_DURATION: "0.05"
       STREAM_BENCH_DURATION: "0.05"
+      BENCH_RUNS: "3"
       BENCH_DIR: "tmp/benchmarks/ci"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
       - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@8e41b362d2589a22a44c1cfa214b3c83052c195b # v1
         with:
           ruby-version: "3.4"
           bundler-cache: true

@@ -33,6 +33,7 @@ rake bench:all
 ## Environment Variables
 
 - `KEEP_BENCH_FILES=1` keeps generated files in `tmp/benchmarks/`
+- `BENCH_RUNS` controls repeated measurements (default: `3`); reports include median and p95
 - `WAV_IO_ITERATIONS`, `WAV_IO_DURATION`, `WAV_IO_CHUNK`
 - `DSP_BENCH_ITERATIONS`, `DSP_BENCH_DURATION`
 - `FLAC_BENCH_ITERATIONS`, `FLAC_BENCH_DURATION`, `FLAC_BENCH_CHUNK`
@@ -44,3 +45,4 @@ rake bench:all
 - `flac_benchmark.rb` measures the pure Ruby FLAC implementation, including adaptive fixed/LPC prediction and Rice partition selection.
 - `streaming_memory_benchmark.rb` reports sampled RSS (`ps`) as an approximation, not a strict peak profiler.
 - `wav_io_benchmark.rb` optionally compares WAV read/write throughput with the `wavefile` gem when it is installed (`gem install wavefile`).
+- Baseline comparison requires exactly the same labels on both sides, so added or removed measurements fail explicitly.
