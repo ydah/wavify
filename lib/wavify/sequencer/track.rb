@@ -47,7 +47,7 @@ module Wavify
 
       attr_reader :name, :pattern, :note_sequence, :chord_progression, :waveform, :gain_db, :pan_position,
                   :pattern_resolution, :note_resolution, :default_octave, :envelope, :effects, :key_root, :scale,
-                  :chord_voicing
+                  :chord_voicing, :synth_options
 
       def initialize(name, **options)
         @name = validate_name!(name)
@@ -59,6 +59,7 @@ module Wavify
         @note_resolution = validate_resolution!(note_resolution, :note_resolution)
         @default_octave = validate_default_octave!(default_octave)
         @waveform = options.fetch(:waveform, :sine).to_sym
+        @synth_options = validate_synth_options!(options.fetch(:synth_options, {}))
         @gain_db = validate_numeric!(options.fetch(:gain_db, 0.0), :gain_db).to_f
         @pan_position = validate_pan!(options.fetch(:pan_position, 0.0))
         @envelope = validate_envelope!(options[:envelope])
@@ -70,6 +71,7 @@ module Wavify
         @pattern = coerce_pattern(options[:pattern])
         @note_sequence = coerce_note_sequence(options[:note_sequence])
         @chord_progression = coerce_chord_progression(options[:chord_progression])
+        freeze
       end
 
       # Returns a copy with a new pattern.
@@ -185,6 +187,7 @@ module Wavify
           note_sequence: overrides.fetch(:note_sequence, @note_sequence),
           chord_progression: overrides.fetch(:chord_progression, @chord_progression),
           waveform: overrides.fetch(:waveform, @waveform),
+          synth_options: overrides.fetch(:synth_options, @synth_options),
           gain_db: overrides.fetch(:gain_db, @gain_db),
           pan_position: overrides.fetch(:pan_position, @pan_position),
           pattern_resolution: overrides.fetch(:pattern_resolution, @pattern_resolution),
@@ -308,7 +311,9 @@ module Wavify
       end
 
       def validate_resolution!(value, name)
-        raise SequencerError, "#{name} must be a positive Integer" unless value.is_a?(Integer) && value.positive?
+        unless value.is_a?(Integer) && value.between?(1, Pattern::MAX_RESOLUTION)
+          raise SequencerError, "#{name} must be an Integer in 1..#{Pattern::MAX_RESOLUTION}"
+        end
 
         value
       end
@@ -320,13 +325,17 @@ module Wavify
       end
 
       def validate_numeric!(value, name)
-        raise SequencerError, "#{name} must be Numeric" unless value.is_a?(Numeric)
+        unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite?
+          raise SequencerError, "#{name} must be a finite Numeric"
+        end
 
         value
       end
 
       def validate_pan!(value)
-        raise SequencerError, "pan_position must be Numeric in -1.0..1.0" unless value.is_a?(Numeric) && value.between?(-1.0, 1.0)
+        unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite? && value.between?(-1.0, 1.0)
+          raise SequencerError, "pan_position must be a finite Numeric in -1.0..1.0"
+        end
 
         value.to_f
       end
@@ -345,6 +354,16 @@ module Wavify
         end
 
         effects.freeze
+      end
+
+      def validate_synth_options!(value)
+        raise SequencerError, "synth_options must be a Hash" unless value.is_a?(Hash)
+
+        supported = %i[amplitude phase pulse_width detune unison]
+        unknown = value.keys - supported
+        raise SequencerError, "unsupported synth options: #{unknown.join(', ')}" unless unknown.empty?
+
+        value.dup.freeze
       end
 
       def normalize_key_root(value)
@@ -400,11 +419,12 @@ module Wavify
       def coerce_chord_progression(chord_progression)
         return nil if chord_progression.nil?
         if chord_progression.is_a?(Array) && chord_progression.all? { |item| item.is_a?(Hash) && item[:midi_notes] }
-          return chord_progression
+          return chord_progression.map { |chord| chord.transform_values { |item| item.is_a?(Array) ? item.dup.freeze : item }.freeze }.freeze
         end
 
         self.class.parse_chords(chord_progression, default_octave: @default_octave)
-                   .map { |chord| apply_track_chord_options(chord) }
+                   .map { |chord| apply_track_chord_options(chord).transform_values { |item| item.is_a?(Array) ? item.freeze : item }.freeze }
+                   .freeze
       end
 
       def apply_track_chord_options(chord)

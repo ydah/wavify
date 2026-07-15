@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "digest"
 require "json"
 require "pathname"
+require "tmpdir"
 
 module Wavify
   # Declarative music-building DSL that compiles to sequencer tracks and audio.
@@ -21,8 +23,13 @@ module Wavify
         @swing = swing
         @default_bars = default_bars
         @random_seed = random_seed
-        @tracks = tracks.freeze
-        @sections = sections.freeze
+        @tracks = tracks.map(&:finalize!).freeze
+        @sections = sections.map do |section|
+          section.tracks = section.tracks.dup.freeze
+          section.markers = section.markers.dup.freeze
+          section.freeze
+        end.freeze
+        freeze
       end
 
       def arrangement?
@@ -51,13 +58,20 @@ module Wavify
       # Validates the compiled song without rendering audio.
       #
       # @return [true]
-      def validate!
+      def validate!(deep: false)
         raise Wavify::SequencerError, "song must define at least one track" if @tracks.empty?
 
         @tracks.each do |track|
           with_track_context(track) do
             track.to_sequencer_track
             track.sample_pattern_map
+            if deep
+              track.samples.each_value do |path|
+                Wavify::Audio.metadata(path)
+              rescue Wavify::Error, SystemCallError => e
+                raise Wavify::SequencerError, "failed to inspect sample #{path.inspect}: #{e.message}"
+              end
+            end
           end
         end
         timeline(default_bars: @default_bars)
@@ -68,17 +82,16 @@ module Wavify
       #
       # @return [Array<Hash>]
       def arrangement
-        @sections.flat_map do |section|
-          Array.new(section.repeat || 1) do |repeat_index|
-            {
-              name: repeated_section_name(section.name, repeat_index),
-              bars: section.bars,
-              tracks: section.tracks,
-              tempo: section.tempo,
-              beats_per_bar: section.beats_per_bar,
-              markers: section.markers
-            }
-          end
+        @sections.map do |section|
+          {
+            name: section.name,
+            bars: section.bars,
+            tracks: section.tracks,
+            repeat: section.repeat || 1,
+            tempo: section.tempo,
+            beats_per_bar: section.beats_per_bar,
+            markers: section.markers
+          }.freeze
         end
       end
 
@@ -153,7 +166,7 @@ module Wavify
                    elsif sequencer_audio.sample_frame_count.zero?
                      sample_audio
                    else
-                     Wavify::Audio.mix(sequencer_audio, sample_audio)
+                     Wavify::Audio.mix(sequencer_audio, sample_audio, strategy: :none)
                    end
         pad_to_song_duration(rendered, default_bars: default_bars)
       end
@@ -176,12 +189,28 @@ module Wavify
       def write_stems(directory, default_bars: @default_bars, overwrite: true)
         raise Wavify::InvalidParameterError, "directory must be a String" unless directory.is_a?(String)
 
-        FileUtils.mkdir_p(directory)
-        render(default_bars: default_bars, stems: true).each_with_object({}) do |(track_name, audio), paths|
-          path = File.join(directory, "#{track_name}.wav")
-          audio.write(path, overwrite: overwrite)
-          paths[track_name] = path
+        expanded_directory = File.expand_path(directory)
+        FileUtils.mkdir_p(File.dirname(expanded_directory))
+        stems = render(default_bars: default_bars, stems: true)
+        filenames = stems.keys.to_h { |track_name| [track_name, stem_filename(track_name)] }
+        if filenames.values.uniq.length != filenames.length
+          raise Wavify::SequencerError, "track names produce duplicate stem filenames"
         end
+        paths = filenames.transform_values { |filename| File.join(expanded_directory, filename) }
+        if !overwrite && (existing = paths.values.find { |path| File.exist?(path) })
+          raise Wavify::InvalidParameterError, "output file already exists: #{existing}"
+        end
+
+        Dir.mktmpdir(".wavify-stems-", File.dirname(expanded_directory)) do |temporary_directory|
+          stems.each do |track_name, audio|
+            audio.write(File.join(temporary_directory, filenames.fetch(track_name)))
+          end
+          FileUtils.mkdir_p(expanded_directory)
+          paths.each do |track_name, path|
+            File.rename(File.join(temporary_directory, filenames.fetch(track_name)), path)
+          end
+        end
+        paths
       end
 
       private
@@ -206,7 +235,7 @@ module Wavify
         sample_audio = render_sample_track(track, default_bars: default_bars)
 
         if sample_audio && sequencer_audio.sample_frame_count.positive?
-          Wavify::Audio.mix(sequencer_audio, sample_audio)
+          Wavify::Audio.mix(sequencer_audio, sample_audio, strategy: :none)
         else
           sample_audio || sequencer_audio
         end
@@ -236,7 +265,7 @@ module Wavify
         end
         return nil if rendered_tracks.empty?
 
-        Wavify::Audio.mix(*rendered_tracks)
+        Wavify::Audio.mix(*rendered_tracks, strategy: :none)
       end
 
       def render_sample_track(track, default_bars:)
@@ -248,8 +277,9 @@ module Wavify
 
         work_format = track_render_work_format
         sample_cache = {}
-        events = []
-        random = Random.new(@random_seed)
+        mixed = []
+        event_count = 0
+        random = Random.new(derived_track_seed(track.name))
 
         sections.each do |section|
           section_engine = engine_for_section(section)
@@ -267,24 +297,23 @@ module Wavify
                 section_engine.expand_pattern_step(step, start_time: start_time, duration: duration).each do |expanded|
                   next unless probability_hit?(expanded.fetch(:probability), random)
 
-                  events << expanded.merge(sample_key: sample_key, sample_audio: sample_audio)
+                  event_count += 1
+                  if event_count > Wavify::Sequencer::Engine::MAX_EVENTS
+                    raise Wavify::SequencerError, "sample track exceeds #{Wavify::Sequencer::Engine::MAX_EVENTS} events"
+                  end
+                  event = expanded.merge(sample_key: sample_key, sample_audio: sample_audio)
+                  required_length = ((expanded.fetch(:start_time) * work_format.sample_rate).round * work_format.channels) +
+                                    sample_audio.buffer.samples.length
+                  mixed.concat(Array.new(required_length - mixed.length, 0.0)) if required_length > mixed.length
+                  overlay_sample_event!(mixed, event, work_format)
                 end
               end
             end
           end
         end
 
-        return nil if events.empty?
+        return nil if event_count.zero?
 
-        total_end_time = events.map { |event| event[:start_time] + event.fetch(:sample_audio).duration.total_seconds }.max || 0.0
-        base_audio = Wavify::Audio.silence(total_end_time, format: work_format)
-        mixed = base_audio.buffer.samples.dup
-
-        events.each do |event|
-          overlay_sample_event!(mixed, event, work_format)
-        end
-
-        mixed.map! { |sample| sample.clamp(-1.0, 1.0) }
         rendered = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(mixed, work_format))
         rendered = rendered.gain(track.gain_db) if track.gain_db != 0.0
         if track.pan_position != 0.0
@@ -298,7 +327,7 @@ module Wavify
         if arrangement?
           cursor_bar = 0
           cursor_time = 0.0
-          arrangement.each_with_object([]) do |section, result|
+          expanded_arrangement.each_with_object([]) do |section, result|
             section_engine = engine_for_section(section)
             if section.fetch(:tracks).include?(track_name)
           result << {
@@ -431,7 +460,7 @@ module Wavify
       def total_bars(default_bars:)
         return default_bars unless arrangement?
 
-        arrangement.sum { |section| section.fetch(:bars) }
+        arrangement.sum { |section| section.fetch(:bars) * section.fetch(:repeat, 1) }
       end
 
       def total_seconds(default_bars:)
@@ -444,8 +473,31 @@ module Wavify
             beats_per_bar: section.fetch(:beats_per_bar) || @beats_per_bar,
             swing: @swing
           )
-          section.fetch(:bars) * section_engine.bar_duration_seconds
+          section.fetch(:bars) * section.fetch(:repeat, 1) * section_engine.bar_duration_seconds
         end
+      end
+
+      def expanded_arrangement
+        Enumerator.new do |yielder|
+          arrangement.each do |section|
+            section.fetch(:repeat, 1).times do |repeat_index|
+              yielder << section.merge(
+                name: repeated_section_name(section.fetch(:name), repeat_index),
+                repeat: 1
+              )
+            end
+          end
+        end
+      end
+
+      def derived_track_seed(track_name)
+        Digest::SHA256.digest("#{@random_seed}:#{track_name}").unpack1("Q>")
+      end
+
+      def stem_filename(track_name)
+        sanitized = track_name.to_s.gsub(/[^A-Za-z0-9_.-]+/, "_").sub(/\A[.]+/, "")
+        sanitized = "track" if sanitized.empty?
+        "#{sanitized}.wav"
       end
 
       def repeated_section_name(name, repeat_index)
@@ -503,7 +555,7 @@ module Wavify
                   :default_octave, :envelope, :notes_notation, :chords_notation, :effects, :samples,
                   :sample_options, :named_patterns, :synth_options, :key_root, :scale, :chord_voicing
 
-      def initialize(name, sample_folder: nil, key_root: nil, scale: nil)
+      def initialize(name, sample_folder: nil, key_root: nil, scale: nil, safe_paths: false)
         @name = name.to_sym
         @sample_folder = sample_folder
         @waveform = :sine
@@ -524,6 +576,7 @@ module Wavify
         @key_root = key_root
         @scale = scale
         @chord_voicing = nil
+        @safe_paths = safe_paths
       end
 
       # Returns the primary pattern notation for sequencer rendering.
@@ -576,22 +629,25 @@ module Wavify
 
       # Sets gain (dB) applied after rendering the track.
       def gain!(db)
+        unless db.is_a?(Numeric) && db.respond_to?(:finite?) && db.finite?
+          raise Wavify::SequencerError, "gain must be a finite Numeric"
+        end
+
         @gain_db = db.to_f
       end
 
       # Sets stereo pan position (-1.0..1.0).
       def pan!(position)
+        unless position.is_a?(Numeric) && position.respond_to?(:finite?) && position.finite? && position.between?(-1.0, 1.0)
+          raise Wavify::SequencerError, "pan must be a finite Numeric in -1.0..1.0"
+        end
+
         @pan_position = position.to_f
       end
 
       # Builds and stores an ADSR envelope for sequencer notes.
-      def envelope!(attack:, decay:, sustain:, release:)
-        @envelope = Wavify::DSP::Envelope.new(
-          attack: attack,
-          decay: decay,
-          sustain: sustain,
-          release: release
-        )
+      def envelope!(**params)
+        @envelope = Wavify::DSP::Envelope.new(**params)
       end
 
       # Appends an effect configuration to the track.
@@ -607,6 +663,7 @@ module Wavify
           note_sequence: @notes_notation,
           chord_progression: @chords_notation,
           waveform: @waveform,
+          synth_options: @synth_options,
           gain_db: @gain_db,
           pan_position: @pan_position,
           pattern_resolution: @pattern_resolution,
@@ -645,6 +702,22 @@ module Wavify
         end
       end
 
+      def finalize!
+        return self if frozen?
+
+        @sample_folder = @sample_folder&.dup&.freeze
+        @notes_notation = @notes_notation&.dup&.freeze
+        @chords_notation = deep_freeze(@chords_notation)
+        @effects = deep_freeze(@effects)
+        @samples = deep_freeze(@samples)
+        @sample_options = deep_freeze(@sample_options)
+        @named_patterns = deep_freeze(@named_patterns)
+        @primary_pattern = @primary_pattern&.dup&.freeze
+        @synth_options = deep_freeze(@synth_options)
+        @envelope&.freeze
+        freeze
+      end
+
       private
 
       def normalize_sample_options!(options)
@@ -668,9 +741,31 @@ module Wavify
 
       def resolve_sample_path(sample_key, path)
         source = path.nil? ? "#{sample_key}.wav" : path.to_s
-        return source unless @sample_folder && !Pathname.new(source).absolute?
+        return source unless @sample_folder
 
-        File.join(@sample_folder, source)
+        joined = Pathname.new(source).absolute? ? source : File.join(@sample_folder, source)
+        return joined unless @safe_paths
+
+        folder = File.expand_path(@sample_folder)
+        candidate = File.expand_path(joined)
+        unless candidate.start_with?("#{folder}#{File::SEPARATOR}")
+          raise Wavify::SequencerError, "sample path escapes sample_folder: #{source.inspect}"
+        end
+
+        candidate
+      end
+
+      def deep_freeze(value)
+        case value
+        when Array
+          value.map { |item| deep_freeze(item) }.freeze
+        when Hash
+          value.to_h { |key, item| [deep_freeze(key), deep_freeze(item)] }.freeze
+        when String
+          value.dup.freeze
+        else
+          value.freeze
+        end
       end
     end
 
@@ -718,7 +813,11 @@ module Wavify
         missing = required - params.keys
         raise Wavify::SequencerError, "missing envelope params: #{missing.join(', ')}" unless missing.empty?
 
-        @track.envelope!(**params.slice(*required))
+        supported = required + %i[hold curve]
+        unknown = params.keys - supported
+        raise Wavify::SequencerError, "unsupported envelope params: #{unknown.join(', ')}" unless unknown.empty?
+
+        @track.envelope!(**params)
       end
 
       # Adds an effect to the track.
@@ -747,9 +846,15 @@ module Wavify
       end
 
       def section(name, bars:, tracks:, repeat: 1, tempo: nil, beats_per_bar: nil, markers: [])
-        raise Wavify::SequencerError, "bars must be a positive Integer" unless bars.is_a?(Integer) && bars.positive?
-        raise Wavify::SequencerError, "repeat must be a positive Integer" unless repeat.is_a?(Integer) && repeat.positive?
-        raise Wavify::SequencerError, "tempo must be a positive Numeric" if tempo && !(tempo.is_a?(Numeric) && tempo.positive?)
+        unless bars.is_a?(Integer) && bars.between?(1, Wavify::Sequencer::Engine::MAX_BARS)
+          raise Wavify::SequencerError, "bars must be an Integer in 1..#{Wavify::Sequencer::Engine::MAX_BARS}"
+        end
+        unless repeat.is_a?(Integer) && repeat.between?(1, Wavify::Sequencer::Engine::MAX_SECTION_REPEAT)
+          raise Wavify::SequencerError, "repeat must be an Integer in 1..#{Wavify::Sequencer::Engine::MAX_SECTION_REPEAT}"
+        end
+        if tempo && !(tempo.is_a?(Numeric) && tempo.respond_to?(:finite?) && tempo.finite? && tempo.positive?)
+          raise Wavify::SequencerError, "tempo must be a positive finite Numeric"
+        end
         if beats_per_bar && !(beats_per_bar.is_a?(Integer) && beats_per_bar.positive?)
           raise Wavify::SequencerError, "beats_per_bar must be a positive Integer"
         end
@@ -782,21 +887,22 @@ module Wavify
       # @param default_bars [Integer]
       # @return [SongDefinition]
       def self.build_definition(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1,
-                                random_seed: Random.new_seed, &block)
+                                random_seed: Random.new_seed, safe_paths: false, &block)
         builder = new(
           format: format,
           tempo: tempo,
           beats_per_bar: beats_per_bar,
           swing: swing,
           default_bars: default_bars,
-          random_seed: random_seed
+          random_seed: random_seed,
+          safe_paths: safe_paths
         )
         builder.instance_eval(&block) if block
         builder.to_song_definition
       end
 
       def initialize(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1,
-                     random_seed: Random.new_seed)
+                     random_seed: Random.new_seed, safe_paths: false)
         raise Wavify::InvalidParameterError, "format must be Core::Format" unless format.is_a?(Wavify::Core::Format)
 
         @format = format
@@ -805,6 +911,7 @@ module Wavify
         @swing = validate_swing!(swing)
         @default_bars = validate_default_bars!(default_bars)
         @random_seed = validate_random_seed!(random_seed)
+        @safe_paths = safe_paths == true
         @sample_folder = nil
         @key_root = nil
         @scale = nil
@@ -813,7 +920,9 @@ module Wavify
       end
 
       def tempo(value)
-        raise Wavify::SequencerError, "tempo must be a positive Numeric" unless value.is_a?(Numeric) && value.positive?
+        unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite? && value.positive?
+          raise Wavify::SequencerError, "tempo must be a positive finite Numeric"
+        end
 
         @tempo = value.to_f
       end
@@ -829,7 +938,9 @@ module Wavify
       end
 
       def bars(value)
-        raise Wavify::SequencerError, "bars must be a positive Integer" unless value.is_a?(Integer) && value.positive?
+        unless value.is_a?(Integer) && value.between?(1, Wavify::Sequencer::Engine::MAX_BARS)
+          raise Wavify::SequencerError, "bars must be an Integer in 1..#{Wavify::Sequencer::Engine::MAX_BARS}"
+        end
 
         @default_bars = value
       end
@@ -861,7 +972,13 @@ module Wavify
           raise Wavify::SequencerError, "duplicate track name: #{normalized_name}"
         end
 
-        definition = TrackDefinition.new(normalized_name, sample_folder: sample_folder, key_root: @key_root, scale: @scale)
+        definition = TrackDefinition.new(
+          normalized_name,
+          sample_folder: sample_folder,
+          key_root: @key_root,
+          scale: @scale,
+          safe_paths: @safe_paths
+        )
         begin
           TrackBuilder.new(definition).instance_eval(&block) if block
         rescue Wavify::Error => e
@@ -893,6 +1010,10 @@ module Wavify
           raise Wavify::SequencerError, "arrangement: #{e.message}"
         end
         @arrangement_sections = builder.sections
+        if @arrangement_sections.length > Wavify::Sequencer::Engine::MAX_ARRANGEMENT_SECTIONS
+          raise Wavify::SequencerError,
+                "arrangement exceeds #{Wavify::Sequencer::Engine::MAX_ARRANGEMENT_SECTIONS} sections"
+        end
       end
 
       # Finalizes and returns an immutable {SongDefinition}.
@@ -920,7 +1041,9 @@ module Wavify
       end
 
       def validate_tempo!(value)
-        raise Wavify::SequencerError, "tempo must be a positive Numeric" unless value.is_a?(Numeric) && value.positive?
+        unless value.is_a?(Numeric) && value.respond_to?(:finite?) && value.finite? && value.positive?
+          raise Wavify::SequencerError, "tempo must be a positive finite Numeric"
+        end
 
         value.to_f
       end
@@ -932,7 +1055,9 @@ module Wavify
       end
 
       def validate_default_bars!(value)
-        raise Wavify::SequencerError, "bars must be a positive Integer" unless value.is_a?(Integer) && value.positive?
+        unless value.is_a?(Integer) && value.between?(1, Wavify::Sequencer::Engine::MAX_BARS)
+          raise Wavify::SequencerError, "bars must be an Integer in 1..#{Wavify::Sequencer::Engine::MAX_BARS}"
+        end
 
         value
       end
@@ -953,7 +1078,7 @@ module Wavify
       # @param default_bars [Integer]
       # @return [SongDefinition]
       def build_definition(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1,
-                           random_seed: Random.new_seed, &block)
+                           random_seed: Random.new_seed, safe_paths: false, &block)
         Builder.build_definition(
           format: format,
           tempo: tempo,
@@ -961,6 +1086,7 @@ module Wavify
           swing: swing,
           default_bars: default_bars,
           random_seed: random_seed,
+          safe_paths: safe_paths,
           &block
         )
       end
@@ -969,7 +1095,7 @@ module Wavify
       #
       # @return [true]
       def validate(format:, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1,
-                   random_seed: Random.new_seed, &block)
+                   random_seed: Random.new_seed, safe_paths: false, deep: false, &block)
         build_definition(
           format: format,
           tempo: tempo,
@@ -977,8 +1103,9 @@ module Wavify
           swing: swing,
           default_bars: default_bars,
           random_seed: random_seed,
+          safe_paths: safe_paths,
           &block
-        ).validate!
+        ).validate!(deep: deep)
       end
 
       # Registers an effect factory for DSL `effect :name` usage.
@@ -1002,7 +1129,7 @@ module Wavify
     # @param default_bars [Integer]
     # @return [Audio]
     def build(output_path = nil, format: Core::Format::CD_QUALITY, tempo: 120, beats_per_bar: 4, swing: 0.5, default_bars: 1,
-              random_seed: Random.new_seed, &block)
+              random_seed: Random.new_seed, safe_paths: false, &block)
       song = DSL.build_definition(
         format: format,
         tempo: tempo,
@@ -1010,6 +1137,7 @@ module Wavify
         swing: swing,
         default_bars: default_bars,
         random_seed: random_seed,
+        safe_paths: safe_paths,
         &block
       )
 

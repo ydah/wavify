@@ -41,9 +41,12 @@ module Wavify
       attr_reader :default_octave, :events, :notation
 
       def initialize(notation, default_octave: 4)
-        @notation = notation
+        raise InvalidNoteError, "note sequence notation must be String" unless notation.is_a?(String)
+
+        @notation = notation.dup.freeze
         @default_octave = validate_default_octave!(default_octave)
-        @events = parse_events(notation).freeze
+        @events = parse_events(@notation).each(&:freeze).freeze
+        freeze
       end
 
       # Enumerates parsed events.

@@ -11,6 +11,16 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(engine.step_duration_seconds(16)).to be_within(0.0001).of(0.125)
     end
 
+    it "stores exact frame coordinates alongside display seconds" do
+      triplet_engine = described_class.new(tempo: 123, format: format)
+      track = Wavify::Sequencer::Track.new(:lead, note_sequence: "C4 D4 E4", note_resolution: 3)
+
+      events = triplet_engine.timeline_for_track(track, bars: 1)
+
+      expect(events).to all(include(:start_frame, :duration_frames))
+      expect(events.last[:start_frame]).to eq((events.last[:start_time] * format.sample_rate).round)
+    end
+
     it "delays off-beat steps when swing is enabled" do
       swung = described_class.new(tempo: 120, format: format, swing: 0.6)
 
@@ -159,6 +169,20 @@ RSpec.describe Wavify::Sequencer::Engine do
         engine.build_timeline(tracks: [first, second])
       end.to raise_error(Wavify::SequencerError, /duplicate track name/)
     end
+
+    it "rejects non-finite timing and excessive resource requests" do
+      track = Wavify::Sequencer::Track.new(:lead, note_sequence: "C4")
+
+      expect do
+        described_class.new(tempo: Float::INFINITY, format: format)
+      end.to raise_error(Wavify::SequencerError, /finite/)
+      expect do
+        engine.timeline_for_track(track, bars: described_class::MAX_BARS + 1)
+      end.to raise_error(Wavify::SequencerError, /bars/)
+      expect do
+        engine.timeline_for_track(track, bars: 1, start_time: Float::INFINITY)
+      end.to raise_error(Wavify::SequencerError, /finite/)
+    end
   end
 
   describe "#render" do
@@ -213,6 +237,18 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect do
         engine.render(tracks: [drums], default_bars: 1)
       end.to raise_error(Wavify::SequencerError, /sample-backed DSL track/)
+    end
+
+    it "flushes effect tails and resets effects between renders" do
+      delay = Wavify::DSP::Effects::Delay.new(time: 0.02, feedback: 0.5, mix: 1.0)
+      lead = Wavify::Sequencer::Track.new(:lead, note_sequence: "C4", note_resolution: 4, effects: [delay])
+
+      first = engine.render(tracks: [lead], default_bars: 1)
+      second = engine.render(tracks: [lead], default_bars: 1)
+      note_frames = (engine.step_duration_at(0, 4) * format.sample_rate).round
+
+      expect(first.sample_frame_count).to be > note_frames
+      expect(first.buffer.samples).to eq(second.buffer.samples)
     end
   end
 end

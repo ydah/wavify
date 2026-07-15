@@ -56,6 +56,7 @@ RSpec.describe Wavify::DSL do
       expect(drums.samples[:kick]).to eq("samples/kick.wav")
       expect(drums.sample_options[:kick]).to eq(gain: -3, pan: -0.1, trim: true)
       expect(lead.waveform).to eq(:triangle)
+      expect(lead.synth_options).to eq(detune: 5)
       expect(lead.effects.first[:name]).to eq(:chorus)
       expect(lead.envelope).to be_a(Wavify::DSP::Envelope)
     end
@@ -91,6 +92,73 @@ RSpec.describe Wavify::DSL do
           track(:lead)
         end
       end.to raise_error(Wavify::SequencerError, /duplicate track name/)
+      expect do
+        described_class.build_definition(format: format, tempo: Float::INFINITY)
+      end.to raise_error(Wavify::SequencerError, /finite/)
+      expect do
+        described_class.build_definition(format: format) do
+          track(:lead) { gain("loud") }
+        end
+      end.to raise_error(Wavify::SequencerError, /gain/)
+      expect do
+        described_class.build_definition(format: format) do
+          track(:lead) { pan(Float::NAN) }
+        end
+      end.to raise_error(Wavify::SequencerError, /pan/)
+    end
+
+    it "deep-freezes compiled track and section values" do
+      song = described_class.build_definition(format: format) do
+        track :lead do
+          notes "C4"
+          effect :chorus, rate: 1.0
+        end
+        arrange { section :main, bars: 1, tracks: [:lead], markers: [:start] }
+      end
+
+      expect(song).to be_frozen
+      expect(song.tracks.first).to be_frozen
+      expect(song.tracks.first.effects).to be_frozen
+      expect(song.tracks.first.effects.first[:params]).to be_frozen
+      expect(song.sections.first).to be_frozen
+      expect(song.sections.first.tracks).to be_frozen
+    end
+
+    it "passes hold, curve, and synth options into rendering" do
+      song = described_class.build_definition(format: format) do
+        track :lead do
+          synth :pulse, pulse_width: 0.25, detune: 4.0, unison: 3
+          notes "C4"
+          envelope attack: 0.0, hold: 0.01, decay: 0.01, sustain: 0.5, release: 0.01, curve: :exp
+        end
+      end
+      track = song.sequencer_tracks.first
+
+      expect(track.synth_options).to eq(pulse_width: 0.25, detune: 4.0, unison: 3)
+      expect(track.envelope.hold).to eq(0.01)
+      expect(track.envelope.curve).to eq(:exp)
+      expect(song.render.sample_frame_count).to be > 0
+    end
+
+    it "can deeply validate sample files before rendering" do
+      song = described_class.build_definition(format: format) do
+        track :drums do
+          pattern :hit, "x---"
+          sample :hit, "/definitely/missing/hit.wav"
+        end
+      end
+
+      expect(song.validate!).to eq(true)
+      expect { song.validate!(deep: true) }.to raise_error(Wavify::SequencerError, /failed to inspect sample/)
+    end
+
+    it "can enforce sample-folder containment" do
+      expect do
+        described_class.build_definition(format: format, safe_paths: true) do
+          sample_folder "/samples"
+          track(:drums) { sample :hit, "../secret.wav" }
+        end
+      end.to raise_error(Wavify::SequencerError, /escapes sample_folder/)
     end
 
     it "rejects an ambiguous primary pattern with multiple samples" do
@@ -263,7 +331,8 @@ RSpec.describe Wavify::DSL do
         end
       end
 
-      expect(song.arrangement.map { |section| section[:name] }).to eq(%i[loop loop_2])
+      expect(song.arrangement.map { |section| section[:name] }).to eq([:loop])
+      expect(song.arrangement.first[:repeat]).to eq(2)
       expect(song.duration.total_seconds).to be_within(0.0001).of(4.0)
 
       parsed = JSON.parse(song.timeline_json)
@@ -350,6 +419,29 @@ RSpec.describe Wavify::DSL do
         paths = song.write_stems(directory)
         expect(paths.keys).to eq(%i[lead pad])
         expect(paths.values).to all(satisfy { |path| File.exist?(path) })
+      end
+    end
+
+    it "sanitizes stem names and publishes files only after every encode succeeds" do
+      song = described_class.build_definition(format: format, tempo: 120) do
+        track(:"../lead") { notes "C4" }
+        track(:pad) { notes "E4" }
+      end
+
+      Dir.mktmpdir("wavify_stem_parent") do |parent|
+        directory = File.join(parent, "stems")
+        paths = song.write_stems(directory)
+        expect(paths[:"../lead"]).to start_with("#{File.expand_path(directory)}#{File::SEPARATOR}")
+        expect(File.basename(paths[:"../lead"])).not_to include("..", "/")
+
+        FileUtils.rm_rf(directory)
+        allow_any_instance_of(Wavify::Audio).to receive(:write).and_wrap_original do |method, path, **options|
+          raise Wavify::ProcessingError, "encode failed" if File.basename(path) == "pad.wav"
+
+          method.call(path, **options)
+        end
+        expect { song.write_stems(directory) }.to raise_error(Wavify::ProcessingError, /encode failed/)
+        expect(Dir.exist?(directory)).to eq(false)
       end
     end
 
@@ -442,8 +534,29 @@ RSpec.describe Wavify::DSL do
         second = song.render(default_bars: 1)
 
         expect(first.buffer.samples).to eq(second.buffer.samples)
-        expect(first.buffer.samples.first(8)).to all(eq(0.0))
         expect(first.peak_amplitude).to be > 0.0
+        expect(song.send(:derived_track_seed, :drums)).not_to eq(song.send(:derived_track_seed, :bass))
+      end
+    end
+
+
+    it "preserves overlapping sample peaks until track effects or final output" do
+      Tempfile.create(["wavify_overlap_a", ".wav"]) do |first|
+        Tempfile.create(["wavify_overlap_b", ".wav"]) do |second|
+          audio_sample = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(Array.new(8, 1.0), format))
+          audio_sample.write(first.path)
+          audio_sample.write(second.path)
+          song = described_class.build_definition(format: format, tempo: 120) do
+            track :drums do
+              pattern :first, "x---"
+              pattern :second, "x---"
+              sample :first, first.path
+              sample :second, second.path
+            end
+          end
+
+          expect(song.render(default_bars: 1).peak_amplitude).to be > 1.0
+        end
       end
     end
   end

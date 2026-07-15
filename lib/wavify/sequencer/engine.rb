@@ -6,6 +6,11 @@ module Wavify
     class Engine
       # Default beats-per-bar value used when omitted.
       DEFAULT_BEATS_PER_BAR = 4
+      MAX_BARS = 100_000
+      MAX_ARRANGEMENT_SECTIONS = 10_000
+      MAX_EXPANDED_SECTIONS = 100_000
+      MAX_SECTION_REPEAT = 10_000
+      MAX_EVENTS = 1_000_000
 
       attr_reader :tempo, :format, :beats_per_bar, :swing
 
@@ -18,34 +23,26 @@ module Wavify
 
       # @return [Float] seconds per beat at the current tempo
       def seconds_per_beat
-        60.0 / @tempo
+        seconds_per_beat_rational.to_f
       end
 
       # @return [Float] duration of one bar in seconds
       def bar_duration_seconds
-        seconds_per_beat * @beats_per_bar
+        bar_duration_time.to_f
       end
 
       def step_duration_seconds(resolution)
         raise SequencerError, "resolution must be a positive Integer" unless resolution.is_a?(Integer) && resolution.positive?
 
-        bar_duration_seconds / resolution.to_f
+        step_duration_time(resolution).to_f
       end
 
       def step_start_seconds(index, resolution)
-        base_duration = step_duration_seconds(resolution)
-        return index * base_duration if straight_timing?(resolution)
-
-        pair_duration = base_duration * 2.0
-        ((index / 2) * pair_duration) + (index.even? ? 0.0 : pair_duration * @swing)
+        step_start_time(index, resolution).to_f
       end
 
       def step_duration_at(index, resolution)
-        base_duration = step_duration_seconds(resolution)
-        return base_duration if straight_timing?(resolution)
-
-        pair_duration = base_duration * 2.0
-        pair_duration * (index.even? ? @swing : (1.0 - @swing))
+        step_duration_time_at(index, resolution).to_f
       end
 
       def expand_pattern_step(step, start_time:, duration:)
@@ -65,17 +62,22 @@ module Wavify
 
       def timeline_for_track(track, bars:, start_bar: 0, start_time: nil)
         raise SequencerError, "track must be a Sequencer::Track" unless track.is_a?(Track)
-        raise SequencerError, "bars must be a positive Integer" unless bars.is_a?(Integer) && bars.positive?
+        unless bars.is_a?(Integer) && bars.between?(1, MAX_BARS)
+          raise SequencerError, "bars must be an Integer in 1..#{MAX_BARS}"
+        end
         raise SequencerError, "start_bar must be a non-negative Integer" unless start_bar.is_a?(Integer) && start_bar >= 0
-        if start_time && !(start_time.is_a?(Numeric) && start_time >= 0)
-          raise SequencerError, "start_time must be a non-negative Numeric"
+        if start_time && !(start_time.is_a?(Numeric) && start_time.respond_to?(:finite?) && start_time.finite? && start_time >= 0)
+          raise SequencerError, "start_time must be a non-negative finite Numeric"
         end
 
         events = []
         events.concat(schedule_pattern_events(track, bars: bars, start_bar: start_bar, start_time: start_time)) if track.pattern?
         events.concat(schedule_note_events(track, bars: bars, start_bar: start_bar, start_time: start_time)) if track.notes?
         events.concat(schedule_chord_events(track, bars: bars, start_bar: start_bar, start_time: start_time)) if track.chords?
-        events.sort_by { |event| [event[:start_time], event[:kind].to_s] }
+        raise SequencerError, "timeline exceeds #{MAX_EVENTS} events" if events.length > MAX_EVENTS
+
+        events.map { |event| decorate_event_timing(event) }
+              .sort_by { |event| [event[:start_frame], event[:kind].to_s] }
       end
 
       # Builds a combined event timeline for tracks and optional arrangement.
@@ -90,7 +92,9 @@ module Wavify
         if arrangement
           build_arranged_timeline(track_map, arrangement)
         else
-          raise SequencerError, "default_bars must be a positive Integer" unless default_bars.is_a?(Integer) && default_bars.positive?
+          unless default_bars.is_a?(Integer) && default_bars.between?(1, MAX_BARS)
+            raise SequencerError, "default_bars must be an Integer in 1..#{MAX_BARS}"
+          end
 
           events = track_map.values.flat_map do |track|
             timeline_for_track(track, bars: default_bars)
@@ -136,40 +140,56 @@ module Wavify
 
       def normalize_arrangement(arrangement, track_map)
         raise SequencerError, "arrangement must be an Array" unless arrangement.is_a?(Array)
+        if arrangement.length > MAX_ARRANGEMENT_SECTIONS
+          raise SequencerError, "arrangement exceeds #{MAX_ARRANGEMENT_SECTIONS} sections"
+        end
 
-        cursor_bar = 0
-        cursor_time = 0.0
-        arrangement.flat_map do |section|
-          raise SequencerError, "section must be a Hash" unless section.is_a?(Hash)
+        expanded_count = arrangement.sum do |section|
+          repeat = section.is_a?(Hash) ? section.fetch(:repeat, 1) : 1
+          repeat.is_a?(Integer) ? repeat : 1
+        end
+        if expanded_count > MAX_EXPANDED_SECTIONS
+          raise SequencerError, "expanded arrangement exceeds #{MAX_EXPANDED_SECTIONS} sections"
+        end
 
-          name = section.fetch(:name, "section_#{cursor_bar}").to_sym
-          bars = section.fetch(:bars)
-          raise SequencerError, "section bars must be a positive Integer" unless bars.is_a?(Integer) && bars.positive?
-          repeat = section.fetch(:repeat, 1)
-          raise SequencerError, "section repeat must be a positive Integer" unless repeat.is_a?(Integer) && repeat.positive?
-          tempo = normalize_section_tempo(section[:tempo] || @tempo)
-          beats_per_bar = validate_beats_per_bar!(section[:beats_per_bar] || @beats_per_bar)
-          markers = normalize_section_markers(section.fetch(:markers, []))
+        Enumerator.new do |yielder|
+          cursor_bar = 0
+          cursor_time = Rational(0, 1)
+          arrangement.each do |section|
+            raise SequencerError, "section must be a Hash" unless section.is_a?(Hash)
 
-          track_names = Array(section.fetch(:tracks)).map(&:to_sym)
-          unknown = track_names - track_map.keys
-          raise SequencerError, "unknown tracks in section #{name}: #{unknown.join(', ')}" unless unknown.empty?
+            name = section.fetch(:name, "section_#{cursor_bar}").to_sym
+            bars = section.fetch(:bars)
+            unless bars.is_a?(Integer) && bars.between?(1, MAX_BARS)
+              raise SequencerError, "section bars must be an Integer in 1..#{MAX_BARS}"
+            end
+            repeat = section.fetch(:repeat, 1)
+            unless repeat.is_a?(Integer) && repeat.between?(1, MAX_SECTION_REPEAT)
+              raise SequencerError, "section repeat must be an Integer in 1..#{MAX_SECTION_REPEAT}"
+            end
+            tempo = normalize_section_tempo(section[:tempo] || @tempo)
+            beats_per_bar = validate_beats_per_bar!(section[:beats_per_bar] || @beats_per_bar)
+            markers = normalize_section_markers(section.fetch(:markers, []))
 
-          Array.new(repeat) do |repeat_index|
-            section_engine = self.class.new(tempo: tempo, format: @format, beats_per_bar: beats_per_bar, swing: @swing)
-            normalized = {
-              name: repeated_section_name(name, repeat_index),
-              bars: bars,
-              tracks: track_names,
-              start_bar: cursor_bar,
-              start_time: cursor_time,
-              tempo: tempo,
-              beats_per_bar: beats_per_bar,
-              markers: markers
-            }
-            cursor_bar += bars
-            cursor_time += bars * section_engine.bar_duration_seconds
-            normalized
+            track_names = Array(section.fetch(:tracks)).map(&:to_sym)
+            unknown = track_names - track_map.keys
+            raise SequencerError, "unknown tracks in section #{name}: #{unknown.join(', ')}" unless unknown.empty?
+
+            repeat.times do |repeat_index|
+              section_engine = self.class.new(tempo: tempo, format: @format, beats_per_bar: beats_per_bar, swing: @swing)
+              yielder << {
+                name: repeated_section_name(name, repeat_index),
+                bars: bars,
+                tracks: track_names,
+                start_bar: cursor_bar,
+                start_time: cursor_time,
+                tempo: tempo,
+                beats_per_bar: beats_per_bar,
+                markers: markers
+              }
+              cursor_bar += bars
+              cursor_time += bars * section_engine.send(:bar_duration_time)
+            end
           end
         end
       end
@@ -192,18 +212,30 @@ module Wavify
       end
 
       def render_arranged_tracks(track_map, sections)
-        sections.flat_map do |section|
+        work_format = @format.with(sample_format: :float, bit_depth: 32)
+        samples = []
+        sections.each do |section|
           section_engine = engine_for_section(section)
-          section[:tracks].filter_map do |track_name|
-            section_engine.send(
+          section[:tracks].each do |track_name|
+            audio = section_engine.send(
               :render_track_audio,
               track_map.fetch(track_name),
               bars: section[:bars],
-              start_bar: section[:start_bar],
-              start_time: section[:start_time]
+              start_bar: 0,
+              start_time: 0.0
             )
+            next unless audio
+
+            source = audio.buffer.convert(work_format)
+            offset = (section[:start_time] * @format.sample_rate).round * work_format.channels
+            required_length = offset + source.samples.length
+            samples.concat(Array.new(required_length - samples.length, 0.0)) if required_length > samples.length
+            source.samples.each_with_index { |sample, index| samples[offset + index] += sample }
           end
         end
+        return [] if samples.empty?
+
+        [Wavify::Audio.new(Wavify::Core::SampleBuffer.new(samples, work_format).convert(@format))]
       end
 
       def render_track_audio(track, bars:, start_bar: 0, start_time: nil)
@@ -216,14 +248,20 @@ module Wavify
 
         track_format = @format.channels == 2 ? @format : @format.with(channels: 2)
         release_seconds = track.envelope&.release || 0.0
-        total_end_time = note_events.map { |event| event[:start_time] + event[:duration] + release_seconds }.max || 0.0
-        audio = Wavify::Audio.silence(total_end_time, format: track_format.with(sample_format: :float, bit_depth: 32))
+        release_frames = (release_seconds * track_format.sample_rate).ceil
+        total_end_frame = note_events.map do |event|
+          event.fetch(:start_frame) + event.fetch(:duration_frames) + release_frames
+        end.max || 0
+        audio = Wavify::Audio.silence(
+          total_end_frame.to_f / track_format.sample_rate,
+          format: track_format.with(sample_format: :float, bit_depth: 32)
+        )
         mixed = audio.buffer.samples.dup
 
         note_events.each do |event|
           frequencies = event[:midi_notes].map { |midi| midi_to_frequency(midi) }
           note_audio = render_chord_tone(frequencies, event[:duration], track, track_format.with(sample_format: :float, bit_depth: 32))
-          start_frame = (event[:start_time] * track_format.sample_rate).round
+          start_frame = event.fetch(:start_frame)
           start_index = start_frame * track_format.channels
 
           note_audio.buffer.samples.each_with_index do |sample, index|
@@ -234,11 +272,6 @@ module Wavify
           end
         end
 
-        Wavify::DSP::Headroom.apply!(
-          mixed,
-          channels: track_format.channels,
-          sample_rate: track_format.sample_rate
-        )
         rendered = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(mixed, track_format.with(sample_format: :float, bit_depth: 32)))
         rendered = rendered.gain(track.gain_db) if track.gain_db != 0.0
         if track.pan_position != 0.0
@@ -251,7 +284,13 @@ module Wavify
       def render_chord_tone(frequencies, duration, track, format)
         rendered_duration = duration + (track.envelope&.release || 0.0)
         note_audios = frequencies.map do |frequency|
-          tone = Wavify::Audio.tone(frequency: frequency, duration: rendered_duration, format: format, waveform: track.waveform)
+          tone = Wavify::Audio.tone(
+            frequency: frequency,
+            duration: rendered_duration,
+            format: format,
+            waveform: track.waveform,
+            **track.synth_options
+          )
           if track.envelope
             tone.apply(lambda do |buffer|
               track.envelope.apply(buffer, note_on_duration: duration)
@@ -261,7 +300,7 @@ module Wavify
           end
         end
 
-        Wavify::Audio.mix(*note_audios, strategy: :headroom)
+        Wavify::Audio.mix(*note_audios, strategy: :none)
       end
 
       def schedule_pattern_events(track, bars:, start_bar:, start_time:)
@@ -270,8 +309,8 @@ module Wavify
         (0...bars).flat_map do |bar_offset|
           track.pattern.filter(&:trigger?).flat_map do |step|
             absolute_bar = start_bar + bar_offset
-            event_start_time = bar_start_seconds(absolute_bar, bar_offset, start_time) + step_start_seconds(step.index, resolution)
-            duration = step_duration_at(step.index, resolution)
+            event_start_time = bar_start_time(absolute_bar, bar_offset, start_time) + step_start_time(step.index, resolution)
+            duration = step_duration_time_at(step.index, resolution)
             expand_pattern_step(step, start_time: event_start_time, duration: duration).map do |event|
               event.merge(kind: :trigger, track: track.name, bar: absolute_bar, step_index: step.index)
             end
@@ -292,7 +331,7 @@ module Wavify
             next if event.rest?
 
             absolute_bar = start_bar + bar_offset
-            event_start_time = bar_start_seconds(absolute_bar, bar_offset, start_time) + step_start_seconds(event.index, resolution)
+            event_start_time = bar_start_time(absolute_bar, bar_offset, start_time) + step_start_time(event.index, resolution)
             duration, index = note_duration_and_next_index(events, index - 1, resolution)
             result << {
               kind: :note,
@@ -327,10 +366,10 @@ module Wavify
 
       def note_event_duration(event, resolution)
         if event.duration_denominator
-          return (bar_duration_seconds / event.duration_denominator.to_f) * event.duration_multiplier.to_f
+          return (bar_duration_time / event.duration_denominator) * Rational(event.duration_multiplier.to_s)
         end
 
-        step_duration_at(event.index, resolution)
+        step_duration_time_at(event.index, resolution)
       end
 
       def schedule_chord_events(track, bars:, start_bar:, start_time:)
@@ -345,8 +384,8 @@ module Wavify
             track: track.name,
             bar: absolute_bar,
             step_index: 0,
-            start_time: bar_start_seconds(absolute_bar, bar_offset, start_time),
-            duration: bar_duration_seconds,
+            start_time: bar_start_time(absolute_bar, bar_offset, start_time),
+            duration: bar_duration_time,
             midi_notes: chord.fetch(:midi_notes),
             chord: chord.fetch(:token)
           }
@@ -358,11 +397,13 @@ module Wavify
       end
 
       def apply_track_effects(audio, effects)
-        effects.reduce(audio) { |current, effect| current.apply(effect) }
+        audio.apply(Wavify::DSP::Effects::EffectChain.new(effects))
       end
 
       def validate_tempo!(tempo)
-        raise SequencerError, "tempo must be a positive Numeric" unless tempo.is_a?(Numeric) && tempo.positive?
+        unless tempo.is_a?(Numeric) && tempo.respond_to?(:finite?) && tempo.finite? && tempo.positive?
+          raise SequencerError, "tempo must be a positive finite Numeric"
+        end
 
         tempo.to_f
       end
@@ -397,10 +438,40 @@ module Wavify
         :"#{name}_#{repeat_index + 1}"
       end
 
-      def bar_start_seconds(absolute_bar, bar_offset, start_time)
-        return (start_time.to_f + (bar_offset * bar_duration_seconds)) if start_time
+      def seconds_per_beat_rational
+        Rational(60, 1) / Rational(@tempo.to_s)
+      end
 
-        absolute_bar * bar_duration_seconds
+      def bar_duration_time
+        seconds_per_beat_rational * @beats_per_bar
+      end
+
+      def step_duration_time(resolution)
+        raise SequencerError, "resolution must be a positive Integer" unless resolution.is_a?(Integer) && resolution.positive?
+
+        bar_duration_time / resolution
+      end
+
+      def step_start_time(index, resolution)
+        base_duration = step_duration_time(resolution)
+        return index * base_duration if straight_timing?(resolution)
+
+        pair_duration = base_duration * 2
+        ((index / 2) * pair_duration) + (index.even? ? 0 : pair_duration * Rational(@swing.to_s))
+      end
+
+      def step_duration_time_at(index, resolution)
+        base_duration = step_duration_time(resolution)
+        return base_duration if straight_timing?(resolution)
+
+        pair_duration = base_duration * 2
+        pair_duration * (index.even? ? Rational(@swing.to_s) : (1 - Rational(@swing.to_s)))
+      end
+
+      def bar_start_time(absolute_bar, bar_offset, start_time)
+        return (Rational(start_time.to_s) + (bar_offset * bar_duration_time)) if start_time
+
+        absolute_bar * bar_duration_time
       end
 
       def engine_for_section(section)
@@ -414,7 +485,7 @@ module Wavify
 
       def marker_events_for_section(section)
         section.fetch(:markers, []).map do |marker|
-          {
+          decorate_event_timing({
             kind: :marker,
             track: :arrangement,
             bar: section.fetch(:start_bar),
@@ -423,8 +494,19 @@ module Wavify
             duration: 0.0,
             marker: marker,
             section: section.fetch(:name)
-          }
+          })
         end
+      end
+
+      def decorate_event_timing(event)
+        start_time = event.fetch(:start_time)
+        duration = event.fetch(:duration)
+        event.merge(
+          start_time: start_time.to_f,
+          duration: duration.to_f,
+          start_frame: (start_time * @format.sample_rate).round,
+          duration_frames: (duration * @format.sample_rate).round
+        )
       end
 
       def normalize_section_tempo(value)

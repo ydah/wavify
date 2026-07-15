@@ -230,6 +230,7 @@ module Wavify
 
     def usage(status: 0, output: @stdout)
       output.puts "usage: wavify <#{COMMANDS.join('|')}> [options]"
+      output.puts "warning: render/timeline song files are executed as trusted Ruby code"
       status
     end
   end

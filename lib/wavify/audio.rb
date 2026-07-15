@@ -10,7 +10,7 @@ module Wavify
   class Audio
     attr_reader :buffer
 
-    MIX_STRATEGIES = %i[clip normalize headroom soft_limit].freeze
+    MIX_STRATEGIES = %i[none clip normalize headroom soft_limit].freeze
     MIX_ALIGNMENTS = %i[start center end].freeze
     NORMALIZE_MODES = %i[peak rms lufs].freeze
     FADE_CURVES = %i[linear exp log].freeze
@@ -1370,6 +1370,8 @@ module Wavify
 
     def self.apply_mix_strategy!(samples, strategy, format: nil, headroom_smoothing: DSP::Headroom::DEFAULT_SMOOTHING_SECONDS)
       case strategy
+      when :none
+        samples
       when :clip
         samples.map! { |sample| clip_value(sample, -1.0, 1.0) }
       when :normalize

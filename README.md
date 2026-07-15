@@ -213,8 +213,9 @@ Pattern steps support rests (`-`/`.`), normal triggers (`x`, velocity `0.8`), ac
 Note tokens support fixed durations (`C4/8`), dotted values (`C4/8.`), triplets (`C4/8t`), and ties (`D4~ D4`).
 Use `key :c, :minor` for simple scale quantization, slash chords for inversions, and `@drop2` / `@open` or `voicing:` for chord voicings.
 Arrangement sections can carry `tempo:`, `beats_per_bar:`, and `markers:`.
-Swing values start at `0.5` for straight timing; values such as `0.55` delay off-beat steps on even grids.
-Sample tracks can use `sample_folder`, per-sample `pitch:` semitones, `preset :lofi_drums`, and `Wavify::DSL.validate` for pre-render checks.
+Swing values start at `0.5` for straight timing; values such as `0.55` delay off-beat steps on even grids. Odd resolutions use straight timing because they do not form complete swing pairs.
+Notes, ties, envelope releases, and effect tails may continue beyond a bar or section boundary. They are rendered with the tempo at note-on and continue even if the track is inactive in the following section.
+Sample tracks can use `sample_folder`, per-sample `pitch:` semitones, `preset :lofi_drums`, and `Wavify::DSL.validate(deep: true)` for pre-render file/codec checks. Pass `safe_paths: true` to restrict sample paths to the configured sample folder.
 
 ## DSP
 
@@ -260,6 +261,8 @@ See `examples/README.md` for the full list.
 ## CLI
 
 The gem includes a small CLI for common scripting tasks:
+
+`wavify render` and `wavify timeline` evaluate song files as Ruby. Only run trusted song files; this is not a sandbox for untrusted input.
 
 ```bash
 wavify info input.wav
