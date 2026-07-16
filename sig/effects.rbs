@@ -62,7 +62,7 @@ module Wavify
       end
 
       class NoiseGate < EffectBase
-        def initialize: (?threshold: Numeric, ?floor: Numeric, ?attack: Numeric, ?hold: Numeric, ?release: Numeric) -> void
+        def initialize: (?threshold: Numeric, ?floor: Numeric, ?attack: Numeric, ?hold: Numeric, ?release: Numeric, ?gain_attack: Numeric, ?gain_release: Numeric) -> void
       end
 
       class Tremolo < EffectBase
@@ -86,7 +86,7 @@ module Wavify
       end
 
       class Expander < EffectBase
-        def initialize: (?threshold: Numeric, ?ratio: Numeric, ?floor: Numeric, ?attack: Numeric, ?hold: Numeric, ?release: Numeric) -> void
+        def initialize: (?threshold: Numeric, ?ratio: Numeric, ?floor: Numeric, ?attack: Numeric, ?hold: Numeric, ?release: Numeric, ?gain_attack: Numeric, ?gain_release: Numeric) -> void
       end
 
       class AutoPan < EffectBase

@@ -7,15 +7,16 @@ module Wavify
       class NoiseGate < EffectBase
         include EnvelopeControlledEffect
 
-        def initialize(threshold: -40.0, floor: -80.0, attack: 0.001, hold: 0.02, release: 0.05)
+        def initialize(threshold: -40.0, floor: -80.0, attack: 0.001, hold: 0.02, release: 0.05,
+                       gain_attack: attack, gain_release: release)
           super()
           @threshold_db = validate_dbfs!(threshold, :threshold)
           @floor_db = validate_dbfs!(floor, :floor)
           @threshold = db_to_amplitude(@threshold_db)
           @floor_gain = db_to_amplitude(@floor_db)
-          @gain_attack = validate_time!(attack, :attack)
-          @gain_release = validate_time!(release, :release)
-          @envelope_follower = EnvelopeFollower.new(attack: @gain_attack, hold: hold, release: @gain_release)
+          @gain_attack = validate_time!(gain_attack, :gain_attack)
+          @gain_release = validate_time!(gain_release, :gain_release)
+          @envelope_follower = EnvelopeFollower.new(attack: attack, hold: hold, release: release)
           reset
         end
 

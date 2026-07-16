@@ -417,6 +417,22 @@ RSpec.describe Wavify::DSP::Effects do
       expect(excess_steps.max).to be < 0.04
     end
 
+    it "configures detector and gain attack independently" do
+      source = Wavify::Core::SampleBuffer.new(Array.new(1_000, 0.5), mono_float)
+      processed = described_class.new(
+        threshold: -20.0,
+        floor: -80.0,
+        attack: 0.0,
+        hold: 0.0,
+        release: 0.0,
+        gain_attack: 0.01,
+        gain_release: 0.01
+      ).process(source)
+
+      expect(processed.samples.first).to be < 0.01
+      expect(processed.samples.last).to be > 0.4
+    end
+
     it "requires frame-aware processing for linked detection" do
       expect do
         described_class.new.process_sample(0.1, channel: 0, sample_rate: 44_100)
@@ -505,7 +521,16 @@ RSpec.describe Wavify::DSP::Effects do
 
   describe Wavify::DSP::Effects::Expander do
     it "reduces low-level samples below threshold" do
-      effect = described_class.new(threshold: -20.0, ratio: 2.0, floor: -80.0, attack: 0.0, hold: 0.0, release: 0.0)
+      effect = described_class.new(
+        threshold: -20.0,
+        ratio: 2.0,
+        floor: -80.0,
+        attack: 0.0,
+        hold: 0.0,
+        release: 0.0,
+        gain_attack: 0.0,
+        gain_release: 0.0
+      )
       source = Wavify::Core::SampleBuffer.new([0.005, 0.2, -0.005, -0.2], mono_float)
 
       processed = effect.process(source)
@@ -524,6 +549,14 @@ RSpec.describe Wavify::DSP::Effects do
       processed.samples.drop(settled_index).zip(source.samples.drop(settled_index)).each do |actual, expected|
         expect(actual).to be_within(0.0001).of(expected)
       end
+    end
+
+    it "starts at unity gain while a slow detector catches a loud onset" do
+      source = Wavify::Core::SampleBuffer.new(Array.new(1_000, 0.5), mono_float)
+      processed = described_class.new(threshold: -20.0, attack: 0.01, hold: 0.0, release: 0.01).process(source)
+
+      expect(processed.samples.first).to be > 0.49
+      expect(processed.samples.last).to be_within(0.001).of(0.5)
     end
 
     it "requires frame-aware processing for linked detection" do

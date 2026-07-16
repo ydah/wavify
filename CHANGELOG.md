@@ -52,6 +52,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Ramped sequencer master limiting across its lookahead window so isolated peaks do not introduce an early gain discontinuity.
 - Accelerated sine generation with an interpolated wavetable and computed sequencer envelopes once per event frame instead of once per voice.
 - Made `flush(format:)` the processor contract without exception-driven retries, and preserved effect-chain subclass behavior in isolated runtimes.
+- Separated gate/expander detector timing from gain smoothing and initialized expander gain at unity to preserve loud onsets.
 
 ## [0.1.0] - 2026-03-04
 
