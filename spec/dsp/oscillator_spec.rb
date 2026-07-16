@@ -14,6 +14,19 @@ RSpec.describe Wavify::DSP::Oscillator do
       expect(buffer.samples.min).to be >= -1.0
     end
 
+    it "keeps interpolated sine generation close to the analytical waveform" do
+      frequency = 437.5
+      phase = 0.123
+      oscillator = described_class.new(waveform: :sine, frequency: frequency, phase: phase)
+      samples = oscillator.generate(0.02, format: mono_float).samples
+      expected = samples.each_index.map do |index|
+        Math.sin(2.0 * Math::PI * (phase + (frequency * index / mono_float.sample_rate)))
+      end
+
+      maximum_error = samples.zip(expected).map { |actual, reference| (actual - reference).abs }.max
+      expect(maximum_error).to be < 0.000002
+    end
+
     it "duplicates samples across channels for multichannel format" do
       stereo_float = mono_float.with(channels: 2)
       oscillator = described_class.new(waveform: :square, frequency: 110, amplitude: 0.5)

@@ -50,6 +50,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Documented unclipped float mixing and silent-by-default WAV/AIFF warnings, and covered OGG tempfile cleanup on parser failures.
 - Fixed offline and streaming runtime construction for mastering and podcast preset chains.
 - Ramped sequencer master limiting across its lookahead window so isolated peaks do not introduce an early gain discontinuity.
+- Accelerated sine generation with an interpolated wavetable and computed sequencer envelopes once per event frame instead of once per voice.
 
 ## [0.1.0] - 2026-03-04
 

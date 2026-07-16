@@ -6,6 +6,12 @@ module Wavify
     class Oscillator
       # Supported waveform symbols.
       WAVEFORMS = %i[sine square sawtooth triangle pulse white_noise pink_noise].freeze
+      # Sample count in the interpolated sine wavetable.
+      SINE_TABLE_SIZE = 2_048
+      # Shared sine cycle used by the eager generation hot path.
+      SINE_WAVETABLE = Array.new(SINE_TABLE_SIZE) do |index|
+        Math.sin(2.0 * Math::PI * index / SINE_TABLE_SIZE)
+      end.freeze
       # Sample count in each band-limited triangle wavetable.
       TRIANGLE_TABLE_SIZE = 2_048
       # Highest odd harmonic considered when building triangle tables.
@@ -69,14 +75,10 @@ module Wavify
         end
         samples = Array.new(sample_frames * format.channels)
 
-        sample_frames.times do |frame_index|
-          base_index = frame_index * format.channels
-          if noise_waveform?
-            format.channels.times { |channel| samples[base_index + channel] = scaled_noise_sample }
-          else
-            value = next_periodic_sample(format.sample_rate)
-            format.channels.times { |channel| samples[base_index + channel] = value }
-          end
+        if @waveform == :sine
+          generate_sine_samples!(samples, sample_frames, format.channels, format.sample_rate)
+        else
+          generate_samples!(samples, sample_frames, format.channels, format.sample_rate)
         end
 
         Core::SampleBuffer.new(samples, format)
@@ -99,6 +101,65 @@ module Wavify
       end
 
       private
+
+      def generate_sine_samples!(samples, sample_frames, channels, sample_rate)
+        if @voice_phases.one?
+          generate_single_sine_voice!(samples, sample_frames, channels, sample_rate)
+          return
+        end
+
+        phase_steps = @voice_frequencies.map { |frequency| frequency / sample_rate.to_f }
+        voice_count = @voice_phases.length
+        sample_frames.times do |frame_index|
+          raw = 0.0
+          voice = 0
+          while voice < voice_count
+            phase = @voice_phases.fetch(voice)
+            raw += interpolated_sine(phase)
+            next_phase = phase + phase_steps.fetch(voice)
+            @voice_phases[voice] = next_phase >= 1.0 ? next_phase - 1.0 : next_phase
+            voice += 1
+          end
+          write_frame!(samples, frame_index, channels, (raw / voice_count) * @amplitude)
+        end
+      end
+
+      def generate_single_sine_voice!(samples, sample_frames, channels, sample_rate)
+        phase = @voice_phases.fetch(0)
+        phase_step = @voice_frequencies.fetch(0) / sample_rate.to_f
+        sample_frames.times do |frame_index|
+          write_frame!(samples, frame_index, channels, interpolated_sine(phase) * @amplitude)
+          phase += phase_step
+          phase -= 1.0 if phase >= 1.0
+        end
+        @voice_phases[0] = phase
+      end
+
+      def interpolated_sine(phase)
+        position = phase * SINE_TABLE_SIZE
+        left_index = position.to_i
+        right_index = left_index + 1
+        right_index = 0 if right_index == SINE_TABLE_SIZE
+        fraction = position - left_index
+        left = SINE_WAVETABLE.fetch(left_index)
+        left + ((SINE_WAVETABLE.fetch(right_index) - left) * fraction)
+      end
+
+      def generate_samples!(samples, sample_frames, channels, sample_rate)
+        sample_frames.times do |frame_index|
+          if noise_waveform?
+            base_index = frame_index * channels
+            channels.times { |channel| samples[base_index + channel] = scaled_noise_sample }
+          else
+            write_frame!(samples, frame_index, channels, next_periodic_sample(sample_rate))
+          end
+        end
+      end
+
+      def write_frame!(samples, frame_index, channels, value)
+        base_index = frame_index * channels
+        channels.times { |channel| samples[base_index + channel] = value }
+      end
 
       def validate_waveform!(waveform)
         value = waveform.to_sym

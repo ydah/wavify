@@ -317,6 +317,29 @@ RSpec.describe Wavify::Sequencer::Engine do
       expect(audio.duration.total_seconds).to eq(4.0)
     end
 
+    it "computes one envelope value per event frame when master limiting is active" do
+      counting_envelope = Class.new(Wavify::DSP::Envelope) do
+        attr_reader :gain_calls
+
+        def gain_at(...)
+          @gain_calls = @gain_calls.to_i + 1
+          super
+        end
+      end
+      first_envelope = counting_envelope.new(attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.0)
+      second_envelope = counting_envelope.new(attack: 0.0, decay: 0.0, sustain: 1.0, release: 0.0)
+      first = Wavify::Sequencer::Track.new(:first, chord_progression: ["CMAJ7"], envelope: first_envelope)
+      second = Wavify::Sequencer::Track.new(:second, chord_progression: ["CMAJ7"], envelope: second_envelope)
+      fast_engine = described_class.new(tempo: 600, format: format.with(sample_rate: 8_000))
+      expect_any_instance_of(Wavify::DSP::Effects::Limiter).to receive(:apply).once.and_call_original
+
+      audio = fast_engine.render(tracks: [first, second], default_bars: 1)
+      event_frames = (fast_engine.bar_duration_seconds * fast_engine.format.sample_rate).round
+
+      expect(first_envelope.gain_calls + second_envelope.gain_calls).to eq(event_frames * 2)
+      expect(audio.clipped?).to eq(false)
+    end
+
     it "renders note voices directly into the track workspace" do
       chord = Wavify::Sequencer::Track.new(
         :pad,

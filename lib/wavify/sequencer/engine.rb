@@ -323,23 +323,30 @@ module Wavify
         mono_format = format.with(channels: 1)
         voice_gain = 1.0 / frequencies.length
         channels = format.channels
+        target_frame_limit = samples.length / channels
+        mixed_frame_count = [frame_count, target_frame_limit - start_frame].min
+        return if mixed_frame_count <= 0
+
+        envelope_gains = if track.envelope
+                           Array.new(mixed_frame_count) do |frame_index|
+                             time = frame_index.to_f / format.sample_rate
+                             track.envelope.gain_at(time, note_on_duration: duration)
+                           end
+                         end
         frequencies.each do |frequency|
           voice = Wavify::DSP::Oscillator.new(
             frequency: frequency,
             waveform: track.waveform,
             **track.synth_options
           ).generate(rendered_duration, format: mono_format)
-          voice.samples.each_with_index do |sample, frame_index|
+          frame_index = 0
+          while frame_index < mixed_frame_count
             target_frame = start_frame + frame_index
-            break if target_frame >= samples.length / channels
-
-            value = sample * voice_gain
-            if track.envelope
-              time = frame_index.to_f / format.sample_rate
-              value *= track.envelope.gain_at(time, note_on_duration: duration)
-            end
+            value = voice.samples.fetch(frame_index) * voice_gain
+            value *= envelope_gains.fetch(frame_index) if envelope_gains
             base_index = target_frame * channels
             channels.times { |channel| samples[base_index + channel] += value }
+            frame_index += 1
           end
         end
       end
