@@ -288,6 +288,20 @@ RSpec.describe Wavify::Sequencer::Engine do
       end
     end
 
+    it "ramps master gain before an isolated spike enters a sustained signal" do
+      spike_frame = 1_000
+      source_frames = Array.new(2_000) { [0.9, 0.9] }
+      source_frames[spike_frame] = [2.0, 2.0]
+      source = Wavify::Audio.new(Wavify::Core::SampleBuffer.new(source_frames.flatten, format))
+
+      audio = engine.send(:master_audio, [source])
+      left = audio.buffer.samples.each_slice(format.channels).map(&:first)
+      pre_spike_steps = left.first(spike_frame).each_cons(2).map { |first, second| (second - first).abs }
+
+      expect(pre_spike_steps.max).to be < 0.02
+      expect(audio.peak_amplitude).to be <= (10.0**(described_class::MASTER_CEILING_DB / 20.0))
+    end
+
     it "generates four-voice chords once per voice without sample enumerators" do
       chord = Wavify::Sequencer::Track.new(:pad, chord_progression: ["CMAJ7"], waveform: :sine)
       generate_calls = 0

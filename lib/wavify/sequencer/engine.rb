@@ -18,6 +18,8 @@ module Wavify
       MAX_EVENTS = 1_000_000
       # Final sequencer ceiling leaves conversion margin below digital full scale.
       MASTER_CEILING_DB = -0.1
+      # The master limiter uses its full lookahead window to ramp gain before peaks.
+      MASTER_LOOKAHEAD_SECONDS = 0.005
 
       attr_reader :tempo, :format, :beats_per_bar, :swing
 
@@ -347,7 +349,11 @@ module Wavify
         mixed = Wavify::Audio.mix(*rendered_audios, strategy: :none, format: work_format)
         return Wavify::Audio.new(mixed.buffer.convert(@format)) if mixed.peak_amplitude <= 1.0
 
-        limiter = Wavify::DSP::Effects::Limiter.new(ceiling: MASTER_CEILING_DB, attack: 0.0)
+        limiter = Wavify::DSP::Effects::Limiter.new(
+          ceiling: MASTER_CEILING_DB,
+          attack: MASTER_LOOKAHEAD_SECONDS,
+          lookahead: MASTER_LOOKAHEAD_SECONDS
+        )
         limited = limiter.apply(mixed.buffer)
         Wavify::Audio.new(limited.convert(@format))
       end
