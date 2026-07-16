@@ -25,7 +25,7 @@ module Wavify
       def flush(processor, format: nil)
         return [].each unless processor.respond_to?(:flush)
 
-        result = format ? flush_with_format(processor, format) : processor.flush
+        result = processor.flush(format: format)
         each_buffer(result, "processor flush")
       end
 
@@ -85,19 +85,6 @@ module Wavify
       end
       private_class_method :buffer?
 
-      def flush_with_format(processor, format)
-        processor.flush(format: format)
-      rescue ArgumentError => e
-        raise unless unsupported_format_argument?(e)
-
-        processor.flush
-      end
-      private_class_method :flush_with_format
-
-      def unsupported_format_argument?(error)
-        error.message.match?(/unknown keyword: :format|wrong number of arguments \(given 1, expected 0\)/)
-      end
-      private_class_method :unsupported_format_argument?
     end
   end
 end

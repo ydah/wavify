@@ -54,13 +54,15 @@ RSpec.describe Wavify::DSP::Processor do
     expect(second).to eq(first)
   end
 
-  it "accepts flush methods without a format keyword" do
+  it "requires flush methods to accept the format keyword" do
     processor = Class.new do
       def process(buffer) = buffer
       def flush = nil
     end.new
 
-    expect(described_class.flush(processor, format: format).to_a).to eq([])
+    expect do
+      described_class.flush(processor, format: format)
+    end.to raise_error(ArgumentError)
   end
 
   it "passes format through dynamic flush dispatch" do
@@ -85,13 +87,17 @@ RSpec.describe Wavify::DSP::Processor do
 
   it "does not swallow argument errors raised inside flush" do
     processor = Class.new do
+      attr_reader :flush_calls
+
       def flush(format:)
-        raise ArgumentError, "invalid internal state for #{format.sample_rate}"
+        @flush_calls = @flush_calls.to_i + 1
+        raise ArgumentError, "unknown keyword: :format after consuming #{format.sample_rate} Hz state"
       end
     end.new
 
     expect do
       described_class.flush(processor, format: format)
-    end.to raise_error(ArgumentError, /invalid internal state/)
+    end.to raise_error(ArgumentError, /after consuming/)
+    expect(processor.flush_calls).to eq(1)
   end
 end

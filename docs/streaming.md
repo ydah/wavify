@@ -22,6 +22,8 @@ The preferred order is `process`, then `call`, then `apply`. Stateful processors
 - `flush(format:)`
 - `tail_duration`
 
+When present, `flush` must accept the `format:` keyword. Wavify invokes it once per completed pass and propagates any exception without retrying, so destructive tail emission cannot run twice.
+
 `Stream#pipeline` returns the processor list for inspection, while `Stream#pipeline_steps` includes optional names.
 
 Convenience helpers cover common streaming workflows:

@@ -644,15 +644,36 @@ RSpec.describe Wavify::DSP::Effects do
 
       expect(observer.peak).to eq(1.5)
     end
+
+    it "preserves subclass behavior in isolated runtimes" do
+      custom_chain = Class.new(described_class) do
+        attr_reader :process_calls
+
+        def process(buffer)
+          @process_calls = @process_calls.to_i + 1
+          super
+        end
+      end
+      chain = custom_chain.new([->(buffer) { buffer }])
+
+      runtime = chain.build_runtime
+      runtime.process(Wavify::Core::SampleBuffer.new([0.25], mono_float))
+
+      expect(runtime).to be_a(custom_chain)
+      expect(runtime.process_calls).to eq(1)
+    end
   end
 
   describe Wavify::DSP::Effects::MasteringChain do
     it "applies a compact mastering preset" do
       source = Wavify::Core::SampleBuffer.new([0.1, 1.0, -1.0, 0.2], mono_float)
 
-      processed = described_class.new(ceiling: -3.0).apply(source)
+      chain = described_class.new(ceiling: -3.0)
+      processed = chain.apply(source)
+      runtime = chain.build_runtime
 
       expect(processed.samples.map(&:abs).max).to be <= (10.0**(-3.0 / 20.0))
+      expect(runtime).to be_a(described_class)
     end
   end
 
@@ -667,7 +688,7 @@ RSpec.describe Wavify::DSP::Effects do
       expect(processed.samples.length).to eq(source.samples.length)
       expect(processed.samples).to all(be_finite)
       expect(processed.samples.map(&:abs).max).to be <= (10.0**(-3.0 / 20.0))
-      expect(runtime).to be_a(Wavify::DSP::Effects::EffectChain)
+      expect(runtime).to be_a(described_class)
       expect(runtime.effects.length).to eq(4)
     end
   end
