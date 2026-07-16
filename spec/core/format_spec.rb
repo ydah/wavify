@@ -112,5 +112,15 @@ RSpec.describe Wavify::Core::Format do
       expect(explicit_nil.hash).to eq(default.hash)
       expect(buffer.convert(explicit_nil)).to equal(buffer)
     end
+
+    it "represents an explicitly unknown channel layout" do
+      default = described_class.new(channels: 2, sample_rate: 44_100, bit_depth: 16)
+      unknown = described_class.new(channels: 2, sample_rate: 44_100, bit_depth: 16, channel_layout: :unknown)
+
+      expect(unknown.channel_layout).to be_nil
+      expect(unknown).not_to eq(default)
+      expect(unknown.with(sample_rate: 48_000).channel_layout).to be_nil
+      expect(unknown.with(channels: 1).channel_layout).to eq([:front_center])
+    end
   end
 end

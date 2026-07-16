@@ -28,8 +28,8 @@ module Wavify
       attr_reader sample_format: Symbol
       attr_reader channel_layout: Array[Symbol]?
 
-      def initialize: (channels: Integer, sample_rate: Integer, bit_depth: Integer, ?sample_format: Symbol, ?valid_bits: Integer?, ?channel_layout: Array[Symbol]?) -> void
-      def with: (?channels: Integer?, ?sample_rate: Integer?, ?bit_depth: Integer?, ?sample_format: Symbol?, ?valid_bits: Integer?, ?channel_layout: Array[Symbol]?) -> Format
+      def initialize: (channels: Integer, sample_rate: Integer, bit_depth: Integer, ?sample_format: Symbol, ?valid_bits: Integer?, ?channel_layout: Array[Symbol] | :unknown | nil) -> void
+      def with: (?channels: Integer?, ?sample_rate: Integer?, ?bit_depth: Integer?, ?sample_format: Symbol?, ?valid_bits: Integer?, ?channel_layout: Array[Symbol] | :unknown | nil) -> Format
       def mono?: () -> bool
       def stereo?: () -> bool
       def block_align: () -> Integer

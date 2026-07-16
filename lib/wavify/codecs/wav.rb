@@ -770,6 +770,8 @@ module Wavify
             end
           end
 
+          return 0 if format.channel_layout.nil?
+
           channels = format.channels
           return 0 if channels <= 0
           return 0x4 if channels == 1
@@ -786,7 +788,7 @@ module Wavify
 
         def channel_layout_for_mask(channel_mask, channels)
           return Core::Format::DEFAULT_CHANNEL_LAYOUTS[channels] if channel_mask.nil?
-          return nil if channel_mask.zero?
+          return Core::Format::UNKNOWN_LAYOUT if channel_mask.zero?
 
           unknown_bits = channel_mask & ~SPEAKER_BITS.values.reduce(0, :|)
           raise UnsupportedFormatError, "unsupported WAV channel mask bits: 0x#{unknown_bits.to_s(16)}" unless unknown_bits.zero?

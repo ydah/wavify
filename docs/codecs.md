@@ -62,6 +62,7 @@ Wavify::Adapters.load(:ffmpeg)
 - OGG Vorbis uses optional `ogg-ruby` and `vorbis` gems. Use `Wavify::Codecs.available_formats` or `wavify doctor` to check whether they are installed.
 - OGG `stream_read` is incremental for a single logical stream. Chained/interleaved page data is demultiplexed into temporary spools instead of heap-sized Strings; packet decoding, resampling, and mixed output remain chunked.
 - Raw PCM/float requires `format:` for read, stream read, and metadata. Use `endianness: :little | :big`, `signed: true | false` for PCM, and `float_domain: :normalized | :ieee` to distinguish clamped audio floats from unrestricted IEEE values.
+- `Format` assigns conventional layouts when `channel_layout:` is omitted or `nil`; pass `channel_layout: :unknown` when the speaker positions are explicitly unknown. Extensible WAV preserves this as a zero channel mask.
 
 Magic-byte inspection preserves the position of seekable IO. For a non-rewindable IO, pass `filename:` so the codec can be selected without consuming its prefix; otherwise detection raises before reading the stream.
 The `wavify info` command prints warnings collected in codec metadata even though library reads are silent by default.

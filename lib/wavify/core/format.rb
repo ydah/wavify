@@ -30,6 +30,7 @@ module Wavify
         8 => %i[front_left front_right front_center low_frequency back_left back_right side_left side_right]
       }.transform_values(&:freeze).freeze
       UNSPECIFIED_LAYOUT = Object.new.freeze # :nodoc:
+      UNKNOWN_LAYOUT = :unknown # :nodoc:
 
       attr_reader :channels, :sample_rate, :bit_depth, :valid_bits, :sample_format, :channel_layout
 
@@ -38,7 +39,7 @@ module Wavify
       # @param bit_depth [Integer] bits per sample
       # @param valid_bits [Integer, nil] significant bits within the sample container
       # @param sample_format [Symbol,String] `:pcm` or `:float`
-      # @param channel_layout [Array<Symbol>, nil] ordered speaker positions
+      # @param channel_layout [Array<Symbol>, :unknown, nil] ordered speaker positions
       def initialize(channels:, sample_rate:, bit_depth:, sample_format: :pcm, valid_bits: nil,
                      channel_layout: UNSPECIFIED_LAYOUT)
         @channels = validate_channels(channels)
@@ -48,6 +49,8 @@ module Wavify
         @valid_bits = validate_valid_bits(valid_bits || @bit_depth)
         requested_layout = if channel_layout.equal?(UNSPECIFIED_LAYOUT) || channel_layout.nil?
                              DEFAULT_CHANNEL_LAYOUTS[@channels]
+                           elsif channel_layout == UNKNOWN_LAYOUT
+                             nil
                            else
                              channel_layout
                            end
@@ -198,7 +201,7 @@ module Wavify
 
       def resolved_channel_layout(channel_layout, target_channels)
         return channel_layout unless channel_layout.equal?(UNSPECIFIED_LAYOUT)
-        return @channel_layout if target_channels == @channels
+        return @channel_layout || UNKNOWN_LAYOUT if target_channels == @channels
 
         DEFAULT_CHANNEL_LAYOUTS[target_channels]
       end

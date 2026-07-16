@@ -54,6 +54,25 @@ RSpec.describe Wavify::Codecs::Wav do
       end
     end
 
+    it "roundtrips an explicitly unknown extensible channel layout" do
+      format = Wavify::Core::Format.new(
+        channels: 3,
+        sample_rate: 48_000,
+        bit_depth: 24,
+        sample_format: :pcm,
+        channel_layout: :unknown
+      )
+      buffer = Wavify::Core::SampleBuffer.new([100, -100, 300], format)
+
+      Tempfile.create(["wavify-unknown-layout", ".wav"]) do |file|
+        described_class.write(file.path, buffer)
+        decoded = described_class.read(file.path)
+
+        expect(decoded.format).to eq(format)
+        expect(decoded.format.channel_layout).to be_nil
+      end
+    end
+
     it "roundtrips 32-bit float stereo" do
       format = Wavify::Core::Format.new(channels: 2, sample_rate: 44_100, bit_depth: 32, sample_format: :float)
       buffer = Wavify::Core::SampleBuffer.new([0.25, -0.25, 0.75, -0.75], format)
