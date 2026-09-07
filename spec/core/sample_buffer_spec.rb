@@ -60,6 +60,15 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(view.slice(1, 1).to_sample_buffer.samples).to eq([5, 6])
     end
 
+    it "keeps nested views within their parent range" do
+      buffer = described_class.new([1, 2, 3, 4], pcm16_stereo.with(channels: 1))
+      view = buffer.view(start_frame: 1, frame_length: 1)
+
+      expect(view.slice(1, 1).samples).to eq([])
+      expect(view.slice(0, 3).samples).to eq([2])
+      expect(buffer.frame_view.slice(1, 1).slice(1, 1).to_a).to eq([])
+    end
+
     it "reverses frame order while preserving channel order" do
       buffer = described_class.new([1, 2, 3, 4, 5, 6], Wavify::Core::Format.new(channels: 2, sample_rate: 48_000, bit_depth: 16))
       reversed = buffer.reverse
@@ -264,6 +273,15 @@ RSpec.describe Wavify::Core::SampleBuffer do
       expect(dithered.samples.uniq).not_to eq([0])
     end
 
+    it "uses a random seed when dither is enabled without an explicit seed" do
+      mono_float = float_stereo.with(channels: 1)
+
+      converted = described_class.new([0.1, 0.2], mono_float)
+                                 .convert(mono_float.with(sample_format: :pcm, bit_depth: 16), dither: true)
+
+      expect(converted.sample_frame_count).to eq(2)
+    end
+
     it "converts empty buffers without inventing frames" do
       target = Wavify::Core::Format.new(channels: 1, sample_rate: 48_000, bit_depth: 32, sample_format: :float)
       source = described_class.new([], pcm16_stereo)
@@ -311,6 +329,25 @@ RSpec.describe Wavify::Core::SampleBuffer do
       converted = source.convert(float_stereo)
       expect(converted.samples[0]).to be > 1.0
       expect(converted.samples[1]).to be_within(0.0001).of(0.707)
+    end
+
+    it "includes both side and back channels in a surround downmix" do
+      surround = float_stereo.with(channels: 8)
+      converted = described_class.new([0, 0, 0, 0, 1, 0, 1, 0], surround).convert(float_stereo)
+
+      expect(converted.samples).to eq([1.414, 0.0])
+    end
+
+    it "reorders samples when only the ordered channel layout changes" do
+      right_left = float_stereo.with(channel_layout: %i[front_right front_left])
+
+      expect(described_class.new([0.25, 0.75], float_stereo).convert(right_left).samples).to eq([0.75, 0.25])
+    end
+
+    it "converts silence from accepted one-valid-bit PCM" do
+      one_bit = pcm16_stereo.with(channels: 1, valid_bits: 1)
+
+      expect(described_class.new([0], one_bit).convert(float_stereo.with(channels: 1)).samples).to eq([0.0])
     end
 
     it "resamples when the target sample rate changes" do

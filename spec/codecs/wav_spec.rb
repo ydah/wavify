@@ -88,6 +88,35 @@ RSpec.describe Wavify::Codecs::Wav do
       end
     end
 
+    it "preserves representable float samples outside full scale" do
+      format = Wavify::Core::Format.new(channels: 1, sample_rate: 48_000, bit_depth: 32, sample_format: :float)
+      buffer = Wavify::Core::SampleBuffer.new([2.0, -2.0, 0.5], format)
+
+      Tempfile.create(["wavify-headroom", ".wav"]) do |file|
+        described_class.write(file.path, buffer)
+
+        expect(described_class.read(file.path).samples).to eq(buffer.samples)
+      end
+    end
+
+    it "writes samples in WAV channel-mask order" do
+      format = Wavify::Core::Format.new(
+        channels: 2,
+        sample_rate: 48_000,
+        bit_depth: 16,
+        channel_layout: %i[front_right front_left]
+      )
+      buffer = Wavify::Core::SampleBuffer.new([100, 200], format)
+
+      Tempfile.create(["wavify-layout", ".wav"]) do |file|
+        described_class.write(file.path, buffer)
+        decoded = described_class.read(file.path)
+
+        expect(decoded.format.channel_layout).to eq(%i[front_left front_right])
+        expect(decoded.samples).to eq([200, 100])
+      end
+    end
+
     it "writes and reads LIST/INFO metadata" do
       format = Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 16, sample_format: :pcm)
       buffer = Wavify::Core::SampleBuffer.new([100, -100], format)

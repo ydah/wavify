@@ -92,7 +92,9 @@ module Wavify
             raise InvalidParameterError, "frame_length must be a non-negative Integer: #{frame_length.inspect}"
           end
 
-          self.class.new(@samples, @channels, start_frame: @start_frame + start_frame, frame_count: frame_length)
+          relative_start = [start_frame, @frame_count].min
+          relative_count = [frame_length, @frame_count - relative_start].min
+          self.class.new(@samples, @channels, start_frame: @start_frame + relative_start, frame_count: relative_count)
         end
 
         def length
@@ -173,7 +175,9 @@ module Wavify
             raise InvalidParameterError, "frame_length must be a non-negative Integer: #{frame_length.inspect}"
           end
 
-          self.class.new(@samples, @format, start_frame: @start_frame + start_frame, frame_count: frame_length)
+          relative_start = [start_frame, @frame_count].min
+          relative_count = [frame_length, @frame_count - relative_start].min
+          self.class.new(@samples, @format, start_frame: @start_frame + relative_start, frame_count: relative_count)
         end
 
         # Materializes the view as an immutable sample buffer.
@@ -371,8 +375,11 @@ module Wavify
         return self if new_format == @format && !dither
 
         resampler = normalize_resampler!(resampler)
-        dither_rng = dither_applicable?(new_format, dither) ? Random.new(dither_seed) : nil
-        if @format.channels == new_format.channels && @format.sample_rate == new_format.sample_rate
+        dither_rng = if dither_applicable?(new_format, dither)
+                       dither_seed.nil? ? Random.new : Random.new(dither_seed)
+                     end
+        if @format.channels == new_format.channels && @format.sample_rate == new_format.sample_rate &&
+           @format.channel_layout == new_format.channel_layout
           converted_samples = samples.map do |sample|
             normalized = to_normalized_float(sample, @format)
             from_normalized_float(normalized, new_format, dither_rng: dither_rng)
@@ -385,7 +392,8 @@ module Wavify
           normalized_samples,
           source_channels: @format.channels,
           target_channels: new_format.channels,
-          source_layout: @format.channel_layout
+          source_layout: @format.channel_layout,
+          target_layout: new_format.channel_layout
         )
         converted_samples = resample_interleaved(
           converted_samples,
@@ -618,6 +626,8 @@ module Wavify
         shift = format.bit_depth - format.valid_bits
         positive_scale = (((2**(format.valid_bits - 1)) - 1) << shift).to_f
         negative_scale = ((2**(format.valid_bits - 1)) << shift).to_f
+        return 0.0 if sample.zero?
+
         scale = sample.negative? ? negative_scale : positive_scale
         (sample.to_f / scale).clamp(-1.0, 1.0)
       end
@@ -633,6 +643,8 @@ module Wavify
 
       def apply_tpdf_dither(value, format, rng)
         max = ((2**(format.valid_bits - 1)) - 1).to_f
+        return value if max.zero?
+
         (value + ((rng.rand - rng.rand) / max)).clamp(-1.0, 1.0)
       end
 
@@ -650,8 +662,16 @@ module Wavify
         ((sample * scale).round.clamp(min, max)) << (format.bit_depth - format.valid_bits)
       end
 
-      def convert_channels_interleaved(samples, source_channels:, target_channels:, source_layout: nil)
-        return samples if samples.empty? || source_channels == target_channels
+      def convert_channels_interleaved(samples, source_channels:, target_channels:, source_layout: nil, target_layout: nil)
+        return samples if samples.empty?
+        if source_channels == target_channels
+          return samples unless source_layout && target_layout && source_layout != target_layout
+
+          source_indexes = target_layout.map { |position| source_layout.index(position) }
+          return samples unless source_indexes.all?
+
+          return samples.each_slice(source_channels).flat_map { |frame| source_indexes.map { |index| frame.fetch(index) } }
+        end
 
         output = []
         samples.each_slice(source_channels) do |frame|
@@ -761,8 +781,8 @@ module Wavify
         right = by_position.fetch(:front_right, frame[1] || left)
         center = by_position.fetch(:front_center, 0.0)
         lfe = by_position.fetch(:low_frequency, 0.0)
-        left_surround = by_position.fetch(:side_left, by_position.fetch(:back_left, 0.0))
-        right_surround = by_position.fetch(:side_right, by_position.fetch(:back_right, 0.0))
+        left_surround = by_position.fetch(:side_left, 0.0) + by_position.fetch(:back_left, 0.0)
+        right_surround = by_position.fetch(:side_right, 0.0) + by_position.fetch(:back_right, 0.0)
         known = %i[front_left front_right front_center low_frequency side_left side_right back_left back_right]
         extras = by_position.reject { |position, _| known.include?(position) }.values.sum
 

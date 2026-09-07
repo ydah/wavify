@@ -160,7 +160,8 @@ module Wavify
           writer = lambda do |chunk|
             raise InvalidParameterError, "stream chunk must be Core::SampleBuffer" unless chunk.is_a?(Core::SampleBuffer)
 
-            buffer = chunk.format == format ? chunk : chunk.convert(format)
+            encoding_format = wav_channel_order(format)
+            buffer = chunk.format == encoding_format ? chunk : chunk.convert(encoding_format)
             encoded_bytes = buffer.sample_frame_count * format.block_align
             next_data_bytes = total_data_bytes + encoded_bytes
             next_sample_frames = total_sample_frames + buffer.sample_frame_count
@@ -681,7 +682,7 @@ module Wavify
 
         def encode_samples(samples, format)
           if format.sample_format == :float
-            normalized = samples.map { |sample| sample.to_f.clamp(-1.0, 1.0) }
+            normalized = samples.map(&:to_f)
             return normalized.pack("e*") if format.bit_depth == 32
             return normalized.pack("E*") if format.bit_depth == 64
           elsif format.sample_format == :pcm
@@ -799,6 +800,12 @@ module Wavify
           end
 
           layout
+        end
+
+        def wav_channel_order(format)
+          return format unless format.channel_layout
+
+          format.with(channel_layout: channel_layout_for_mask(channel_mask_for(format), format.channels))
         end
 
         def canonicalize_valid_bits(samples, format)
