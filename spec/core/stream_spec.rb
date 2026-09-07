@@ -412,6 +412,17 @@ RSpec.describe Wavify::Core::Stream do
     source&.unlink
   end
 
+  it "does not emit an extra interpolable frame beyond the rounded duration" do
+    source_format = format.with(sample_rate: 96_000)
+    target_format = source_format.with(sample_rate: 11_025)
+    source = write_source_wav(Array.new(91, 0.5), source_format)
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: source_format, chunk_size: 13)
+
+    expect(stream.dry_run(format: target_format)[:sample_frame_count]).to eq(10)
+  ensure
+    source&.unlink
+  end
+
   it "remains reusable after rejecting an invalid dry-run format" do
     source = write_source_wav([0.1, 0.2])
     stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 1)
@@ -518,6 +529,41 @@ RSpec.describe Wavify::Core::Stream do
 
     expect(audio.format).to eq(format)
     expect(audio.sample_frame_count).to eq(0)
+  end
+
+  it "does not probe metadata before decoding a forward-only stream" do
+    source = Class.new do
+      def initialize
+        @available = true
+      end
+
+      def read
+        return unless @available
+
+        @available = false
+        :data
+      end
+    end.new
+    metadata_calls = 0
+    chunk = Wavify::Core::SampleBuffer.new([0.1], format)
+    codec = Class.new do
+      define_singleton_method(:metadata) do |input|
+        metadata_calls += 1
+        input.read
+        { format: chunk.format }
+      end
+      define_singleton_method(:stream_read) do |input, chunk_size:, &block|
+        raise "unexpected chunk size" unless chunk_size == 4_096
+        raise "source was consumed by metadata" unless input.read == :data
+
+        block.call(chunk)
+      end
+    end
+
+    audio = described_class.new(source, codec: codec, format: nil).to_audio
+
+    expect(audio.buffer.samples).to eq([0.1])
+    expect(metadata_calls).to eq(0)
   end
 
   it "rejects ambiguous processor and block arguments" do

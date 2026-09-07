@@ -149,7 +149,7 @@ module Wavify
       #
       # @return [Audio]
       def to_audio
-        format if !@format && @codec.respond_to?(:metadata)
+        format if !@format && @codec.respond_to?(:metadata) && (@source.is_a?(String) || @source_start_position)
         output_format = nil
         samples = []
         each_chunk do |chunk|
@@ -457,9 +457,9 @@ module Wavify
         end
 
         def output(final:)
-          target_frames = final ? Rational(@input_frames * @target_format.sample_rate, @source_rate).round : nil
+          target_frames = Rational(@input_frames * @target_format.sample_rate, @source_rate).round
           samples = []
-          while target_frames.nil? || @output_frames < target_frames
+          while @output_frames < target_frames
             numerator = @output_frames * @source_rate
             lower = numerator.div(@target_format.sample_rate)
             remainder = numerator % @target_format.sample_rate
