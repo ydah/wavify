@@ -390,6 +390,7 @@ module Wavify
       def slice_sample_option(audio, options)
         return audio.crop(start: options.fetch(:from, 0.0), duration: options[:duration]) if options.key?(:duration)
         return audio.slice(from: options.fetch(:from, 0.0), to: options[:to]) if options.key?(:to)
+        return audio.slice(from: options[:from], to: audio.duration) if options.key?(:from)
 
         audio
       end

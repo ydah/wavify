@@ -231,6 +231,16 @@ RSpec.describe Wavify::DSL do
   end
 
   describe "integration" do
+    it "slices a sample from an offset through its end" do
+      mono = format.with(channels: 1)
+      audio = Wavify::Audio.new(Wavify::Core::SampleBuffer.new([0.1, 0.2, 0.3, 0.4], mono))
+      definition = Wavify::DSL::SongDefinition.allocate
+
+      sliced = definition.send(:slice_sample_option, audio, from: 2.0 / mono.sample_rate)
+
+      expect(sliced.buffer.samples).to eq([0.3, 0.4])
+    end
+
     it "renders and writes audio with Wavify.build" do
       Tempfile.create(["wavify_dsl", ".wav"]) do |file|
         file.close

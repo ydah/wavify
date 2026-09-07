@@ -65,8 +65,9 @@ module Wavify
           raise InvalidParameterError, "processor must respond to :call, :process, or :apply"
         end
 
+        pipeline_name = validate_pipeline_name!(name)
         @pipeline << candidate
-        @pipeline_names << validate_pipeline_name!(name)
+        @pipeline_names << pipeline_name
         self
       end
 
@@ -148,6 +149,7 @@ module Wavify
       #
       # @return [Audio]
       def to_audio
+        format if !@format && @codec.respond_to?(:metadata)
         output_format = nil
         samples = []
         each_chunk do |chunk|
@@ -155,7 +157,7 @@ module Wavify
           converted = chunk.format == output_format ? chunk : chunk.convert(output_format)
           samples.concat(converted.samples)
         end
-        output_format ||= @last_output_format || @format
+        output_format ||= @last_output_format || format
         raise InvalidFormatError, "stream format is unknown" unless output_format.is_a?(Format)
 
         Audio.new(SampleBuffer.new(samples, output_format))
@@ -195,9 +197,9 @@ module Wavify
       # @param format [Format, nil] optional output conversion to validate
       # @return [Hash]
       def dry_run(format: nil)
+        tee_targets = @tee_targets
         raise InvalidFormatError, "format must be Core::Format" if format && !format.is_a?(Format)
 
-        tee_targets = @tee_targets
         @tee_targets = []
         stats = {
           chunks: 0,
@@ -495,6 +497,8 @@ module Wavify
       def with_tee_writers(targets = @tee_targets)
         fibers = []
         writers = []
+        error = nil
+        cleanup_error = nil
         targets.each do |target|
           fiber = Fiber.new do
             with_stream_context("stream tee", codec: target[:codec], target: target[:target]) do
@@ -506,20 +510,21 @@ module Wavify
           fibers << fiber
           writers << fiber.resume
         end
-        result = yield(writers)
-        fibers.reverse_each { |fiber| fiber.resume if fiber.alive? }
-        result
-      rescue StandardError => error
-        fibers&.reverse_each do |fiber|
+        yield(writers)
+      rescue StandardError => caught
+        error = caught
+        raise
+      ensure
+        fibers.reverse_each do |fiber|
           next unless fiber.alive?
 
           begin
-            fiber.raise(error)
-          rescue StandardError
-            nil
+            error ? fiber.raise(error) : fiber.resume
+          rescue StandardError => caught
+            cleanup_error ||= caught unless error
           end
         end
-        raise
+        raise cleanup_error if cleanup_error
       end
 
       def write_tee_chunks(chunk, tee_writers)

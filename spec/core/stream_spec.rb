@@ -297,6 +297,19 @@ RSpec.describe Wavify::Core::Stream do
     tee_output&.unlink
   end
 
+  it "finalizes tee output when enumeration stops early" do
+    source = write_source_wav([0.2, 0.4, 0.6, 0.8])
+    output = StringIO.new(+"".b, "w+b")
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 2)
+
+    stream.tee(output, codec: :wav).first
+    output.rewind
+
+    expect(Wavify::Codecs::Wav.read(output).sample_frame_count).to eq(2)
+  ensure
+    source&.unlink
+  end
+
   it "opens and finalizes multiple tee writers iteratively" do
     source = Wavify::Core::SampleBuffer.new([0.1, 0.2, 0.3, 0.4], format)
     input = StringIO.new(+"".b, "w+b")
@@ -356,6 +369,16 @@ RSpec.describe Wavify::Core::Stream do
   ensure
     source&.unlink
     tee_output&.unlink
+  end
+
+  it "remains reusable after rejecting an invalid dry-run format" do
+    source = write_source_wav([0.1, 0.2])
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: format, chunk_size: 1)
+
+    expect { stream.dry_run(format: Object.new) }.to raise_error(Wavify::InvalidFormatError)
+    expect(stream.each_chunk.sum(&:sample_frame_count)).to eq(2)
+  ensure
+    source&.unlink
   end
 
   it "resets stateful processors before each stream pass" do
@@ -434,6 +457,26 @@ RSpec.describe Wavify::Core::Stream do
     expect do
       stream.pipe(Object.new)
     end.to raise_error(Wavify::InvalidParameterError, /processor must respond/)
+  end
+
+  it "does not register a processor when its name is invalid" do
+    stream = described_class.new("unused", codec: Wavify::Codecs::Wav, format: format)
+    processor = ->(chunk) { chunk }
+
+    expect { stream.pipe(processor, name: 123) }.to raise_error(Wavify::InvalidParameterError)
+    expect(stream.pipeline).to eq([])
+    expect(stream.pipeline_steps).to eq([])
+  end
+
+  it "materializes an empty stream using codec metadata" do
+    input = StringIO.new(+"".b, "w+b")
+    Wavify::Codecs::Wav.stream_write(input, format: format) { |_writer| }
+    input.rewind
+
+    audio = described_class.new(input, codec: Wavify::Codecs::Wav, format: nil).to_audio
+
+    expect(audio.format).to eq(format)
+    expect(audio.sample_frame_count).to eq(0)
   end
 
   it "rejects ambiguous processor and block arguments" do
