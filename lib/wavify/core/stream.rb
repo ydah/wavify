@@ -201,6 +201,7 @@ module Wavify
         raise InvalidFormatError, "format must be Core::Format" if format && !format.is_a?(Format)
 
         @tee_targets = []
+        converter = FormatConverter.new(format) if format
         stats = {
           chunks: 0,
           sample_frame_count: 0,
@@ -212,8 +213,14 @@ module Wavify
         }
 
         each_chunk do |chunk|
-          output_chunk = format ? chunk.convert(format) : chunk
           stats[:chunks] += 1
+          output_chunk = converter ? converter.call(chunk) : chunk
+          next unless output_chunk
+
+          stats[:sample_frame_count] += output_chunk.sample_frame_count
+          stats[:format] ||= output_chunk.format
+        end
+        if (output_chunk = converter&.finish)
           stats[:sample_frame_count] += output_chunk.sample_frame_count
           stats[:format] ||= output_chunk.format
         end
@@ -310,12 +317,17 @@ module Wavify
         with_output_target(path_or_io, overwrite: overwrite) do |target|
           with_stream_context("stream write", codec: output_codec, target: path_or_io) do
             output_codec.stream_write(target, format: target_format, **options) do |writer|
+              converter = FormatConverter.new(target_format) if target_format
               each_chunk do |chunk|
-                output_chunk = target_format ? chunk.convert(target_format) : chunk
+                output_chunk = converter ? converter.call(chunk) : chunk
+                next unless output_chunk
+
                 with_stream_context("stream write", codec: output_codec, target: path_or_io) do
                   writer.call(output_chunk)
                 end
               end
+              output_chunk = converter&.finish
+              writer.call(output_chunk) if output_chunk
             end
           end
         end
@@ -404,6 +416,83 @@ module Wavify
           set_backtrace(original.backtrace)
         end
       end
+
+      # Keeps resampling phase and boundary samples across output chunks.
+      class FormatConverter
+        def initialize(target_format)
+          @target_format = target_format
+          @source_rate = nil
+          @input_frames = 0
+          @output_frames = 0
+          @pending_start = 0
+          @pending_samples = []
+        end
+
+        def call(chunk)
+          return chunk.convert(@target_format) if chunk.format.sample_rate == @target_format.sample_rate && !@source_rate
+
+          prepare(chunk)
+          converted = chunk.convert(@input_format)
+          @pending_samples.concat(converted.samples)
+          @input_frames += converted.sample_frame_count
+          output(final: false)
+        end
+
+        def finish
+          output(final: true) if @source_rate
+        end
+
+        private
+
+        def prepare(chunk)
+          @source_rate ||= chunk.format.sample_rate
+          if chunk.format.sample_rate != @source_rate
+            raise InvalidFormatError, "stream sample rate changed during output conversion"
+          end
+
+          return if @input_format
+
+          @input_format = @target_format.with(sample_rate: @source_rate, sample_format: :float, bit_depth: 64)
+          @output_format = @input_format.with(sample_rate: @target_format.sample_rate)
+        end
+
+        def output(final:)
+          target_frames = final ? Rational(@input_frames * @target_format.sample_rate, @source_rate).round : nil
+          samples = []
+          while target_frames.nil? || @output_frames < target_frames
+            numerator = @output_frames * @source_rate
+            lower = numerator.div(@target_format.sample_rate)
+            remainder = numerator % @target_format.sample_rate
+            upper = lower + (remainder.zero? ? 0 : 1)
+            break if !final && upper >= @input_frames
+
+            upper = [upper, @input_frames - 1].min
+            fraction = remainder.to_f / @target_format.sample_rate
+            @target_format.channels.times do |channel|
+              low = pending_sample(lower, channel)
+              high = pending_sample(upper, channel)
+              samples << (low + ((high - low) * fraction))
+            end
+            @output_frames += 1
+          end
+          discard_consumed_frames
+          return if samples.empty?
+
+          SampleBuffer.new(samples, @output_format).convert(@target_format)
+        end
+
+        def pending_sample(frame, channel)
+          @pending_samples.fetch(((frame - @pending_start) * @target_format.channels) + channel)
+        end
+
+        def discard_consumed_frames
+          next_frame = (@output_frames * @source_rate).div(@target_format.sample_rate)
+          discard_frames = [next_frame - @pending_start, @input_frames - @pending_start].min
+          @pending_samples = @pending_samples.drop(discard_frames * @target_format.channels)
+          @pending_start += discard_frames
+        end
+      end
+      private_constant :FormatConverter
 
       def apply_pipeline(chunk, start_index: 0)
         @pipeline.each_with_index.drop(start_index).reduce(chunk) do |current, (processor, index)|
@@ -503,7 +592,7 @@ module Wavify
           fiber = Fiber.new do
             with_stream_context("stream tee", codec: target[:codec], target: target[:target]) do
               target[:codec].stream_write(target[:target], format: target[:format], **target[:codec_options]) do |writer|
-                Fiber.yield(target.merge(writer: writer))
+                Fiber.yield(target.merge(writer: writer, converter: FormatConverter.new(target[:format])))
               end
             end
           end
@@ -515,6 +604,15 @@ module Wavify
         error = caught
         raise
       ensure
+        unless error
+          writers.each do |target|
+            output_chunk = target[:converter].finish
+            target[:writer].call(output_chunk) if output_chunk
+          rescue StandardError => caught
+            error = caught
+            cleanup_error ||= caught
+          end
+        end
         fibers.reverse_each do |fiber|
           next unless fiber.alive?
 
@@ -529,8 +627,8 @@ module Wavify
 
       def write_tee_chunks(chunk, tee_writers)
         tee_writers.each do |target|
-          output_chunk = chunk.format == target[:format] ? chunk : chunk.convert(target[:format])
-          target[:writer].call(output_chunk)
+          output_chunk = target[:converter].call(chunk)
+          target[:writer].call(output_chunk) if output_chunk
         end
       end
 

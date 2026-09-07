@@ -5,8 +5,8 @@ require "tempfile"
 RSpec.describe Wavify::Core::Stream do
   let(:format) { Wavify::Core::Format.new(channels: 1, sample_rate: 44_100, bit_depth: 32, sample_format: :float) }
 
-  def write_source_wav(samples)
-    buffer = Wavify::Core::SampleBuffer.new(samples, format)
+  def write_source_wav(samples, source_format = format)
+    buffer = Wavify::Core::SampleBuffer.new(samples, source_format)
     file = Tempfile.new(["wavify_stream_source", ".wav"])
     file.close
     Wavify::Codecs::Wav.write(file.path, buffer)
@@ -53,6 +53,21 @@ RSpec.describe Wavify::Core::Stream do
   ensure
     source&.unlink
     output&.unlink
+  end
+
+  it "resamples continuously across chunks when writing" do
+    source_format = format.with(sample_rate: 8_000)
+    target_format = source_format.with(sample_rate: 16_000)
+    source = write_source_wav([0.0, 1.0], source_format)
+    output = StringIO.new(+"".b, "w+b")
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: source_format, chunk_size: 1)
+
+    stream.write_to(output, format: target_format, codec: :wav)
+    output.rewind
+
+    expect(Wavify::Codecs::Wav.read(output).samples).to eq([0.0, 0.5, 1.0, 1.0])
+  ensure
+    source&.unlink
   end
 
   it "supports processor objects with #process" do
@@ -310,6 +325,21 @@ RSpec.describe Wavify::Core::Stream do
     source&.unlink
   end
 
+  it "resamples tee output continuously across chunks" do
+    source_format = format.with(sample_rate: 8_000)
+    target_format = source_format.with(sample_rate: 16_000)
+    source = write_source_wav([0.0, 1.0], source_format)
+    output = StringIO.new(+"".b, "w+b")
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: source_format, chunk_size: 1)
+
+    stream.tee(output, format: target_format, codec: :wav).each_chunk.to_a
+    output.rewind
+
+    expect(Wavify::Codecs::Wav.read(output).samples).to eq([0.0, 0.5, 1.0, 1.0])
+  ensure
+    source&.unlink
+  end
+
   it "opens and finalizes multiple tee writers iteratively" do
     source = Wavify::Core::SampleBuffer.new([0.1, 0.2, 0.3, 0.4], format)
     input = StringIO.new(+"".b, "w+b")
@@ -369,6 +399,17 @@ RSpec.describe Wavify::Core::Stream do
   ensure
     source&.unlink
     tee_output&.unlink
+  end
+
+  it "counts a resampled dry run independently of chunk boundaries" do
+    source_format = format.with(sample_rate: 48_000)
+    target_format = source_format.with(sample_rate: 16_000)
+    source = write_source_wav(Array.new(48_000, 0.5), source_format)
+    stream = described_class.new(source.path, codec: Wavify::Codecs::Wav, format: source_format, chunk_size: 4_096)
+
+    expect(stream.dry_run(format: target_format)[:sample_frame_count]).to eq(16_000)
+  ensure
+    source&.unlink
   end
 
   it "remains reusable after rejecting an invalid dry-run format" do
@@ -470,7 +511,7 @@ RSpec.describe Wavify::Core::Stream do
 
   it "materializes an empty stream using codec metadata" do
     input = StringIO.new(+"".b, "w+b")
-    Wavify::Codecs::Wav.stream_write(input, format: format) { |_writer| }
+    Wavify::Codecs::Wav.stream_write(input, format: format) { nil }
     input.rewind
 
     audio = described_class.new(input, codec: Wavify::Codecs::Wav, format: nil).to_audio
