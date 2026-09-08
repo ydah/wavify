@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f8fafc">
+    <meta name="description" content="Wavify is a pure Ruby toolkit for audio transforms, codec I/O, streaming pipelines, DSP effects, and sequencing.">
+    <meta property="og:title" content="Wavify — Shape sound. Stay in Ruby.">
+    <meta property="og:description" content="A pure Ruby toolkit for audio transforms, streaming pipelines, DSP effects, and sequencing.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://ydah.github.io/wavify/">
+    <meta name="twitter:card" content="summary">
+    <link rel="canonical" href="https://ydah.github.io/wavify/">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23020617'/%3E%3Cpath d='M8 33h7l4-14 7 28 7-35 7 41 6-27 4 7h6' fill='none' stroke='%230891b2' stroke-width='5' stroke-linecap='square'/%3E%3C/svg%3E">
+    <title>Wavify — Pure Ruby audio toolkit</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="shell header-inner">
+        <a class="brand" href="#top" aria-label="Wavify home">
+          <svg viewBox="0 0 36 24" aria-hidden="true">
+            <path d="M1 12h5l3-8 5 16 5-19 5 22 4-14 3 3h4" />
+          </svg>
+          <span>Wavify</span>
+        </a>
+
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="#features">Features</a>
+          <a href="#example">Example</a>
+          <a href="#formats">Formats</a>
+        </nav>
+
+        <a class="header-link" href="https://github.com/ydah/wavify">GitHub <span aria-hidden="true">↗</span></a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="shell hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">Pure Ruby audio toolkit <span>v0.2.0</span></p>
+            <h1>Shape sound.<br><span>Stay in Ruby.</span></h1>
+            <p class="hero-lede">Read, transform, process, and write audio with immutable APIs, streaming pipelines, production DSP, and a sequencing DSL.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="https://github.com/ydah/wavify">Explore on GitHub <span aria-hidden="true">↗</span></a>
+              <code class="install-command">gem install wavify</code>
+            </div>
+            <p class="requirement">Ruby 3.1+ · MIT licensed · Core codecs in pure Ruby</p>
+          </div>
+
+          <figure class="signal-console" aria-labelledby="signal-title">
+            <div class="console-bar">
+              <span id="signal-title">tone.wav</span>
+              <span>44.1 kHz / stereo / 16-bit</span>
+            </div>
+            <div class="wave-stage">
+              <svg viewBox="0 0 720 300" role="img" aria-label="A generated audio waveform">
+                <g class="wave-grid" aria-hidden="true">
+                  <path d="M0 50H720M0 100H720M0 150H720M0 200H720M0 250H720" />
+                  <path d="M90 0V300M180 0V300M270 0V300M360 0V300M450 0V300M540 0V300M630 0V300" />
+                </g>
+                <path class="wave-shadow" d="M0 150 C18 150 20 142 32 142 S46 166 58 166 S74 119 88 119 S105 190 121 190 S139 83 158 83 S180 223 199 223 S221 64 241 64 S260 237 281 237 S302 48 322 48 S343 248 364 248 S384 52 405 52 S426 235 447 235 S468 68 488 68 S509 218 530 218 S550 88 571 88 S591 199 612 199 S632 110 653 110 S671 179 689 179 S704 150 720 150" />
+                <path class="wave-line" d="M0 150 C18 150 20 142 32 142 S46 166 58 166 S74 119 88 119 S105 190 121 190 S139 83 158 83 S180 223 199 223 S221 64 241 64 S260 237 281 237 S302 48 322 48 S343 248 364 248 S384 52 405 52 S426 235 447 235 S468 68 488 68 S509 218 530 218 S550 88 571 88 S591 199 612 199 S632 110 653 110 S671 179 689 179 S704 150 720 150" />
+                <path class="playhead" d="M364 24V276" />
+              </svg>
+            </div>
+            <figcaption>
+              <span><b>01</b> sine · 440 Hz</span>
+              <span><b>02</b> fade · exp/log</span>
+              <span><b>03</b> dither · 16-bit</span>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="signal-section" id="features" aria-labelledby="features-title">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="kicker">The signal chain</p>
+            <h2 id="features-title">One toolkit, from first sample to final file.</h2>
+          </div>
+
+          <div class="signal-chain">
+            <article>
+              <span class="step-marker">01</span>
+              <h3>Generate</h3>
+              <p>Tones, silence, samples, and arrangements from a compact Ruby DSL.</p>
+            </article>
+            <article>
+              <span class="step-marker">02</span>
+              <h3>Transform</h3>
+              <p>Trim, fade, mix, resample, and convert with immutable operations.</p>
+            </article>
+            <article>
+              <span class="step-marker">03</span>
+              <h3>Process</h3>
+              <p>Filters, dynamics, delay, reverb, modulation, and mastering chains.</p>
+            </article>
+            <article>
+              <span class="step-marker">04</span>
+              <h3>Stream</h3>
+              <p>Process long recordings chunk by chunk with stateful DSP tails intact.</p>
+            </article>
+            <article>
+              <span class="step-marker">05</span>
+              <h3>Encode</h3>
+              <p>Write production-ready audio without leaving your Ruby process.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="example-section" id="example" aria-labelledby="example-title">
+        <div class="shell example-grid">
+          <div class="example-copy">
+            <p class="kicker">Readable by design</p>
+            <h2 id="example-title">Audio work that reads like Ruby.</h2>
+            <p>Start with a tone, shape its edges, convert the bit depth, and write a WAV. Each transform returns a new audio value, so chains stay predictable and easy to test.</p>
+            <a class="text-link" href="https://github.com/ydah/wavify#quick-start">Read the quick start <span aria-hidden="true">→</span></a>
+          </div>
+
+          <div class="code-window" aria-label="Ruby example">
+            <div class="code-titlebar">
+              <span>quick_start.rb</span>
+              <span>Ruby</span>
+            </div>
+            <pre><code><span class="code-keyword">require</span> <span class="code-string">"wavify"</span>
+
+format = Wavify::Core::Format::CD_QUALITY
+
+Wavify::Audio
+  .tone(
+    frequency: <span class="code-number">440.0</span>,
+    duration: <span class="code-number">1.0</span>,
+    waveform: <span class="code-symbol">:sine</span>,
+    format: format
+  )
+  .fade_in(<span class="code-number">0.02</span>, curve: <span class="code-symbol">:exp</span>)
+  .fade_out(<span class="code-number">0.05</span>, curve: <span class="code-symbol">:log</span>)
+  .with_bit_depth(<span class="code-number">16</span>, dither: <span class="code-keyword">true</span>)
+  .write(<span class="code-string">"tone.wav"</span>)</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="formats-section" id="formats" aria-labelledby="formats-title">
+        <div class="shell formats-grid">
+          <div class="formats-copy">
+            <p class="kicker">Codec I/O</p>
+            <h2 id="formats-title">The formats you need. No shell-out required.</h2>
+            <p>WAV, AIFF, FLAC, and raw PCM are implemented in Ruby. OGG Vorbis support is available through optional native gems.</p>
+          </div>
+
+          <ul class="format-list" aria-label="Supported formats">
+            <li><strong>WAV</strong><span>read / write</span></li>
+            <li><strong>AIFF</strong><span>read / write</span></li>
+            <li><strong>FLAC</strong><span>read / write</span></li>
+            <li><strong>RAW</strong><span>read / write</span></li>
+            <li><strong>OGG</strong><span>optional</span></li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="closing-section" aria-labelledby="closing-title">
+        <div class="shell closing-inner">
+          <div>
+            <p class="kicker">Ready on RubyGems</p>
+            <h2 id="closing-title">Put audio in your Ruby stack.</h2>
+          </div>
+          <div class="closing-actions">
+            <code>gem install wavify</code>
+            <a class="button button-light" href="https://rubygems.org/gems/wavify">View on RubyGems <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <a class="brand" href="#top" aria-label="Back to top">
+          <svg viewBox="0 0 36 24" aria-hidden="true">
+            <path d="M1 12h5l3-8 5 16 5-19 5 22 4-14 3 3h4" />
+          </svg>
+          <span>Wavify</span>
+        </a>
+        <p>Pure Ruby audio processing. MIT licensed.</p>
+        <div class="footer-links">
+          <a href="https://github.com/ydah/wavify">GitHub</a>
+          <a href="https://rubygems.org/gems/wavify">RubyGems</a>
+          <a href="https://github.com/ydah/wavify/blob/main/LICENSE">License</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
