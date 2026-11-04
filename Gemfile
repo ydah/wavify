@@ -10,7 +10,8 @@ gem "benchmark", "~> 0.4"
 gem "rake", "~> 13.2"
 gem "rubocop", "~> 1.76", require: false
 gem "rspec", "~> 3.13"
-gem "simplecov", "~> 1.3", require: false
+simplecov_version = Gem::Version.new(RUBY_VERSION) >= Gem::Version.new("3.3") ? "~> 1.3" : "~> 0.22.0"
+gem "simplecov", simplecov_version, require: false
 gem "yard", "~> 0.9.36", require: false
 
 group :ogg do
